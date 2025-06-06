@@ -107,9 +107,9 @@ public isolated client class OpenAiProvider {
         }
         chat:ChatCompletionResponseMessage? message = choices[0].message;
         ai:ChatAssistantMessage chatAssistantMessage = {role: ai:ASSISTANT, content: message?.content};
-        chat:ChatCompletionFunctionCall? function_call = message?.function_call;
-        if function_call is chat:ChatCompletionFunctionCall {
-            chatAssistantMessage.toolCalls = [{name: function_call.name, arguments: function_call.arguments}];
+        chat:ChatCompletionFunctionCall? functionCall = message?.function_call;
+        if functionCall is chat:ChatCompletionFunctionCall {
+            chatAssistantMessage.toolCalls = [check self.mapToFunctionCall(functionCall)];
         }
         return chatAssistantMessage;
     }
@@ -122,7 +122,10 @@ public isolated client class OpenAiProvider {
                 chat:ChatCompletionRequestMessage assistantMessage = {role: ai:ASSISTANT};
                 ai:FunctionCall[]? toolCalls = message.toolCalls;
                 if toolCalls is ai:FunctionCall[] {
-                    assistantMessage["function_call"] = toolCalls[0];
+                    assistantMessage["function_call"] = {
+                        name: toolCalls[0].name,
+                        arguments: toolCalls[0].arguments.toJsonString()
+                    };
                 }
                 if message?.content is string {
                     assistantMessage["content"] = message?.content;
@@ -133,5 +136,16 @@ public isolated client class OpenAiProvider {
             }
         }
         return chatCompletionRequestMessages;
+    }
+
+    private isolated function mapToFunctionCall(chat:ChatCompletionFunctionCall functionCall)
+    returns ai:FunctionCall|ai:LlmError {
+        do {
+            json jsonArgs = check functionCall.arguments.fromJsonString();
+            map<json>? arguments = check jsonArgs.cloneWithType();
+            return {name: functionCall.name, arguments};
+        } on fail error e {
+            return error ai:LlmError("Invalid or malformed arguments received in function call response.", e);
+        }
     }
 }
