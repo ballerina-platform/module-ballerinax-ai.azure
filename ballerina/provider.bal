@@ -21,7 +21,7 @@ const DEFAULT_MAX_TOKEN_COUNT = 512;
 const DEFAULT_TEMPERATURE = 0.7d;
 
 # OpenAiProvider is a client class that provides an interface for interacting with Azure-hosted OpenAI language models.
-public isolated client class OpenAiProvider {
+public isolated client class OpenAiModelProvider {
     *ai:ModelProvider;
     private final chat:Client llmClient;
     private final string deploymentId;

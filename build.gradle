@@ -60,7 +60,7 @@ allprojects {
 def moduleVersion = project.version.replace("-SNAPSHOT", "")
 
 task build {
-    dependsOn(':ai.model.provider.azure-ballerina:build')
+    dependsOn(':ai.azure-ballerina:build')
 }
 
 release {
