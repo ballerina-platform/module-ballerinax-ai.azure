@@ -26,6 +26,8 @@ public isolated client class OpenAiModelProvider {
     private final chat:Client llmClient;
     private final string deploymentId;
     private final string apiVersion;
+    private final decimal temperature;
+    private final int maxTokens;
 
     # Initializes the Azure OpenAI model with the given connection configuration and model configuration.
     #
@@ -74,6 +76,8 @@ public isolated client class OpenAiModelProvider {
         self.llmClient = llmClient;
         self.deploymentId = deploymentId;
         self.apiVersion = apiVersion;
+        self.temperature = temperature;
+        self.maxTokens = maxTokens;
     }
 
     # Sends a chat request to the OpenAI model with the given messages and tools.
@@ -84,7 +88,12 @@ public isolated client class OpenAiModelProvider {
     # + return - Function to be called, chat response or an error in-case of failures
     isolated remote function chat(ai:ChatMessage[] messages, ai:ChatCompletionFunctions[] tools, string? stop = ())
         returns ai:ChatAssistantMessage|ai:LlmError {
-        chat:CreateChatCompletionRequest request = {stop, messages: self.mapToChatCompletionRequestMessage(messages)};
+        chat:CreateChatCompletionRequest request = {
+            stop,
+            messages: self.mapToChatCompletionRequestMessage(messages),
+            temperature: self.temperature,
+            max_tokens: self.maxTokens
+        };
         if tools.length() > 0 {
             request.functions = tools;
         }
