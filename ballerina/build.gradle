@@ -95,6 +95,7 @@ clean {
     delete 'build'
 }
 
+build.dependsOn ':ai.model.provider.azure-native:build'
 build.dependsOn "generatePomFileForMavenPublication"
 publishToMavenLocal.dependsOn build
 publish.dependsOn build

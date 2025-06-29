@@ -16,6 +16,7 @@
 
 import ballerina/ai;
 import ballerinax/azure.openai.chat;
+import ballerina/jballerina.java;
 
 const DEFAULT_MAX_TOKEN_COUNT = 512;
 const DEFAULT_TEMPERATURE = 0.7d;
@@ -113,6 +114,15 @@ public isolated client class OpenAiProvider {
         }
         return chatAssistantMessage;
     }
+
+    # Processes a prompt and generates structured output.
+    # 
+    # + prompt - The prompt to process
+    # + td - Type descriptor specifying the expected return type format
+    # + return - Generated content in the specified type format, or an error if generation fails
+    public isolated function generate(ai:Prompt prompt, typedesc<anydata> td = <>) returns td|error = @java:Method {
+        'class: "io.ballerina.lib.ai.azure.Generator"
+    } external;
 
     private isolated function mapToChatCompletionRequestMessage(ai:ChatMessage[] messages)
         returns chat:ChatCompletionRequestMessage[] {
