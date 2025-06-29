@@ -126,7 +126,7 @@ public class Native {
     private static Object generateJsonSchemaForRecordType(RecordType recordType,
                                                           SchemaGenerationContext schemaGenerationContext) {
         for (Map.Entry<BString, Object> entry : recordType.getAnnotations().entrySet()) {
-            if ("ballerinax/ai.model.provider.azure:0:JsonSchema".equals(entry.getKey().getValue())) {
+            if ("ballerinax/ai.model.provider.azure:1:JsonSchema".equals(entry.getKey().getValue())) {
                 return entry.getValue();
             }
         }
