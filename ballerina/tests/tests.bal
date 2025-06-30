@@ -53,6 +53,18 @@ function testGenerateFunctionWithBasicReturnTypeWithTextDocument() returns ai:Er
 }
 
 @test:Config
+function testGenerateFunctionWithBasicReturnTypeWithImageDocument() returns ai:Error? {
+    ai:ImageDocument blog = {
+        content: "https://example.com/image.png"
+    };
+    int maxScore = 10;
+
+    int|error rating = openAiProvider.generate(`How would you rate this ${"blog"} content out of ${maxScore}. ${blog}`);
+    test:assertTrue(rating is error);
+    test:assertTrue((<error>rating).message().includes("Only Text Documents are currently supported."));
+}
+
+@test:Config
 function testGenerateFunctionWithRecordReturnTypeWithTextDocument() returns error? {
     ai:TextDocument blog = {
         content: string `Title: ${blog1.title} Content: ${blog1.content}`
