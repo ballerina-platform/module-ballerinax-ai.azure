@@ -96,7 +96,7 @@ isolated function getGetResultsTool(map<json> parameters) returns chat:ChatCompl
     ];
 }
 
-isolated function gnerateChatCreationContent(ai:Prompt prompt) returns string {
+isolated function genarateChatCreationContent(ai:Prompt prompt) returns string|ai:Error {
     string str = prompt.strings[0];
     anydata[] insertions = prompt.insertions;
     foreach int i in 0 ..< insertions.length() {
@@ -107,6 +107,11 @@ isolated function gnerateChatCreationContent(ai:Prompt prompt) returns string {
             str = str + value.content + promptStr;
             continue;
         }
+
+        if value is ai:Document {
+            return error ai:Error("Only Text Documents are currently supported.");
+        }
+
         str = str + value.toString() + promptStr;
     }
     return str.trim();
@@ -122,7 +127,7 @@ isolated function handleParseResponseError(error chatResponseError) returns erro
 
 isolated function generateLlmResponse(chat:Client llmClient, string deploymentId,
         string apiVersion, ai:Prompt prompt, typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
-    string content = gnerateChatCreationContent(prompt);
+    string content = check genarateChatCreationContent(prompt);
     SchemaResponse schemaResponse = getExpectedResponseSchema(expectedResponseTypedesc);
     chat:ChatCompletionTool[]|error tools = getGetResultsTool(schemaResponse.schema);
     if tools is error {
