@@ -121,10 +121,10 @@ const expectedParamterSchemaStringForRateBlog5 =
             "items": {
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string"},
-                    "content": {"type": "string"}
+                    "rating": {"type": "integer"},
+                    "comment": {"type": "string"}
                 },
-                "required": ["title", "content"]
+                "required": ["rating", "comment"]
             }
         }
     }

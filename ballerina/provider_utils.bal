@@ -90,7 +90,7 @@ isolated function getGetResultsTool(map<json> parameters) returns chat:ChatCompl
             'function: {
                 name: GET_RESULTS_TOOL,
                 parameters: check parameters.cloneWithType(),
-                description: "Tool to call with the resp onse from a large language model (LLM) for a user prompt."
+                description: "Tool to call with the response from a large language model (LLM) for a user prompt."
             }
         }
     ];

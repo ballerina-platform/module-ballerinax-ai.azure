@@ -21,12 +21,12 @@ isolated function getExpectedParameterSchema(string message) returns map<json> {
         return expectedParamterSchemaStringForRateBlog;
     }
 
-    if message.startsWith("Please rate this blog") {
-        return expectedParamterSchemaStringForRateBlog2;
-    }
-
     if message.startsWith("Please rate this blogs") {
         return expectedParamterSchemaStringForRateBlog5;
+    }
+
+    if message.startsWith("Please rate this blog") {
+        return expectedParamterSchemaStringForRateBlog2;
     }
 
     if message.startsWith("What is 1 + 1?") {
@@ -85,12 +85,12 @@ isolated function getTheMockLLMResult(string message) returns string {
         return "{\"result\": 4}";
     }
 
-    if message.startsWith("Please rate this blog") {
-        return review;
+    if message.startsWith("Please rate this blogs") {
+        return string `{"result": [${review}, ${review}]}`;
     }
 
-    if message.startsWith("Please rate this blogs") {
-        return string `[${review}, ${review}]x`;
+    if message.startsWith("Please rate this blog") {
+        return review;
     }
 
     if message.startsWith("What is 1 + 1?") {

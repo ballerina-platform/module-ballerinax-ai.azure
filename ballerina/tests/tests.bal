@@ -78,10 +78,11 @@ function testGenerateFunctionWithRecordReturnTypeWithTextDocument() returns erro
 @test:Config
 function testGenerateFunctionWithRecordArrayReturnType() returns error? {
     int maxScore = 10;
+    Review r = check review.fromJsonStringWithType(Review);
 
-    Review result = check openAiProvider.generate(`Please rate this blogs out of ${maxScore}.
+    Review[] result = check openAiProvider.generate(`Please rate this blogs out of ${maxScore}.
         [{Title: ${blog1.title}, Content: ${blog1.content}}, {Title: ${blog2.title}, Content: ${blog2.content}}]`);
-    test:assertEquals(result, check review.fromJsonStringWithType(Review));
+    test:assertEquals(result, [r, r]);
 }
 
 @test:Config
