@@ -48,7 +48,7 @@ function testGenerateFunctionWithBasicReturnTypeWithTextDocument() returns ai:Er
     };
     int maxScore = 10;
 
-    int rating = check openAiProvider.generate(`How would you rate this blog content out of ${maxScore}. ${blog}`);
+    int rating = check openAiProvider.generate(`How would you rate this ${"blog"} content out of ${maxScore}. ${blog}`);
     test:assertEquals(rating, 4);
 }
 
@@ -74,7 +74,7 @@ function testGenerateFunctionWithRecordArrayReturnType() returns error? {
 
 @test:Config
 function testGenerateFunctionWithBasicReturnTypeWithError() returns ai:Error? {
-    boolean|error rating = openAiProvider.generate(`What is 1 + 1?`);
+    boolean|error rating = openAiProvider.generate(`What is ${1} + ${1}?`);
     test:assertTrue(rating is error);
     test:assertTrue((<error>rating).message().includes(ERROR_MESSAGE));
 }
