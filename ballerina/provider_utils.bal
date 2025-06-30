@@ -119,9 +119,14 @@ isolated function handleParseResponseError(error chatResponseError) returns erro
 }
 
 isolated function generateLlmResponse(chat:Client llmClient, string deploymentId, 
-        string apiVersion, ai:Prompt prompt, typedesc<json> expectedResponseTypedesc) returns anydata|error {
+        string apiVersion, ai:Prompt prompt, typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
     string content = gnerateChatCreationContent(prompt);
     SchemaResponse schemaResponse = getExpectedResponseSchema(expectedResponseTypedesc);
+    chat:ChatCompletionTool[]|error tools = getGetResultsTool(schemaResponse.schema);
+    if tools is error {
+        return error ai:LlmError("Error while generating the tool: " + tools.message());
+    }
+
     chat:CreateChatCompletionRequest request = {
         messages: [
             {
@@ -129,7 +134,7 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
                 "content": content
             }
         ], 
-        tools: check getGetResultsTool(schemaResponse.schema),
+        tools,
         tool_choice: getGetResultsToolChoice()
     };
 
@@ -163,8 +168,13 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
         return error ai:LlmError(NO_RELEVANT_RESPONSE_FROM_THE_LLM);
     }
 
-    anydata res = check parseResponseAsType(arguments.toJsonString(), expectedResponseTypedesc, 
+    anydata|error res = parseResponseAsType(arguments.toJsonString(), expectedResponseTypedesc, 
                             schemaResponse.isOriginallyJsonObject);
+    if res is error {
+        return error(string `Invalid value returned from the LLM Client, expected: '${
+            expectedResponseTypedesc.toBalString()}', found '${res.toBalString()}'`);
+    }
+
     anydata|error result = res.ensureType(expectedResponseTypedesc);
 
     if result is error {

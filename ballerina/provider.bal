@@ -120,7 +120,7 @@ public isolated client class OpenAiProvider {
     # + prompt - The prompt to process
     # + td - Type descriptor specifying the expected return type format
     # + return - Generated content in the specified type format, or an error if generation fails
-    public isolated function generate(ai:Prompt prompt, typedesc<anydata> td = <>) returns td|error = @java:Method {
+    public isolated function generate(ai:Prompt prompt, typedesc<anydata> td = <>) returns td|ai:Error = @java:Method {
         'class: "io.ballerina.lib.ai.azure.Generator"
     } external;
 
