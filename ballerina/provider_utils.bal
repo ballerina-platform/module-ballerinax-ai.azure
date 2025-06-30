@@ -178,14 +178,14 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
     anydata|error res = parseResponseAsType(arguments.toJsonString(), expectedResponseTypedesc,
             schemaResponse.isOriginallyJsonObject);
     if res is error {
-        return error(string `Invalid value returned from the LLM Client, expected: '${
+        return error ai:LlmInvalidGenerationError(string `Invalid value returned from the LLM Client, expected: '${
             expectedResponseTypedesc.toBalString()}', found '${res.toBalString()}'`);
     }
 
     anydata|error result = res.ensureType(expectedResponseTypedesc);
 
     if result is error {
-        return error(string `Invalid value returned from the LLM Client, expected: '${
+        return error ai:LlmInvalidGenerationError(string `Invalid value returned from the LLM Client, expected: '${
             expectedResponseTypedesc.toBalString()}', found '${(typeof response).toBalString()}'`);
     }
     return result;
