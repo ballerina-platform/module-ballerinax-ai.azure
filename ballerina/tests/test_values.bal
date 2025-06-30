@@ -42,7 +42,7 @@ const blog2 = {
         Don't forget to maintain proper hydration and nutrition for optimal performance.`
 };
 
-const review = "{\"rating\": 8, \"comment\": \"Talks about essential aspects of sports performance " + 
+const review = "{\"rating\": 8, \"comment\": \"Talks about essential aspects of sports performance " +
         "including warm-up, form, equipment, and nutrition.\"}";
 
 final string expectedPromptStringForRateBlog = string `Rate this blog out of 10.
@@ -85,31 +85,50 @@ const expectedParamterSchemaStringForRateBlog =
     {"type": "object", "properties": {"result": {"type": "integer"}}};
 
 const expectedParamterSchemaStringForRateBlog2 =
-    {"type": "object", "properties": {
-        "rating": {"type": "integer"}, "comment": {"type": "string"}}, "required": ["rating", "comment"]};
+    {
+    "type": "object",
+    "properties": {
+        "rating": {"type": "integer"},
+        "comment": {"type": "string"}
+    },
+    "required": ["rating", "comment"]
+};
 
 const expectedParamterSchemaStringForRateBlog3 =
     {"type": "object", "properties": {"result": {"type": "boolean"}}};
 
 const expectedParamterSchemaStringForRateBlog4 =
-    {"type": "object", "properties": {
-        "result": {"type": "array", "items": {"type": "object",
-            "properties": {"name": {"type": "string"}}, "required": ["name"]}}}};
+    {
+    "type": "object",
+    "properties": {
+        "result": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"]
+            }
+        }
+    }
+};
 
 const expectedParamterSchemaStringForRateBlog5 =
     {
-        "type": "object", 
-        "properties": {
-            "result": {
-                "type": "array", 
-                "items": {
-                    "type": "object", 
-                    "properties": {
-                        "title": {"type": "string"},
-                        "content": {"type": "string"}
-                    }, 
+    "type": "object",
+    "properties": {
+        "result": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "content": {"type": "string"}
+                },
                 "required": ["title", "content"]
-    }}}};
+            }
+        }
+    }
+};
 
 const expectedParamterSchemaStringForBalProgram =
     {"type": "object", "properties": {"result": {"type": "integer"}}};

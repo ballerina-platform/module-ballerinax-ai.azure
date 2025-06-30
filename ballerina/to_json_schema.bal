@@ -16,8 +16,6 @@
 
 import ballerina/jballerina.java;
 
-public annotation map<json> JsonSchema on type;
-
 type JsonSchema record {|
     string 'type?;
     (JsonSchema|JsonArraySchema)[] oneOf?;
@@ -31,9 +29,8 @@ type JsonArraySchema record {|
 |};
 
 isolated function generateJsonSchemaForTypedescAsJson(typedesc<json> expectedResponseTypedesc) returns map<json> =>
-    let map<json>? ann = expectedResponseTypedesc.@JsonSchema in ann ?:
-         (generateJsonSchemaForTypedescNative(expectedResponseTypedesc) 
-                ?: generateJsonSchemaForTypedesc(expectedResponseTypedesc, containsNil(expectedResponseTypedesc)));
+    generateJsonSchemaForTypedescNative(expectedResponseTypedesc)
+                ?: generateJsonSchemaForTypedesc(expectedResponseTypedesc, containsNil(expectedResponseTypedesc));
 
 isolated function generateJsonSchemaForTypedesc(typedesc<json> expectedResponseTypedesc, boolean nilableType) returns JsonSchema|JsonArraySchema|map<json> {
     if isSimpleType(expectedResponseTypedesc) {
@@ -48,22 +45,21 @@ isolated function generateJsonSchemaForTypedesc(typedesc<json> expectedResponseT
 
     if isArray {
         typedesc<json> arrayMemberType = getArrayMemberType(<typedesc<json[]>>expectedResponseTypedesc);
-        map<json>? ann = arrayMemberType.@JsonSchema;
-        if ann !is () {
-            return ann;
-        }
         if isSimpleType(arrayMemberType) {
             return <JsonArraySchema>{
                 items: !nilableType ? {
-                    'type: getStringRepresentation(<typedesc<json>>arrayMemberType)
-                } : 
-                {
-                   oneOf: [{
-                            'type: getStringRepresentation(<typedesc<json>>arrayMemberType)
-                        }, {
-                            'type: "null"
-                        }]
-                }
+                        'type: getStringRepresentation(<typedesc<json>>arrayMemberType)
+                    } :
+                    {
+                        oneOf: [
+                            {
+                                'type: getStringRepresentation(<typedesc<json>>arrayMemberType)
+                            },
+                            {
+                                'type: "null"
+                            }
+                        ]
+                    }
             };
         }
         recTd = <typedesc<map<json>?>>arrayMemberType;
@@ -101,23 +97,25 @@ isolated function generateJsonSchema(string[] names, boolean[] required,
     string[] requiredSchema = [];
 
     JsonSchema schema = !nilableType ? {
-        'type: "object",
-        properties,
-        required: requiredSchema
-    }: {
-        oneOf: [{
             'type: "object",
             properties,
             required: requiredSchema
-        }, {
-            'type: "null"
-        }]
-    };
+        } : {
+            oneOf: [
+                {
+                    'type: "object",
+                    properties,
+                    required: requiredSchema
+                },
+                {
+                    'type: "null"
+                }
+            ]
+        };
 
     foreach int i in 0 ..< names.length() {
         string fieldName = names[i];
-        map<json>? ann = types[i].@JsonSchema;
-        JsonSchema|JsonArraySchema|map<json> fieldSchema = ann is () ? getJsonSchemaType(types[i], nilable[i]) : ann;
+        JsonSchema|JsonArraySchema|map<json> fieldSchema = getJsonSchemaType(types[i], nilable[i]);
         properties[fieldName] = fieldSchema;
         if required[i] {
             requiredSchema.push(fieldName);
@@ -126,16 +124,19 @@ isolated function generateJsonSchema(string[] names, boolean[] required,
 
     if isArray {
         return !nilableType ? {
-            items: schema,
-            'type: "array"
-        }: {
-            oneOf: [{
                 items: schema,
                 'type: "array"
-            }, {
-                'type: "null"
-            }]
-        };
+            } : {
+                oneOf: [
+                    {
+                        items: schema,
+                        'type: "array"
+                    },
+                    {
+                        'type: "null"
+                    }
+                ]
+            };
     }
 
     return schema;
@@ -145,12 +146,15 @@ isolated function getJsonSchemaType(typedesc<json> fieldType, boolean nilable) r
     if isSimpleType(fieldType) {
         return !nilable ? <JsonSchema>{
                 'type: getStringRepresentation(fieldType)
-            }: <JsonSchema>{
-                oneOf: [{
-                    'type: getStringRepresentation(fieldType)
-                }, {
-                    'type: "null"
-                }]
+            } : <JsonSchema>{
+                oneOf: [
+                    {
+                        'type: getStringRepresentation(fieldType)
+                    },
+                    {
+                        'type: "null"
+                    }
+                ]
             };
     }
 

@@ -127,28 +127,27 @@ isolated function getTheMockLLMResult(string message) returns string {
 
 isolated function getTestServiceResponse(string content) returns chat:CreateChatCompletionResponse =>
     {
-        id: "test-id",
-        'object: "chat.completion",
-        created: 1234567890,
-        model: "gpt-4o",
-        choices: [
-            {
-                message: {
-                    tool_calls: [
-                        {   
-                            id: "tool-call-id",
-                            'type: "function",
-                            'function: {
-                                name: GET_RESULTS_TOOL,
-                                arguments: getTheMockLLMResult(content)
-                            }
+    id: "test-id",
+    'object: "chat.completion",
+    created: 1234567890,
+    model: "gpt-4o",
+    choices: [
+        {
+            message: {
+                tool_calls: [
+                    {
+                        id: "tool-call-id",
+                        'type: "function",
+                        'function: {
+                            name: GET_RESULTS_TOOL,
+                            arguments: getTheMockLLMResult(content)
                         }
-                    ]
-                }
+                    }
+                ]
             }
+        }
     ]
 };
-
 
 isolated function getExpectedPrompt(string message) returns string {
     if message.startsWith("Rate this blog") {

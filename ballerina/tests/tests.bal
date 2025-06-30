@@ -23,7 +23,7 @@ const API_VERSION = "2023-08-01-preview";
 const API_KEY = "not-a-real-api-key";
 const ERROR_MESSAGE = "Error occurred while attempting to parse the response from the LLM as the expected type. Retrying and/or validating the prompt could fix the response.";
 
-final OpenAiProvider openAiProvider = check new(SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
+final OpenAiProvider openAiProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
 
 @test:Config
 function testGenerateFunctionWithBasicReturnType() returns ai:Error? {
@@ -66,7 +66,7 @@ function testGenerateFunctionWithRecordReturnTypeWithTextDocument() returns erro
 @test:Config
 function testGenerateFunctionWithRecordArrayReturnType() returns error? {
     int maxScore = 10;
-    
+
     Review result = check openAiProvider.generate(`Please rate this blogs out of ${maxScore}.
         [{Title: ${blog1.title}, Content: ${blog1.content}}, {Title: ${blog2.title}, Content: ${blog2.content}}]`);
     test:assertEquals(result, check review.fromJsonStringWithType(Review));

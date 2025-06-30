@@ -77,21 +77,23 @@ isolated function getExpectedResponseSchema(typedesc<anydata> expectedResponseTy
 }
 
 isolated function getGetResultsToolChoice() returns chat:ChatCompletionNamedToolChoice => {
-        'type: FUNCTION,
-        'function: {
-            name: GET_RESULTS_TOOL
-        }
-    };
+    'type: FUNCTION,
+    'function: {
+        name: GET_RESULTS_TOOL
+    }
+};
 
 isolated function getGetResultsTool(map<json> parameters) returns chat:ChatCompletionTool[]|error {
-    return [{
-        'type : FUNCTION,
-        'function: {
-            name: GET_RESULTS_TOOL,
-            parameters: check parameters.cloneWithType(),
-            description: "Tool to call with the resp onse from a large language model (LLM) for a user prompt."
+    return [
+        {
+            'type: FUNCTION,
+            'function: {
+                name: GET_RESULTS_TOOL,
+                parameters: check parameters.cloneWithType(),
+                description: "Tool to call with the resp onse from a large language model (LLM) for a user prompt."
+            }
         }
-    }];
+    ];
 }
 
 isolated function gnerateChatCreationContent(ai:Prompt prompt) returns string {
@@ -118,7 +120,7 @@ isolated function handleParseResponseError(error chatResponseError) returns erro
     return chatResponseError;
 }
 
-isolated function generateLlmResponse(chat:Client llmClient, string deploymentId, 
+isolated function generateLlmResponse(chat:Client llmClient, string deploymentId,
         string apiVersion, ai:Prompt prompt, typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
     string content = gnerateChatCreationContent(prompt);
     SchemaResponse schemaResponse = getExpectedResponseSchema(expectedResponseTypedesc);
@@ -133,7 +135,7 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
                 role: ai:USER,
                 "content": content
             }
-        ], 
+        ],
         tools,
         tool_choice: getGetResultsToolChoice()
     };
@@ -168,8 +170,8 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
         return error ai:LlmError(NO_RELEVANT_RESPONSE_FROM_THE_LLM);
     }
 
-    anydata|error res = parseResponseAsType(arguments.toJsonString(), expectedResponseTypedesc, 
-                            schemaResponse.isOriginallyJsonObject);
+    anydata|error res = parseResponseAsType(arguments.toJsonString(), expectedResponseTypedesc,
+            schemaResponse.isOriginallyJsonObject);
     if res is error {
         return error(string `Invalid value returned from the LLM Client, expected: '${
             expectedResponseTypedesc.toBalString()}', found '${res.toBalString()}'`);
