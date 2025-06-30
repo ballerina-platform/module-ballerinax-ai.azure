@@ -42,8 +42,32 @@ function testGenerateFunctionWithRecordReturnType() returns error? {
 }
 
 @test:Config
+function testGenerateFunctionWithBasicReturnTypeWithTextDocument() returns ai:Error? {
+    ai:TextDocument blog = {
+        content: string `Title: ${blog1.title} Content: ${blog1.content}`
+    };
+    int maxScore = 10;
+
+    int rating = check openAiProvider.generate(`How would you rate this blog content out of ${maxScore}. ${blog}`);
+    test:assertEquals(rating, 4);
+}
+
+@test:Config
+function testGenerateFunctionWithRecordReturnTypeWithTextDocument() returns error? {
+    ai:TextDocument blog = {
+        content: string `Title: ${blog1.title} Content: ${blog1.content}`
+    };
+    int maxScore = 10;
+
+    Review result = check openAiProvider.generate(`How would you rate this blog out of ${maxScore}. ${blog}`);
+    test:assertEquals(result, check review.fromJsonStringWithType(Review));
+}
+
+@test:Config
 function testGenerateFunctionWithRecordArrayReturnType() returns error? {
-    Review result = check openAiProvider.generate(`Please rate this blogs out of 10.
+    int maxScore = 10;
+    
+    Review result = check openAiProvider.generate(`Please rate this blogs out of ${maxScore}.
         [{Title: ${blog1.title}, Content: ${blog1.content}}, {Title: ${blog2.title}, Content: ${blog2.content}}]`);
     test:assertEquals(result, check review.fromJsonStringWithType(Review));
 }

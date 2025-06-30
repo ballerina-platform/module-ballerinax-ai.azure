@@ -31,6 +31,7 @@ service /llm on new http:Listener(8080) {
             test:assertFail("Expected content in the payload");
         }
 
+        test:assertEquals(content, getExpectedPrompt(content));
         test:assertEquals(message.role, "user");
         chat:ChatCompletionTool[]? tools = payload.tools;
         if tools is () || tools.length() == 0 {

@@ -37,6 +37,14 @@ isolated function getExpectedParameterSchema(string message) returns map<json> {
         return expectedParamterSchemaStringForRateBlog4;
     }
 
+    if message.startsWith("How would you rate this blog content") {
+        return expectedParamterSchemaStringForRateBlog;
+    }
+
+    if message.startsWith("How would you rate this blog") {
+        return expectedParamterSchemaStringForRateBlog2;
+    }
+
     if message.startsWith("What's the output of the Ballerina code below?") {
         return expectedParamterSchemaStringForBalProgram;
     }
@@ -106,6 +114,14 @@ isolated function getTheMockLLMResult(string message) returns string {
             "\"lastName\": \"Biles\", \"yearOfBirth\": 1997, \"sport\": \"Gymnastics\"}}";
     }
 
+    if message.startsWith("How would you rate this blog content") {
+        return "{\"result\": 4}";
+    }
+
+    if message.startsWith("How would you rate this blog") {
+        return review;
+    }
+
     return "INVALID";
 }
 
@@ -132,3 +148,50 @@ isolated function getTestServiceResponse(string content) returns chat:CreateChat
             }
     ]
 };
+
+
+isolated function getExpectedPrompt(string message) returns string {
+    if message.startsWith("Rate this blog") {
+        return expectedPromptStringForRateBlog;
+    }
+
+    if message.startsWith("Please rate this blogs") {
+        return expectedPromptStringForRateBlog7;
+    }
+
+    if message.startsWith("Please rate this blog") {
+        return expectedPromptStringForRateBlog2;
+    }
+
+    if message.startsWith("What is 1 + 1?") {
+        return expectedPromptStringForRateBlog3;
+    }
+
+    if message.startsWith("Tell me") {
+        return expectedPromptStringForRateBlog4;
+    }
+
+    if message.startsWith("How would you rate this blog content") {
+        return expectedPromptStringForRateBlog5;
+    }
+
+    if message.startsWith("How would you rate this blog") {
+        return expectedPromptStringForRateBlog6;
+    }
+
+    if message.startsWith("What's the output of the Ballerina code below?") {
+        return expectedPromptStringForBalProgram;
+    }
+
+    if message.startsWith("Which country") {
+        return expectedPromptStringForCountry;
+    }
+
+    if message.startsWith("Who is a popular sportsperson") {
+        return string `Who is a popular sportsperson that was 
+        born in the decade starting from 1990 with Simone in 
+        their name?`;
+    }
+
+    return "INVALID";
+}
