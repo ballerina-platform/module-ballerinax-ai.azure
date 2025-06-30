@@ -15,8 +15,8 @@
 // under the License.
 
 import ballerina/ai;
-import ballerinax/azure.openai.chat;
 import ballerina/jballerina.java;
+import ballerinax/azure.openai.chat;
 
 const DEFAULT_MAX_TOKEN_COUNT = 512;
 const DEFAULT_TEMPERATURE = 0.7d;
