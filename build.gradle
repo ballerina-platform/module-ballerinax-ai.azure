@@ -61,6 +61,7 @@ allprojects {
 def moduleVersion = project.version.replace("-SNAPSHOT", "")
 
 task build {
+    dependsOn(':ai.model.provider.azure-compiler-plugin:build')
     dependsOn(':ai.model.provider.azure-native:build')
     dependsOn(':ai.model.provider.azure-ballerina:build')
 }
