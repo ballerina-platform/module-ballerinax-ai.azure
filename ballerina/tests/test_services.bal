@@ -43,7 +43,7 @@ service /llm on new http:Listener(8080) {
             test:assertFail("No parameters in the expected tool");
         }
 
-        test:assertEquals(parameters, getExpectedParameterSchema(content));
+        test:assertEquals(parameters, getExpectedParameterSchema(content), string `Test failed for prompt:- ${content}`);
         return getTestServiceResponse(content);
     }
 }

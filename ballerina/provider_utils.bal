@@ -97,22 +97,31 @@ isolated function getGetResultsTool(map<json> parameters) returns chat:ChatCompl
 }
 
 isolated function genarateChatCreationContent(ai:Prompt prompt) returns string|ai:Error {
-    string str = prompt.strings[0];
+    string[] & readonly strings = prompt.strings;
+    string str = strings[0];
     anydata[] insertions = prompt.insertions;
     foreach int i in 0 ..< insertions.length() {
-        anydata value = insertions[i];
-        string promptStr = prompt.strings[i + 1];
+        anydata insertion = insertions[i];
+        string promptStr = strings[i + 1];
 
-        if value is ai:TextDocument {
-            str = str + value.content + promptStr;
+        if insertion is ai:TextDocument {
+            str += insertion.content + " " + promptStr;
             continue;
         }
 
-        if value is ai:Document {
+        if insertion is ai:TextDocument[] {
+            foreach ai:TextDocument doc in insertion {
+                str += doc.content + " " + promptStr + " ";
+                
+            }
+            continue;
+        }
+
+        if insertion is ai:Document {
             return error ai:Error("Only Text Documents are currently supported.");
         }
 
-        str = str + value.toString() + promptStr;
+        str += insertion.toString() + promptStr;
     }
     return str.trim();
 }

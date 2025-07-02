@@ -58,7 +58,7 @@ const expectedPromptStringForRateBlog3 = string `What is 1 + 1?`;
 const expectedPromptStringForRateBlog4 = string `Tell me name and the age of the top 10 world class cricketers`;
 
 final string expectedPromptStringForRateBlog5 =
-        string `How would you rate this blog content out of 10. Title: ${blog1.title} Content: ${blog1.content}`;
+        string `How would you rate this blog content out of 10. Title: ${blog1.title} Content: ${blog1.content} .`;
 
 final string expectedPromptStringForRateBlog6 =
         string `How would you rate this blog out of 10. Title: ${blog1.title} Content: ${blog1.content}`;
@@ -66,6 +66,12 @@ final string expectedPromptStringForRateBlog6 =
 final string expectedPromptStringForRateBlog7 =
         string `Please rate this blogs out of 10.
         [{Title: ${blog1.title}, Content: ${blog1.content}}, {Title: ${blog2.title}, Content: ${blog2.content}}]`;
+
+final string expectedPromptStringForRateBlog8 =
+    string `How would you rate this text blog out of 10, Title: ${blog1.title} Content: ${blog1.content} .`;
+
+final string expectedPromptStringForRateBlog9 = string 
+    `How would you rate this text blogs out of 10. Title: ${blog1.title} Content: ${blog1.content} Title: ${blog1.title} Content: ${blog1.content}`;
 
 const expectedPromptStringForBalProgram = string `What's the output of the Ballerina code below?
 

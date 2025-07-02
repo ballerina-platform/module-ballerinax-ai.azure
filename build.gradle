@@ -65,7 +65,6 @@ task build {
     dependsOn(':ai.model.provider.azure-ballerina:build')
 }
 
-// Ensure native builds before ballerina
 tasks.findByPath(':ai.model.provider.azure-ballerina:build').mustRunAfter(':ai.model.provider.azure-native:build')
 
 release {

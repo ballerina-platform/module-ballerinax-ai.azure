@@ -41,6 +41,14 @@ isolated function getExpectedParameterSchema(string message) returns map<json> {
         return expectedParamterSchemaStringForRateBlog;
     }
 
+    if message.startsWith("How would you rate this text blogs") {
+        return expectedParamterSchemaStringForRateBlog5;
+    }
+
+    if message.startsWith("How would you rate this text blog") {
+        return expectedParamterSchemaStringForRateBlog2;
+    }
+
     if message.startsWith("How would you rate this blog") {
         return expectedParamterSchemaStringForRateBlog2;
     }
@@ -118,6 +126,14 @@ isolated function getTheMockLLMResult(string message) returns string {
         return "{\"result\": 4}";
     }
 
+    if message.startsWith("How would you rate this text blogs") {
+        return string `{"result": [${review}, ${review}]}`;
+    }
+
+    if message.startsWith("How would you rate this text blog") {
+        return review;
+    }
+
     if message.startsWith("How would you rate this blog") {
         return review;
     }
@@ -172,6 +188,14 @@ isolated function getExpectedPrompt(string message) returns string {
 
     if message.startsWith("How would you rate this blog content") {
         return expectedPromptStringForRateBlog5;
+    }
+
+    if message.startsWith("How would you rate this text blogs") {
+        return expectedPromptStringForRateBlog9;
+    }
+
+    if message.startsWith("How would you rate this text blog") {
+        return expectedPromptStringForRateBlog8;
     }
 
     if message.startsWith("How would you rate this blog") {
