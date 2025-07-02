@@ -71,7 +71,7 @@ final string expectedPromptStringForRateBlog8 =
     string `How would you rate this text blog out of 10, Title: ${blog1.title} Content: ${blog1.content} .`;
 
 final string expectedPromptStringForRateBlog9 = string 
-    `How would you rate this text blogs out of 10. Title: ${blog1.title} Content: ${blog1.content} Title: ${blog1.title} Content: ${blog1.content}`;
+    `How would you rate this text blogs out of 10. Title: ${blog1.title} Content: ${blog1.content} Title: ${blog1.title} Content: ${blog1.content} . Thank you!`;
 
 const expectedPromptStringForBalProgram = string `What's the output of the Ballerina code below?
 

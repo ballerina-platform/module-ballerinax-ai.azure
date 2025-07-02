@@ -86,7 +86,7 @@ function testGenerateMethodWithTextDocumentArray() returns error? {
     int maxScore = 10;
     Review r = check review.fromJsonStringWithType(Review);
 
-    Review[]|error result = openAiProvider.generate(`How would you rate this text blogs out of ${maxScore}. ${blogs}`);
+    Review[]|error result = openAiProvider.generate(`How would you rate this text blogs out of ${maxScore}. ${blogs}. Thank you!`);
     if result is error {
         test:assertFail(result.message());
     }

@@ -111,9 +111,10 @@ isolated function genarateChatCreationContent(ai:Prompt prompt) returns string|a
 
         if insertion is ai:TextDocument[] {
             foreach ai:TextDocument doc in insertion {
-                str += doc.content + " " + promptStr + " ";
+                str += doc.content  + " ";
                 
             }
+            str += promptStr;
             continue;
         }
 
