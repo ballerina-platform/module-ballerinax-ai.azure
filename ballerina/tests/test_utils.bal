@@ -17,40 +17,48 @@
 import ballerinax/azure.openai.chat;
 
 isolated function getExpectedParameterSchema(string message) returns map<json> {
+    if message.startsWith("Evaluate this") {
+        return expectedParameterSchemaStringForRateBlog6;
+    }
+
     if message.startsWith("Rate this blog") {
-        return expectedParamterSchemaStringForRateBlog;
+        return expectedParameterSchemaStringForRateBlog;
     }
 
     if message.startsWith("Please rate this blogs") {
-        return expectedParamterSchemaStringForRateBlog5;
+        return expectedParameterSchemaStringForRateBlog5;
     }
 
     if message.startsWith("Please rate this blog") {
-        return expectedParamterSchemaStringForRateBlog2;
+        return expectedParameterSchemaStringForRateBlog2;
     }
 
     if message.startsWith("What is 1 + 1?") {
-        return expectedParamterSchemaStringForRateBlog3;
+        return expectedParameterSchemaStringForRateBlog3;
     }
 
     if message.startsWith("Tell me") {
-        return expectedParamterSchemaStringForRateBlog4;
+        return expectedParameterSchemaStringForRateBlog4;
     }
 
     if message.startsWith("How would you rate this blog content") {
-        return expectedParamterSchemaStringForRateBlog;
+        return expectedParameterSchemaStringForRateBlog;
     }
 
     if message.startsWith("How would you rate this text blogs") {
-        return expectedParamterSchemaStringForRateBlog5;
+        return expectedParameterSchemaStringForRateBlog5;
     }
 
     if message.startsWith("How would you rate this text blog") {
-        return expectedParamterSchemaStringForRateBlog2;
+        return expectedParameterSchemaStringForRateBlog2;
+    }
+
+    if message.startsWith("How do you rate this blog") {
+        return expectedParameterSchemaStringForRateBlog7;
     }
 
     if message.startsWith("How would you rate this blog") {
-        return expectedParamterSchemaStringForRateBlog2;
+        return expectedParameterSchemaStringForRateBlog2;
     }
 
     if message.startsWith("What's the output of the Ballerina code below?") {
@@ -89,6 +97,10 @@ isolated function getExpectedParameterSchema(string message) returns map<json> {
 }
 
 isolated function getTheMockLLMResult(string message) returns string {
+    if message.startsWith("Evaluate this") {
+        return string `{"result": [9, 1]}`;
+    }
+
     if message.startsWith("Rate this blog") {
         return "{\"result\": 4}";
     }
@@ -123,6 +135,10 @@ isolated function getTheMockLLMResult(string message) returns string {
     }
 
     if message.startsWith("How would you rate this blog content") {
+        return "{\"result\": 4}";
+    }
+
+    if message.startsWith("How do you rate this blog") {
         return "{\"result\": 4}";
     }
 
@@ -170,6 +186,10 @@ isolated function getExpectedPrompt(string message) returns string {
         return expectedPromptStringForRateBlog;
     }
 
+    if message.startsWith("Evaluate this") {
+        return expectedPromptStringForRateBlog10;
+    }
+
     if message.startsWith("Please rate this blogs") {
         return expectedPromptStringForRateBlog7;
     }
@@ -188,6 +208,10 @@ isolated function getExpectedPrompt(string message) returns string {
 
     if message.startsWith("How would you rate this blog content") {
         return expectedPromptStringForRateBlog5;
+    }
+
+    if message.startsWith("How do you rate this blog") {
+        return expectedPromptStringForRateBlog11;
     }
 
     if message.startsWith("How would you rate this text blogs") {

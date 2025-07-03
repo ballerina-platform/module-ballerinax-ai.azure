@@ -73,6 +73,16 @@ final string expectedPromptStringForRateBlog8 =
 final string expectedPromptStringForRateBlog9 = string 
     `How would you rate this text blogs out of 10. Title: ${blog1.title} Content: ${blog1.content} Title: ${blog1.title} Content: ${blog1.content} . Thank you!`;
 
+final string expectedPromptStringForRateBlog10 = string `Evaluate this blogs out of 10.
+        Title: ${blog1.title}
+        Content: ${blog1.content}
+
+        Title: ${blog1.title}
+        Content: ${blog1.content}`;
+
+final string expectedPromptStringForRateBlog11 =
+        string `How do you rate this blog content out of 10. Title: ${blog1.title} Content: ${blog1.content} .`;
+
 const expectedPromptStringForBalProgram = string `What's the output of the Ballerina code below?
 
     ${"```"}ballerina
@@ -87,23 +97,26 @@ const expectedPromptStringForBalProgram = string `What's the output of the Balle
 
 const expectedPromptStringForCountry = string `Which country is known as the pearl of the Indian Ocean?`;
 
-const expectedParamterSchemaStringForRateBlog =
+const expectedParameterSchemaStringForRateBlog =
     {"type": "object", "properties": {"result": {"type": "integer"}}};
 
-const expectedParamterSchemaStringForRateBlog2 =
+const expectedParameterSchemaStringForRateBlog7 =
+    {"type":"object","properties":{"result":{"type":["integer", "null"]}}};
+
+const expectedParameterSchemaStringForRateBlog2 =
     {
     "type": "object",
+    "required": ["comment", "rating"],
     "properties": {
-        "rating": {"type": "integer"},
+        "rating": {"type": "integer", "format": "int64"},
         "comment": {"type": "string"}
-    },
-    "required": ["rating", "comment"]
+    }
 };
 
-const expectedParamterSchemaStringForRateBlog3 =
+const expectedParameterSchemaStringForRateBlog3 =
     {"type": "object", "properties": {"result": {"type": "boolean"}}};
 
-const expectedParamterSchemaStringForRateBlog4 =
+const expectedParameterSchemaStringForRateBlog4 =
     {
     "type": "object",
     "properties": {
@@ -118,19 +131,32 @@ const expectedParamterSchemaStringForRateBlog4 =
     }
 };
 
-const expectedParamterSchemaStringForRateBlog5 =
+const expectedParameterSchemaStringForRateBlog5 =
     {
     "type": "object",
     "properties": {
         "result": {
             "type": "array",
             "items": {
+                "required": ["comment", "rating"],
                 "type": "object",
                 "properties": {
-                    "rating": {"type": "integer"},
+                    "rating": {"type": "integer", "format": "int64"},
                     "comment": {"type": "string"}
-                },
-                "required": ["rating", "comment"]
+                }
+            }
+        }
+    }
+};
+
+const expectedParameterSchemaStringForRateBlog6 =
+    {
+    "type": "object",
+    "properties": {
+        "result": {
+            "type": "array",
+            "items": {
+                "type": "integer"
             }
         }
     }

@@ -70,10 +70,10 @@ isolated function parseResponseAsType(string resp,
     return result;
 }
 
-isolated function getExpectedResponseSchema(typedesc<anydata> expectedResponseTypedesc) returns SchemaResponse {
+isolated function getExpectedResponseSchema(typedesc<anydata> expectedResponseTypedesc) returns SchemaResponse|ai:Error {
     // Restricted at compile-time for now.
     typedesc<json> td = checkpanic expectedResponseTypedesc.ensureType();
-    return generateJsonObjectSchema(generateJsonSchemaForTypedescAsJson(td));
+    return generateJsonObjectSchema(check generateJsonSchemaForTypedescAsJson(td));
 }
 
 isolated function getGetResultsToolChoice() returns chat:ChatCompletionNamedToolChoice => {
@@ -138,7 +138,7 @@ isolated function handleParseResponseError(error chatResponseError) returns erro
 isolated function generateLlmResponse(chat:Client llmClient, string deploymentId,
         string apiVersion, ai:Prompt prompt, typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
     string content = check genarateChatCreationContent(prompt);
-    SchemaResponse schemaResponse = getExpectedResponseSchema(expectedResponseTypedesc);
+    SchemaResponse schemaResponse = check getExpectedResponseSchema(expectedResponseTypedesc);
     chat:ChatCompletionTool[]|error tools = getGetResultsTool(schemaResponse.schema);
     if tools is error {
         return error ai:LlmError("Error while generating the tool: " + tools.message());

@@ -15,26 +15,22 @@
  */
 package io.ballerina.lib.ai.azure;
 
+import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.TypeCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
-import io.ballerina.runtime.api.flags.SymbolFlags;
 import io.ballerina.runtime.api.types.ArrayType;
-import io.ballerina.runtime.api.types.Field;
 import io.ballerina.runtime.api.types.JsonType;
 import io.ballerina.runtime.api.types.PredefinedTypes;
-import io.ballerina.runtime.api.types.RecordType;
-import io.ballerina.runtime.api.types.TupleType;
 import io.ballerina.runtime.api.types.Type;
 import io.ballerina.runtime.api.types.TypeTags;
 import io.ballerina.runtime.api.types.UnionType;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.utils.TypeUtils;
 import io.ballerina.runtime.api.values.BArray;
+import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.api.values.BTypedesc;
-
-import java.util.Map;
 
 import static io.ballerina.runtime.api.creators.ValueCreator.createMapValue;
 
@@ -50,19 +46,18 @@ public class Native {
         return schemaGenerationContext.isSchemaGeneratedAtCompileTime ? schema : null;
     }
 
-    private static Object generateJsonSchemaForType(Type t, SchemaGenerationContext schemaGenerationContext) {
+    private static Object generateJsonSchemaForType(Type t, SchemaGenerationContext schemaGenerationContext)
+            throws BError {
         Type impliedType = TypeUtils.getImpliedType(t);
         if (isSimpleType(impliedType)) {
             return createSimpleTypeSchema(impliedType);
         }
 
         return switch (impliedType) {
-            case RecordType recordType -> generateJsonSchemaForRecordType(recordType, schemaGenerationContext);
             case JsonType ignored -> generateJsonSchemaForJson();
             case ArrayType arrayType -> generateJsonSchemaForArrayType(arrayType, schemaGenerationContext);
-            case TupleType tupleType -> generateJsonSchemaForTupleType(tupleType, schemaGenerationContext);
-            case UnionType unionType -> generateJsonSchemaForUnionType(unionType, schemaGenerationContext);
-            default -> null;
+            default -> throw ErrorCreator.createError(StringUtils.fromString(
+                    "Runtime schema generation is not yet supported for type: " + impliedType.getName()));
         };
     }
 
@@ -85,29 +80,6 @@ public class Native {
         return schemaMap;
     }
 
-    private static Object generateJsonSchemaForArrayType(ArrayType arrayType,
-                                                         SchemaGenerationContext schemaGenerationContext) {
-        BMap<BString, Object> schemaMap = createMapValue(TypeCreator.createMapType(PredefinedTypes.TYPE_JSON));
-        Type elementType = TypeUtils.getImpliedType(arrayType.getElementType());
-        schemaMap.put(StringUtils.fromString("type"), StringUtils.fromString("array"));
-        schemaMap.put(StringUtils.fromString("items"), generateJsonSchemaForType(elementType,
-                schemaGenerationContext));
-        return schemaMap;
-    }
-
-    private static Object generateJsonSchemaForTupleType(TupleType tupleType,
-                                                         SchemaGenerationContext schemaGenerationContext) {
-        BMap<BString, Object> schemaMap = createMapValue(TypeCreator.createMapType(PredefinedTypes.TYPE_JSON));
-        schemaMap.put(StringUtils.fromString("type"), StringUtils.fromString("array"));
-        BArray annotationArray = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_JSON));
-        int index = 0;
-        for (Type type : tupleType.getTupleTypes()) {
-            annotationArray.add(index++, generateJsonSchemaForType(type, schemaGenerationContext));
-        }
-        schemaMap.put(StringUtils.fromString("items"), annotationArray);
-        return schemaMap;
-    }
-
     private static boolean isSimpleType(Type type) {
         return type.getBasicType().all() <= 0b100000;
     }
@@ -123,19 +95,8 @@ public class Native {
         };
     }
 
-    private static Object generateJsonSchemaForRecordType(RecordType recordType,
-                                                          SchemaGenerationContext schemaGenerationContext) {
-        for (Map.Entry<BString, Object> entry : recordType.getAnnotations().entrySet()) {
-            if ("ballerinax/ai.model.provider.azure:1:JsonSchema".equals(entry.getKey().getValue())) {
-                return entry.getValue();
-            }
-        }
-        schemaGenerationContext.isSchemaGeneratedAtCompileTime = false;
-        return null;
-    }
-
     private static Object generateJsonSchemaForUnionType(UnionType unionType,
-                                                         SchemaGenerationContext schemaGenerationContext) {
+                         SchemaGenerationContext schemaGenerationContext) throws BError {
         BMap<BString, Object> schemaMap = createMapValue(TypeCreator.createMapType(PredefinedTypes.TYPE_JSON));
         BArray annotationArray = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_JSON));
 
@@ -158,42 +119,14 @@ public class Native {
         return schemaMap;
     }
 
-    // Simple, simple, SIMPLE implementation for now.
-    public static void populateFieldInfo(BTypedesc typedesc, BArray names, BArray required,
-                                         BArray types, BArray nilable) {
-        Type impliedType = TypeUtils.getImpliedType(typedesc.getDescribingType());
-
-        RecordType recordType;
-        if (impliedType instanceof UnionType unionType) {
-            for (Type memberType : unionType.getMemberTypes()) {
-                memberType = TypeUtils.getImpliedType(memberType);
-                if (memberType.getTag() != TypeTags.NULL_TAG) {
-                    impliedType = memberType;
-                    break;
-                }
-            }
-        }
-        recordType = (RecordType) impliedType;
-
-        for (Field field : recordType.getFields().values()) {
-            names.append(StringUtils.fromString(field.getFieldName()));
-            long flags = field.getFlags();
-            required.append(SymbolFlags.isFlagOn(flags, SymbolFlags.REQUIRED) ||
-                    !SymbolFlags.isFlagOn(flags, SymbolFlags.OPTIONAL));
-            Type fieldType = TypeUtils.getImpliedType(field.getFieldType());
-            nilable.append(fieldType.isNilable());
-            // Naive implementation - temporary
-            if (fieldType instanceof UnionType unionType) {
-                for (Type memberType : unionType.getMemberTypes()) {
-                    memberType = TypeUtils.getImpliedType(memberType);
-                    if (memberType.getTag() != TypeTags.NULL_TAG) {
-                        fieldType = memberType;
-                        break;
-                    }
-                }
-            }
-            types.append(ValueCreator.createTypedescValue(fieldType));
-        }
+    private static Object generateJsonSchemaForArrayType(ArrayType arrayType,
+                                                         SchemaGenerationContext schemaGenerationContext) {
+        BMap<BString, Object> schemaMap = createMapValue(TypeCreator.createMapType(PredefinedTypes.TYPE_JSON));
+        Type elementType = TypeUtils.getImpliedType(arrayType.getElementType());
+        schemaMap.put(StringUtils.fromString("type"), StringUtils.fromString("array"));
+        schemaMap.put(StringUtils.fromString("items"), generateJsonSchemaForType(elementType,
+                schemaGenerationContext));
+        return schemaMap;
     }
 
     public static BTypedesc getArrayMemberType(BTypedesc expectedResponseTypedesc) {

@@ -124,10 +124,8 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
         if (!(rootNode instanceof ModulePartNode modulePartNode)) {
             return;
         }
-        if (isAiImportPresent(modulePartNode.imports(), document)) {
-            return;
-        }
 
+        processAiImports(modulePartNode.imports(), document);
         evaluateGenerateMethod(document, semanticModel, modulePartNode, this.analysisData);
     }
 
@@ -163,7 +161,7 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
                 .visitGenerateMethodsAndGenerateJsonSchema(modulePartNode);
     }
 
-    private boolean isAiImportPresent(NodeList<ImportDeclarationNode> imports, Document document) {
+    private void processAiImports(NodeList<ImportDeclarationNode> imports, Document document) {
         for (ImportDeclarationNode importDeclarationNode : imports) {
             Optional<ImportOrgNameNode> importOrgNameNode = importDeclarationNode.orgName();
             if (importOrgNameNode.isEmpty()) {
@@ -183,15 +181,15 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
                         String prefixText = prefix.get().prefix().text();
                         if (!prefixText.equals("_")) {
                             importPrefix = prefixText;
+                        } else {
+                            importPrefix = null;
                         }
                     }
                     modifierData.importPrefixes.put(document.documentId(), importPrefix);
-                    return true;
+                    return;
                 }
             }
         }
-
-        return false;
     }
 
     private class GenerateMethodVisitor extends NodeVisitor {
@@ -223,6 +221,7 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
             if (!(methodNameRef instanceof SimpleNameReferenceNode methodName
                     && methodName.name().text().equals(GENERATE_METHOD_NAME))) {
                 this.visitSyntaxNode(methodCallExpressionNode);
+                return;
             }
 
             ExpressionNode expression = methodCallExpressionNode.expression();
@@ -256,12 +255,19 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
                     if (!(nonErrorTypeSymbol instanceof TypeReferenceTypeSymbol typeRefSymbol)) {
                         return;
                     }
-
-                    Symbol definition = typeRefSymbol.definition();
-                    definition.getName().ifPresent(name ->
-                            modifierData.typeSchemas.put(name, getJsonSchema(typeMapper.getSchema(typeRefSymbol))));
+                    populateTypeSchema(nonErrorTypeSymbol, typeMapper, modifierData.typeSchemas);
                 }
             });
+        }
+
+        private static void populateTypeSchema(TypeSymbol memberType, TypeMapper typeMapper,
+                                               Map<String, String> typeSchemas) {
+            switch (memberType) {
+                case TypeReferenceTypeSymbol typeReference ->
+                        typeSchemas.put(typeReference.definition().getName().get(),
+                                getJsonSchema(typeMapper.getSchema(typeReference)));
+                default -> { }
+            }
         }
 
         private Optional<ModuleSymbol> getAzureModelProviderSymbol(Node node) {
@@ -439,15 +445,13 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
 
         private static NodeList<AnnotationNode> updateAnnotations(NodeList<AnnotationNode> currentAnnotations,
                                                                   String jsonSchema, String aiPrefix) {
-            NodeList<AnnotationNode> updatedAnnotations = NodeFactory.createNodeList();
-
             for (AnnotationNode annotationNode : currentAnnotations) {
                 if (isJsonSchemaAnnotationAvailable(annotationNode, aiPrefix)) {
-                    return updatedAnnotations;
+                    return currentAnnotations;
                 }
             }
 
-            return updatedAnnotations.add(getSchemaAnnotation(jsonSchema, aiPrefix));
+            return currentAnnotations.add(getSchemaAnnotation(jsonSchema, aiPrefix));
         }
 
         public static boolean isJsonSchemaAnnotationAvailable(AnnotationNode annotationNode, String aiPrefix) {

@@ -22,6 +22,7 @@ const DEPLOYMENT_ID = "gpt4onew";
 const API_VERSION = "2023-08-01-preview";
 const API_KEY = "not-a-real-api-key";
 const ERROR_MESSAGE = "Error occurred while attempting to parse the response from the LLM as the expected type. Retrying and/or validating the prompt could fix the response.";
+const RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE = "Runtime schema generation is not yet supported";
 
 final OpenAiProvider openAiProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
 
@@ -35,6 +36,21 @@ function testGenerateMethodWithBasicReturnType() returns ai:Error? {
         test:assertFail(rating.message());  
     }
     test:assertEquals(rating, 4);
+}
+
+@test:Config
+function testGenerateMethodWithBasicArrayReturnType() returns ai:Error? {
+    int[]|error rating = openAiProvider.generate(`Evaluate this blogs out of 10.
+        Title: ${blog1.title}
+        Content: ${blog1.content}
+
+        Title: ${blog1.title}
+        Content: ${blog1.content}`);
+    
+    if rating is error {
+        test:assertFail(rating.message());  
+    }
+    test:assertEquals(rating, [9, 1]);
 }
 
 @test:Config
@@ -77,6 +93,8 @@ function testGenerateMethodWithTextDocument2() returns error? {
     test:assertEquals(result, check review.fromJsonStringWithType(Review));
 }
 
+type ReviewArray Review[];
+
 @test:Config
 function testGenerateMethodWithTextDocumentArray() returns error? {
     ai:TextDocument blog = {
@@ -86,7 +104,7 @@ function testGenerateMethodWithTextDocumentArray() returns error? {
     int maxScore = 10;
     Review r = check review.fromJsonStringWithType(Review);
 
-    Review[]|error result = openAiProvider.generate(`How would you rate this text blogs out of ${maxScore}. ${blogs}. Thank you!`);
+    ReviewArray|error result = openAiProvider.generate(`How would you rate this text blogs out of ${maxScore}. ${blogs}. Thank you!`);
     if result is error {
         test:assertFail(result.message());
     }
@@ -98,7 +116,7 @@ function testGenerateMethodWithRecordArrayReturnType() returns error? {
     int maxScore = 10;
     Review r = check review.fromJsonStringWithType(Review);
 
-    Review[]|error result = openAiProvider.generate(`Please rate this blogs out of ${maxScore}.
+    ReviewArray|error result = openAiProvider.generate(`Please rate this blogs out of ${maxScore}.
         [{Title: ${blog1.title}, Content: ${blog1.content}}, {Title: ${blog2.title}, Content: ${blog2.content}}]`);
     
     if result is error {
@@ -120,7 +138,17 @@ type RecordForInvalidBinding record {|
 
 @test:Config
 function testGenerateMethodWithInvalidRecordType() returns ai:Error? {
-    RecordForInvalidBinding[]|error rating = openAiProvider.generate(
+    RecordForInvalidBinding[]|error rating = trap openAiProvider.generate(
+                `Tell me name and the age of the top 10 world class cricketers`);
+    test:assertTrue(rating is error);
+    test:assertTrue((<error>rating).message().includes(RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE));
+}
+
+type InvalidRecordArray RecordForInvalidBinding[];
+
+@test:Config
+function testGenerateMethodWithInvalidRecordType2() returns ai:Error? {
+    InvalidRecordArray|error rating = openAiProvider.generate(
                 `Tell me name and the age of the top 10 world class cricketers`);
     test:assertTrue(rating is error);
     test:assertTrue((<error>rating).message().includes(ERROR_MESSAGE));
