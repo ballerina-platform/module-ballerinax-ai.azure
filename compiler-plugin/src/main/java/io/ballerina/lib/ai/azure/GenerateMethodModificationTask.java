@@ -34,15 +34,14 @@ import io.ballerina.compiler.syntax.tree.ImportOrgNameNode;
 import io.ballerina.compiler.syntax.tree.ImportPrefixNode;
 import io.ballerina.compiler.syntax.tree.MappingConstructorExpressionNode;
 import io.ballerina.compiler.syntax.tree.MetadataNode;
-import io.ballerina.compiler.syntax.tree.MethodCallExpressionNode;
 import io.ballerina.compiler.syntax.tree.ModulePartNode;
-import io.ballerina.compiler.syntax.tree.NameReferenceNode;
 import io.ballerina.compiler.syntax.tree.Node;
 import io.ballerina.compiler.syntax.tree.NodeFactory;
 import io.ballerina.compiler.syntax.tree.NodeList;
 import io.ballerina.compiler.syntax.tree.NodeParser;
 import io.ballerina.compiler.syntax.tree.NodeVisitor;
 import io.ballerina.compiler.syntax.tree.QualifiedNameReferenceNode;
+import io.ballerina.compiler.syntax.tree.RemoteMethodCallActionNode;
 import io.ballerina.compiler.syntax.tree.SimpleNameReferenceNode;
 import io.ballerina.compiler.syntax.tree.SyntaxKind;
 import io.ballerina.compiler.syntax.tree.TreeModifier;
@@ -216,28 +215,27 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
             visit(modulePartNode);
         }
 
-        public void visit(MethodCallExpressionNode methodCallExpressionNode) {
-            NameReferenceNode methodNameRef = methodCallExpressionNode.methodName();
-            if (!(methodNameRef instanceof SimpleNameReferenceNode methodName
-                    && methodName.name().text().equals(GENERATE_METHOD_NAME))) {
-                this.visitSyntaxNode(methodCallExpressionNode);
+        public void visit(RemoteMethodCallActionNode remoteMethodCallActionNode) {
+            SimpleNameReferenceNode methodName = remoteMethodCallActionNode.methodName();
+            if (!methodName.name().text().equals(GENERATE_METHOD_NAME)) {
+                this.visitSyntaxNode(remoteMethodCallActionNode);
                 return;
             }
 
-            ExpressionNode expression = methodCallExpressionNode.expression();
+            ExpressionNode expression = remoteMethodCallActionNode.expression();
             semanticModel.typeOf(expression).ifPresent(expressionTypeSymbol ->
-                    getAzureModelProviderSymbol(methodCallExpressionNode).ifPresent(moduleSymbol ->
+                    getAzureModelProviderSymbol(remoteMethodCallActionNode).ifPresent(moduleSymbol ->
                             moduleSymbol.classes().forEach(classSymbol -> {
                         if (classSymbol.nameEquals(AZURE_MODEL_PROVIDER_NAME)) {
                             if (expressionTypeSymbol.subtypeOf(classSymbol)) {
-                                updateTypeSchemaForTypeDef(methodCallExpressionNode);
+                                updateTypeSchemaForTypeDef(remoteMethodCallActionNode);
                             }
                         }
                     })));
         }
 
-        private void updateTypeSchemaForTypeDef(MethodCallExpressionNode methodCallExpressionNode) {
-            semanticModel.typeOf(methodCallExpressionNode).ifPresent(expTypeSymbol -> {
+        private void updateTypeSchemaForTypeDef(RemoteMethodCallActionNode remoteMethodCallActionNode) {
+            semanticModel.typeOf(remoteMethodCallActionNode).ifPresent(expTypeSymbol -> {
                 if (expTypeSymbol instanceof UnionTypeSymbol expTypeUnionSymbol) {
                     TypeSymbol nonErrorTypeSymbol = null;
                     TypeSymbol typeRefTypeSymbol = null;

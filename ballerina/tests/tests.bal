@@ -28,7 +28,7 @@ final OpenAiProvider openAiProvider = check new (SERVICE_URL, API_KEY, DEPLOYMEN
 
 @test:Config
 function testGenerateMethodWithBasicReturnType() returns ai:Error? {
-    int|error rating = openAiProvider.generate(`Rate this blog out of 10.
+    int|error rating = openAiProvider->generate(`Rate this blog out of 10.
         Title: ${blog1.title}
         Content: ${blog1.content}`);
     
@@ -40,7 +40,7 @@ function testGenerateMethodWithBasicReturnType() returns ai:Error? {
 
 @test:Config
 function testGenerateMethodWithBasicArrayReturnType() returns ai:Error? {
-    int[]|error rating = openAiProvider.generate(`Evaluate this blogs out of 10.
+    int[]|error rating = openAiProvider->generate(`Evaluate this blogs out of 10.
         Title: ${blog1.title}
         Content: ${blog1.content}
 
@@ -55,7 +55,7 @@ function testGenerateMethodWithBasicArrayReturnType() returns ai:Error? {
 
 @test:Config
 function testGenerateMethodWithRecordReturnType() returns error? {
-    Review|error result = openAiProvider.generate(`Please rate this blog out of 10.
+    Review|error result = openAiProvider->generate(`Please rate this blog out of 10.
         Title: ${blog2.title}
         Content: ${blog2.content}`);
     if result is error {
@@ -71,7 +71,7 @@ function testGenerateMethodWithTextDocument() returns ai:Error? {
     };
     int maxScore = 10;
 
-    int|error rating = openAiProvider.generate(`How would you rate this ${"blog"} content out of ${maxScore}. ${blog}.`);
+    int|error rating = openAiProvider->generate(`How would you rate this ${"blog"} content out of ${maxScore}. ${blog}.`);
     if rating is error {
         test:assertFail(rating.message());
     }
@@ -85,7 +85,7 @@ function testGenerateMethodWithTextDocument2() returns error? {
     };
     int maxScore = 10;
 
-    Review|error result = openAiProvider.generate(`How would you rate this text blog out of ${maxScore}, ${blog}.`);
+    Review|error result = openAiProvider->generate(`How would you rate this text blog out of ${maxScore}, ${blog}.`);
     if result is error {
         test:assertFail(result.message());
     }
@@ -104,7 +104,7 @@ function testGenerateMethodWithTextDocumentArray() returns error? {
     int maxScore = 10;
     Review r = check review.fromJsonStringWithType(Review);
 
-    ReviewArray|error result = openAiProvider.generate(`How would you rate this text blogs out of ${maxScore}. ${blogs}. Thank you!`);
+    ReviewArray|error result = openAiProvider->generate(`How would you rate this text blogs out of ${maxScore}. ${blogs}. Thank you!`);
     if result is error {
         test:assertFail(result.message());
     }
@@ -116,7 +116,7 @@ function testGenerateMethodWithRecordArrayReturnType() returns error? {
     int maxScore = 10;
     Review r = check review.fromJsonStringWithType(Review);
 
-    ReviewArray|error result = openAiProvider.generate(`Please rate this blogs out of ${maxScore}.
+    ReviewArray|error result = openAiProvider->generate(`Please rate this blogs out of ${maxScore}.
         [{Title: ${blog1.title}, Content: ${blog1.content}}, {Title: ${blog2.title}, Content: ${blog2.content}}]`);
     
     if result is error {
@@ -127,7 +127,7 @@ function testGenerateMethodWithRecordArrayReturnType() returns error? {
 
 @test:Config
 function testGenerateMethodWithInvalidBasicType() returns ai:Error? {
-    boolean|error rating = openAiProvider.generate(`What is ${1} + ${1}?`);
+    boolean|error rating = openAiProvider->generate(`What is ${1} + ${1}?`);
     test:assertTrue(rating is error);
     test:assertTrue((<error>rating).message().includes(ERROR_MESSAGE));
 }
@@ -138,7 +138,7 @@ type RecordForInvalidBinding record {|
 
 @test:Config
 function testGenerateMethodWithInvalidRecordType() returns ai:Error? {
-    RecordForInvalidBinding[]|error rating = trap openAiProvider.generate(
+    RecordForInvalidBinding[]|error rating = trap openAiProvider->generate(
                 `Tell me name and the age of the top 10 world class cricketers`);
     test:assertTrue(rating is error);
     test:assertTrue((<error>rating).message().includes(RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE));
@@ -148,7 +148,7 @@ type InvalidRecordArray RecordForInvalidBinding[];
 
 @test:Config
 function testGenerateMethodWithInvalidRecordType2() returns ai:Error? {
-    InvalidRecordArray|error rating = openAiProvider.generate(
+    InvalidRecordArray|error rating = openAiProvider->generate(
                 `Tell me name and the age of the top 10 world class cricketers`);
     test:assertTrue(rating is error);
     test:assertTrue((<error>rating).message().includes(ERROR_MESSAGE));

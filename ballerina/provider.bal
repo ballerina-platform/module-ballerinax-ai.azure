@@ -121,7 +121,7 @@ public isolated client class OpenAiProvider {
     # + prompt - The prompt to use in the chat messages
     # + td - Type descriptor specifying the expected return type format
     # + return - Generates a value that belongs to the type, or an error if generation fails
-    public isolated function generate(ai:Prompt prompt, typedesc<anydata> td = <>) returns td|ai:Error = @java:Method {
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>) returns td|ai:Error = @java:Method {
         'class: "io.ballerina.lib.ai.azure.Generator"
     } external;
 
