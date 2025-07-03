@@ -22,11 +22,8 @@ import io.ballerina.runtime.api.types.ArrayType;
 import io.ballerina.runtime.api.types.JsonType;
 import io.ballerina.runtime.api.types.PredefinedTypes;
 import io.ballerina.runtime.api.types.Type;
-import io.ballerina.runtime.api.types.TypeTags;
-import io.ballerina.runtime.api.types.UnionType;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.utils.TypeUtils;
-import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
@@ -93,30 +90,6 @@ public class Native {
             case 0b100000 -> "string";
             default -> null;
         };
-    }
-
-    private static Object generateJsonSchemaForUnionType(UnionType unionType,
-                         SchemaGenerationContext schemaGenerationContext) throws BError {
-        BMap<BString, Object> schemaMap = createMapValue(TypeCreator.createMapType(PredefinedTypes.TYPE_JSON));
-        BArray annotationArray = ValueCreator.createArrayValue(TypeCreator.createArrayType(PredefinedTypes.TYPE_JSON));
-
-        int index = 0;
-        boolean hasNil = false;
-        for (Type type : unionType.getMemberTypes()) {
-            if (type.getTag() == TypeTags.NULL_TAG) {
-                hasNil = true;
-                continue;
-            }
-            annotationArray.add(index++, generateJsonSchemaForType(type, schemaGenerationContext));
-        }
-
-        schemaMap.put(StringUtils.fromString("anyOf"), annotationArray);
-        if (hasNil) {
-            BMap<BString, Object> nilSchema = createMapValue(TypeCreator.createMapType(PredefinedTypes.TYPE_JSON));
-            nilSchema.put(StringUtils.fromString("type"), StringUtils.fromString("null"));
-            annotationArray.add(index, nilSchema);
-        }
-        return schemaMap;
     }
 
     private static Object generateJsonSchemaForArrayType(ArrayType arrayType,
