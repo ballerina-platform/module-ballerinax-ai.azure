@@ -101,11 +101,11 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
             Collection<DocumentId> testDocumentIds = module.testDocumentIds();
 
             for (DocumentId documentId : documentIds) {
-                evaluateDocument(module, documentId, semanticModel);
+                analyseDocument(module, documentId, semanticModel);
             }
 
             for (DocumentId documentId : testDocumentIds) {
-                evaluateDocument(module, documentId, semanticModel);
+                analyseDocument(module, documentId, semanticModel);
             }
 
             for (DocumentId documentId : documentIds) {
@@ -120,7 +120,7 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
         }
     }
 
-    private void evaluateDocument(Module module, DocumentId documentId, SemanticModel semanticModel) {
+    private void analyseDocument(Module module, DocumentId documentId, SemanticModel semanticModel) {
         Document document = module.document(documentId);
         Node rootNode = document.syntaxTree().rootNode();
         if (!(rootNode instanceof ModulePartNode modulePartNode)) {
@@ -215,7 +215,7 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
             this.semanticModel = semanticModel;
             this.document = document;
             this.typeMapper = analyserData.typeMapper;
-            this.azureOpenAIProviderSymbol = getOpenAIProviderClassSymbol(document.syntaxTree().rootNode());
+            this.azureOpenAIProviderSymbol = getOpenAIProviderSymbol(document.syntaxTree().rootNode());
         }
 
         void generate(ModulePartNode modulePartNode) {
@@ -276,7 +276,7 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
             }
         }
 
-        private Optional<ClassSymbol> getOpenAIProviderClassSymbol(Node node) {
+        private Optional<ClassSymbol> getOpenAIProviderSymbol(Node node) {
             Optional<ModuleSymbol> azureModuleSymbol = getAzureModuleSymbol(node);
             if (azureModuleSymbol.isEmpty()) {
                 return Optional.empty();

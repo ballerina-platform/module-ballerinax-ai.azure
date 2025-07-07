@@ -141,7 +141,7 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
     SchemaResponse schemaResponse = check getExpectedResponseSchema(expectedResponseTypedesc);
     chat:ChatCompletionTool[]|error tools = getGetResultsTool(schemaResponse.schema);
     if tools is error {
-        return error ai:LlmError("Error in generated schema: " + tools.message());
+        return error("Error in generated schema: " + tools.message());
     }
 
     chat:CreateChatCompletionRequest request = {
@@ -158,7 +158,7 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
     chat:CreateChatCompletionResponse|error response =
         llmClient->/deployments/[deploymentId]/chat/completions.post(apiVersion, request);
     if response is error {
-        return error ai:LlmError("LLM call failed: " + response.message());
+        return error("LLM call failed: " + response.message());
     }
 
     record {
