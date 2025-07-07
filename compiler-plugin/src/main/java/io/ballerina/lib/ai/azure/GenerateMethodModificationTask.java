@@ -127,19 +127,18 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
             return;
         }
 
-        retrieveAiModuleImportPrefix(modulePartNode.imports(), document);
         analyzeGenerateMethod(document, semanticModel, modulePartNode, this.analysisData);
     }
 
     private static TextDocument modifyDocument(Document document, ModifierData modifierData) {
         ModulePartNode modulePartNode = document.syntaxTree().rootNode();
         DocumentId documentId = document.documentId();
-        String prefix = modifierData.importPrefixes.get(documentId);
-        boolean isAiImportPresent = prefix != null;
+        String aiImportPrefix = retrieveAiModuleImportPrefix(modulePartNode.imports(), document);
+        boolean isAiImportPresent = aiImportPrefix != null;
 
         TypeDefinitionModifier typeDefinitionModifier =
                 new TypeDefinitionModifier(modifierData.typeSchemas, document, modifierData,
-                        isAiImportPresent ? prefix : AI_MODULE_NAME);
+                        isAiImportPresent ? aiImportPrefix : AI_MODULE_NAME);
 
         ModulePartNode finalRoot = (ModulePartNode) modulePartNode.apply(typeDefinitionModifier);
         NodeList<ImportDeclarationNode> imports = finalRoot.imports();
@@ -163,7 +162,7 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
                 .generate(modulePartNode);
     }
 
-    private void retrieveAiModuleImportPrefix(NodeList<ImportDeclarationNode> imports, Document document) {
+    private static String retrieveAiModuleImportPrefix(NodeList<ImportDeclarationNode> imports, Document document) {
         for (ImportDeclarationNode importDeclarationNode : imports) {
             Optional<ImportOrgNameNode> importOrgNameNode = importDeclarationNode.orgName();
             if (importOrgNameNode.isEmpty()) {
@@ -190,10 +189,10 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
                         importPrefix = null;
                     }
                 }
-                modifierData.importPrefixes.put(document.documentId(), importPrefix);
-                return;
+                return importPrefix;
             }
         }
+        return null;
     }
 
     private class GenerateMethodJsonSchemaGenerator extends NodeVisitor {
@@ -415,7 +414,6 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
     static final class ModifierData {
         Map<String, String> typeSchemas = new HashMap<>();
         HashSet<DocumentId> aiImportRequiredDocuments = new HashSet<>();
-        Map<DocumentId, String> importPrefixes = new HashMap<>();
     }
 
     private static class TypeDefinitionModifier extends TreeModifier {
