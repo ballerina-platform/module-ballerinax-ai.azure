@@ -33,7 +33,7 @@ public annotation map<json> JsonSchema on type;
 
 isolated function generateJsonSchemaForTypedescAsJson(typedesc<json> expectedResponseTypedesc) returns map<json>|ai:Error =>
     let map<json>? ann = expectedResponseTypedesc.@ai:JsonSchema in ann
-                ?: generateJsonSchemaForTypedescNative(expectedResponseTypedesc)
+                ?: check generateJsonSchemaForTypedescNative(expectedResponseTypedesc)
                 ?: check generateJsonSchemaForTypedesc(expectedResponseTypedesc, containsNil(expectedResponseTypedesc));
 
 isolated function generateJsonSchemaForTypedesc(typedesc<json> expectedResponseTypedesc, boolean nilableType) 
@@ -64,7 +64,7 @@ isolated function generateJsonSchemaForTypedesc(typedesc<json> expectedResponseT
         }
     }
 
-    return error ai:Error("Runtime schema generation is not yet supported for type" + expectedResponseTypedesc.toString());
+    return error("Runtime schema generation is not yet supported for type " + expectedResponseTypedesc.toString());
 }
 
 isolated function getArrayMemberType(typedesc<json> expectedResponseTypedesc) returns typedesc<json> = @java:Method {
@@ -100,6 +100,6 @@ isolated function getStringRepresentation(typedesc<json> fieldType) returns stri
     panic error("JSON schema generation is not yet supported for type: " + fieldType.toString());
 }
 
-isolated function generateJsonSchemaForTypedescNative(typedesc<anydata> td) returns map<json>? = @java:Method {
+isolated function generateJsonSchemaForTypedescNative(typedesc<anydata> td) returns map<json>?|ai:Error = @java:Method {
     'class: "io.ballerina.lib.ai.azure.Native"
 } external;

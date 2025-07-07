@@ -128,8 +128,8 @@ isolated function genarateChatCreationContent(ai:Prompt prompt) returns string|a
 }
 
 isolated function handleParseResponseError(error chatResponseError) returns error {
-    if chatResponseError.message().includes(JSON_CONVERSION_ERROR)
-            || chatResponseError.message().includes(CONVERSION_ERROR) {
+    string message = chatResponseError.message();
+    if message.includes(JSON_CONVERSION_ERROR) || message.includes(CONVERSION_ERROR) {
         return error(string `${ERROR_MESSAGE}`, detail = chatResponseError);
     }
     return chatResponseError;
@@ -141,7 +141,7 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
     SchemaResponse schemaResponse = check getExpectedResponseSchema(expectedResponseTypedesc);
     chat:ChatCompletionTool[]|error tools = getGetResultsTool(schemaResponse.schema);
     if tools is error {
-        return error ai:LlmError("Error while generating the tool: " + tools.message());
+        return error ai:LlmError("Error in generated schema: " + tools.message());
     }
 
     chat:CreateChatCompletionRequest request = {
@@ -161,28 +161,27 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
         return error ai:LlmError("LLM call failed: " + response.message());
     }
 
-    record {|
+    record {
         chat:ChatCompletionResponseMessage message?;
         chat:ContentFilterChoiceResults content_filter_results?;
         int index?;
         string finish_reason?;
-        anydata...;
-    |}[]? choices = response.choices;
+    }[]? choices = response.choices;
 
     if choices is () || choices.length() == 0 {
-        return error ai:LlmError("No completion choices");
+        return error("No completion choices");
     }
 
     chat:ChatCompletionResponseMessage? message = choices[0].message;
     chat:ChatCompletionMessageToolCall[]? toolCalls = message?.tool_calls;
     if toolCalls is () || toolCalls.length() == 0 {
-        return error ai:LlmError(NO_RELEVANT_RESPONSE_FROM_THE_LLM);
+        return error(NO_RELEVANT_RESPONSE_FROM_THE_LLM);
     }
 
     chat:ChatCompletionMessageToolCall tool = toolCalls[0];
     map<json>|error arguments = tool.'function.arguments.fromJsonStringWithType();
     if arguments is error {
-        return error ai:LlmError(NO_RELEVANT_RESPONSE_FROM_THE_LLM);
+        return error(NO_RELEVANT_RESPONSE_FROM_THE_LLM);
     }
 
     anydata|error res = parseResponseAsType(arguments.toJsonString(), expectedResponseTypedesc,

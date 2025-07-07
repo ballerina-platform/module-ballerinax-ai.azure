@@ -25,7 +25,7 @@ import io.ballerina.projects.plugins.SyntaxNodeAnalysisContext;
 /**
  * Initializes the type mapper required for generating a JSON schema of type.
  *
- * @since 0.3.0
+ * @since 1.0.0
  */
 public class TypeMapperImplInitializer implements AnalysisTask<SyntaxNodeAnalysisContext> {
     AiAzureCodeModifier.AnalysisData analysisData;

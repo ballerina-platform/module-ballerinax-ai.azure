@@ -25,6 +25,8 @@ import io.ballerina.projects.plugins.CodeModifierContext;
 
 /**
  * Analyzes a Ballerina AI tools and report diagnostics, and generates json schema for tools.
+ *
+ * @since 1.0.0
  */
 public class AiAzureCodeModifier extends CodeModifier {
     @Override

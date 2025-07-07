@@ -23,6 +23,8 @@ import io.ballerina.projects.plugins.CompilerPluginContext;
 
 /**
  * Compiler plugin for the Ballerina AI package.
+ *
+ * @since 1.0.0
  */
 @SuppressWarnings("unused")
 public class AiAzureCompilerPlugin extends CompilerPlugin {

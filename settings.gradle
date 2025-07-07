@@ -36,13 +36,11 @@ include ':checkstyle'
 include ':ai.model.provider.azure-native'
 include ':ai.model.provider.azure-ballerina'
 include ':ai.model.provider.azure-compiler-plugin'
-include ':ai.model.provider.azure-compiler-plugin-tests'
 
 project(':checkstyle').projectDir = file("build-config${File.separator}checkstyle")
 project(':ai.model.provider.azure-native').projectDir = file("native")
 project(':ai.model.provider.azure-ballerina').projectDir = file("ballerina")
 project(':ai.model.provider.azure-compiler-plugin').projectDir = file('compiler-plugin')
-project(':ai.model.provider.azure-compiler-plugin-tests').projectDir = file("compiler-plugin-tests")
 
 gradleEnterprise {
     buildScan {
