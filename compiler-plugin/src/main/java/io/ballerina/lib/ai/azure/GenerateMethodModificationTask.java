@@ -71,8 +71,8 @@ import java.util.Optional;
 import static io.ballerina.projects.util.ProjectConstants.EMPTY_STRING;
 
 /**
- * Analyzes a Ballerina module init function.
- *
+ * Modifier to add JSON schema annotations
+ * for types used in Azure OpenAI provider's `generate` method calls.
  * @since 1.0.0
  */
 class GenerateMethodModificationTask implements ModifierTask<SourceModifierContext> {
@@ -101,11 +101,11 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
             Collection<DocumentId> testDocumentIds = module.testDocumentIds();
 
             for (DocumentId documentId : documentIds) {
-                analyseDocument(module, documentId, semanticModel);
+                analyzeDocument(module, documentId, semanticModel);
             }
 
             for (DocumentId documentId : testDocumentIds) {
-                analyseDocument(module, documentId, semanticModel);
+                analyzeDocument(module, documentId, semanticModel);
             }
 
             for (DocumentId documentId : documentIds) {
@@ -120,7 +120,7 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
         }
     }
 
-    private void analyseDocument(Module module, DocumentId documentId, SemanticModel semanticModel) {
+    private void analyzeDocument(Module module, DocumentId documentId, SemanticModel semanticModel) {
         Document document = module.document(documentId);
         Node rootNode = document.syntaxTree().rootNode();
         if (!(rootNode instanceof ModulePartNode modulePartNode)) {
@@ -207,18 +207,23 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
         private final SemanticModel semanticModel;
         private final Document document;
         private final TypeMapper typeMapper;
-        private final Optional<ClassSymbol> azureOpenAIProviderSymbol;
+        private final ClassSymbol azureOpenAIProviderSymbol;
 
         public GenerateMethodJsonSchemaGenerator(SemanticModel semanticModel, Document document,
                                                  AiAzureCodeModifier.AnalysisData analyserData) {
             this.semanticModel = semanticModel;
             this.document = document;
             this.typeMapper = analyserData.typeMapper;
-            this.azureOpenAIProviderSymbol = getOpenAIProviderSymbol(document.syntaxTree().rootNode());
+            Optional<ClassSymbol> openAIProviderSymbol = getOpenAIProviderSymbol(document.syntaxTree().rootNode());
+            if (openAIProviderSymbol.isEmpty()) {
+                this.azureOpenAIProviderSymbol = null;
+            } else {
+                this.azureOpenAIProviderSymbol = openAIProviderSymbol.get();
+            }
         }
 
         void generate(ModulePartNode modulePartNode) {
-            if (this.azureOpenAIProviderSymbol.isEmpty()) {
+            if (this.azureOpenAIProviderSymbol == null) {
                 return;
             }
             visit(modulePartNode);
@@ -233,7 +238,7 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
 
             ExpressionNode expression = remoteMethodCallActionNode.expression();
             semanticModel.typeOf(expression).ifPresent(expressionTypeSymbol -> {
-                if (expressionTypeSymbol.subtypeOf(this.azureOpenAIProviderSymbol.get())) {
+                if (expressionTypeSymbol.subtypeOf(this.azureOpenAIProviderSymbol)) {
                     updateTypeSchemaForTypeDef(remoteMethodCallActionNode);
                 }
             });
