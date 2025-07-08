@@ -129,7 +129,7 @@ isolated function genarateChatCreationContent(ai:Prompt prompt) returns string|a
 isolated function handleParseResponseError(error chatResponseError) returns error {
     string message = chatResponseError.message();
     if message.includes(JSON_CONVERSION_ERROR) || message.includes(CONVERSION_ERROR) {
-        return error(ERROR_MESSAGE, cause = chatResponseError);
+        return error(ERROR_MESSAGE, chatResponseError);
     }
     return chatResponseError;
 }

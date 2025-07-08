@@ -73,6 +73,7 @@ import static io.ballerina.projects.util.ProjectConstants.EMPTY_STRING;
 /**
  * Modifier to add JSON schema annotations
  * for types used in Azure OpenAI provider's `generate` method calls.
+ * 
  * @since 1.0.0
  */
 class GenerateMethodModificationTask implements ModifierTask<SourceModifierContext> {
