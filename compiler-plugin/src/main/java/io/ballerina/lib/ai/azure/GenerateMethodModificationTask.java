@@ -133,7 +133,7 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
     private static TextDocument modifyDocument(Document document, ModifierData modifierData) {
         ModulePartNode modulePartNode = document.syntaxTree().rootNode();
         DocumentId documentId = document.documentId();
-        String aiImportPrefix = getAiModuleImportPrefix(modulePartNode.imports(), document);
+        String aiImportPrefix = getAiModuleImportPrefix(modulePartNode.imports());
         boolean isAiImportPresent = aiImportPrefix != null;
 
         TypeDefinitionModifier typeDefinitionModifier =
@@ -162,7 +162,7 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
                 .generate(modulePartNode);
     }
 
-    private static String getAiModuleImportPrefix(NodeList<ImportDeclarationNode> imports, Document document) {
+    private static String getAiModuleImportPrefix(NodeList<ImportDeclarationNode> imports) {
         for (ImportDeclarationNode importDeclarationNode : imports) {
             Optional<ImportOrgNameNode> importOrgNameNode = importDeclarationNode.orgName();
             if (importOrgNameNode.isEmpty()) {
@@ -215,11 +215,7 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
             this.document = document;
             this.typeMapper = analyserData.typeMapper;
             Optional<ClassSymbol> openAIProviderSymbol = getOpenAIProviderSymbol(document.syntaxTree().rootNode());
-            if (openAIProviderSymbol.isEmpty()) {
-                this.azureOpenAIProviderSymbol = null;
-            } else {
-                this.azureOpenAIProviderSymbol = openAIProviderSymbol.get();
-            }
+            this.azureOpenAIProviderSymbol = openAIProviderSymbol.orElse(null);
         }
 
         void generate(ModulePartNode modulePartNode) {
@@ -245,38 +241,38 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
         }
 
         private void updateTypeSchemaForTypeDef(RemoteMethodCallActionNode remoteMethodCallActionNode) {
-            semanticModel.typeOf(remoteMethodCallActionNode).ifPresent(expTypeSymbol -> {
-                if (!(expTypeSymbol instanceof UnionTypeSymbol expTypeUnionSymbol)) {
-                    return;
+            semanticModel.typeOf(remoteMethodCallActionNode).ifPresent(this::updateTypeSchema);
+        }
+
+        private void updateTypeSchema(TypeSymbol expTypeSymbol) {
+            if (!(expTypeSymbol instanceof UnionTypeSymbol expTypeUnionSymbol)) {
+                return;
+            }
+
+            TypeSymbol nonErrorTypeSymbol = null;
+            TypeSymbol typeRefTypeSymbol = null;
+            List<TypeSymbol> memberTypeSymbols = expTypeUnionSymbol.memberTypeDescriptors();
+            for (TypeSymbol memberTypeSymbol: memberTypeSymbols) {
+                if (memberTypeSymbol instanceof TypeReferenceTypeSymbol typeReferenceTypeSymbol) {
+                    typeRefTypeSymbol = typeReferenceTypeSymbol.typeDescriptor();
                 }
 
-                TypeSymbol nonErrorTypeSymbol = null;
-                TypeSymbol typeRefTypeSymbol = null;
-                List<TypeSymbol> memberTypeSymbols = expTypeUnionSymbol.memberTypeDescriptors();
-                for (TypeSymbol memberTypeSymbol: memberTypeSymbols) {
-                    if (memberTypeSymbol instanceof TypeReferenceTypeSymbol typeReferenceTypeSymbol) {
-                        typeRefTypeSymbol = typeReferenceTypeSymbol.typeDescriptor();
-                    }
-
-                    if (!(typeRefTypeSymbol instanceof ErrorTypeSymbol)) {
-                        nonErrorTypeSymbol = memberTypeSymbol;
-                    }
+                if (!(typeRefTypeSymbol instanceof ErrorTypeSymbol)) {
+                    nonErrorTypeSymbol = memberTypeSymbol;
                 }
+            }
 
-                if (!(nonErrorTypeSymbol instanceof TypeReferenceTypeSymbol)) {
-                    return;
-                }
-                populateTypeSchema(nonErrorTypeSymbol, typeMapper, modifierData.typeSchemas);
-            });
+            if (!(nonErrorTypeSymbol instanceof TypeReferenceTypeSymbol)) {
+                return;
+            }
+            populateTypeSchema(nonErrorTypeSymbol, typeMapper, modifierData.typeSchemas);
         }
 
         private static void populateTypeSchema(TypeSymbol memberType, TypeMapper typeMapper,
                                                Map<String, String> typeSchemas) {
-            switch (memberType) {
-                case TypeReferenceTypeSymbol typeReference ->
-                        typeSchemas.put(typeReference.definition().getName().get(),
-                                getJsonSchema(typeMapper.getSchema(typeReference)));
-                default -> { }
+            if (memberType instanceof TypeReferenceTypeSymbol typeReference) {
+                typeSchemas.put(typeReference.definition().getName().get(),
+                        getJsonSchema(typeMapper.getSchema(typeReference)));
             }
         }
 
