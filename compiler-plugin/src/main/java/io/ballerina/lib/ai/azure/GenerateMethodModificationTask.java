@@ -133,7 +133,7 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
     private static TextDocument modifyDocument(Document document, ModifierData modifierData) {
         ModulePartNode modulePartNode = document.syntaxTree().rootNode();
         DocumentId documentId = document.documentId();
-        String aiImportPrefix = retrieveAiModuleImportPrefix(modulePartNode.imports(), document);
+        String aiImportPrefix = getAiModuleImportPrefix(modulePartNode.imports(), document);
         boolean isAiImportPresent = aiImportPrefix != null;
 
         TypeDefinitionModifier typeDefinitionModifier =
@@ -162,7 +162,7 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
                 .generate(modulePartNode);
     }
 
-    private static String retrieveAiModuleImportPrefix(NodeList<ImportDeclarationNode> imports, Document document) {
+    private static String getAiModuleImportPrefix(NodeList<ImportDeclarationNode> imports, Document document) {
         for (ImportDeclarationNode importDeclarationNode : imports) {
             Optional<ImportOrgNameNode> importOrgNameNode = importDeclarationNode.orgName();
             if (importOrgNameNode.isEmpty()) {
