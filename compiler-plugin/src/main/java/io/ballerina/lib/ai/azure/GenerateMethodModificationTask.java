@@ -263,7 +263,7 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
                     }
                 }
 
-                if (!(nonErrorTypeSymbol instanceof TypeReferenceTypeSymbol typeRefSymbol)) {
+                if (!(nonErrorTypeSymbol instanceof TypeReferenceTypeSymbol)) {
                     return;
                 }
                 populateTypeSchema(nonErrorTypeSymbol, typeMapper, modifierData.typeSchemas);
