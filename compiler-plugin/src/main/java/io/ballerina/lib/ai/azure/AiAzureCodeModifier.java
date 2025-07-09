@@ -24,7 +24,7 @@ import io.ballerina.projects.plugins.CodeModifier;
 import io.ballerina.projects.plugins.CodeModifierContext;
 
 /**
- * Analyzes a Ballerina AI tools and report diagnostics, and generates json schema for tools.
+ * Analyzes the `generate` API and generates a JSON schema for the expected type.
  *
  * @since 1.0.0
  */

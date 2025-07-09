@@ -16,9 +16,3 @@ groupId = "io.ballerina.lib"
 artifactId = "ai.model.provider.azure-native"
 version = "@toml.version@"
 path = "../native/build/libs/ai.model.provider.azure-native-@project.version@.jar"
-
-[[dependency]]
-org = "ballerina"
-name = "ai"
-version = "1.0.1"
-repository="local"

@@ -95,7 +95,7 @@ isolated function getGetResultsTool(map<json> parameters) returns chat:ChatCompl
         }
     ];
 
-isolated function genarateChatCreationContent(ai:Prompt prompt) returns string|ai:Error {
+isolated function generateChatCreationContent(ai:Prompt prompt) returns string|ai:Error {
     string[] & readonly strings = prompt.strings;
     anydata[] insertions = prompt.insertions;
     string promptStr = strings[0];
@@ -136,7 +136,7 @@ isolated function handleParseResponseError(error chatResponseError) returns erro
 
 isolated function generateLlmResponse(chat:Client llmClient, string deploymentId,
         string apiVersion, ai:Prompt prompt, typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
-    string content = check genarateChatCreationContent(prompt);
+    string content = check generateChatCreationContent(prompt);
     ResponseSchema ResponseSchema = check getExpectedResponseSchema(expectedResponseTypedesc);
     chat:ChatCompletionTool[]|error tools = getGetResultsTool(ResponseSchema.schema);
     if tools is error {

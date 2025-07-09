@@ -22,7 +22,7 @@ import io.ballerina.projects.plugins.CompilerPlugin;
 import io.ballerina.projects.plugins.CompilerPluginContext;
 
 /**
- * Compiler plugin for the Ballerina AI package.
+ * Compiler plugin for the Ballerina Azure AI package.
  *
  * @since 1.0.0
  */

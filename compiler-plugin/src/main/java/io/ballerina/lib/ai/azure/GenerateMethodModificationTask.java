@@ -215,8 +215,7 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
             this.semanticModel = semanticModel;
             this.document = document;
             this.typeMapper = analyserData.typeMapper;
-            Optional<ClassSymbol> openAIProviderSymbol = getOpenAIProviderSymbol(document.syntaxTree().rootNode());
-            this.azureOpenAIProviderSymbol = openAIProviderSymbol.orElse(null);
+            this.azureOpenAIProviderSymbol = getOpenAIProviderSymbol(document.syntaxTree().rootNode()).orElse(null);
         }
 
         void generate(ModulePartNode modulePartNode) {
