@@ -198,8 +198,8 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
 
     private class GenerateMethodJsonSchemaGenerator extends NodeVisitor {
         private static final String GENERATE_METHOD_NAME = "generate";
-        private static final String OPEN_AI_PROVIDER_NAME = "OpenAiProvider";
-        private static final String AZURE_MODEL_PROVIDER_MODULE_NAME = "ai.model.provider.azure";
+        private static final String OPEN_AI_PROVIDER_NAME = "OpenAiModelProvider";
+        private static final String AZURE_MODEL_PROVIDER_MODULE_NAME = "ai.azure";
         private static final String AZURE_MODEL_PROVIDER_MODULE_VERSION = "1";
         private static final String AZURE_MODEL_PROVIDER_MODULE_ORG = "ballerinax";
         private static final String STRING = "string";
