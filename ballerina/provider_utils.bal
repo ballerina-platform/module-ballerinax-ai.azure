@@ -135,7 +135,8 @@ isolated function handleParseResponseError(error chatResponseError) returns erro
 }
 
 isolated function generateLlmResponse(chat:Client llmClient, string deploymentId,
-        string apiVersion, ai:Prompt prompt, typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
+        string apiVersion, decimal temperature, int maxTokens, ai:Prompt prompt, 
+        typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
     string content = check generateChatCreationContent(prompt);
     ResponseSchema ResponseSchema = check getExpectedResponseSchema(expectedResponseTypedesc);
     chat:ChatCompletionTool[]|error tools = getGetResultsTool(ResponseSchema.schema);
@@ -151,6 +152,8 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
             }
         ],
         tools,
+        temperature,
+        max_tokens: maxTokens,
         tool_choice: getGetResultsToolChoice()
     };
 

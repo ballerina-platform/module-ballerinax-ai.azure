@@ -38,7 +38,7 @@ dependencies {
     implementation group: 'io.swagger.core.v3', name: 'swagger-core', version: "${swaggerVersion}"
     implementation group: 'io.swagger.core.v3', name: 'swagger-models', version: "${swaggerVersion}"
 
-    implementation project(":ai.model.provider.azure-native")
+    implementation project(":ai.azure-native")
     externalJars group: 'io.ballerina.openapi', name: 'ballerina-to-openapi', version: "${ballerinaToOpenApiVersion}"
 }
 
@@ -81,7 +81,7 @@ compileJava {
     }
 }
 
-build.dependsOn ":ai.model.provider.azure-native:build"
+build.dependsOn ":ai.azure-native:build"
 
 task copyOpenApiJar(type: Copy) {
     from {

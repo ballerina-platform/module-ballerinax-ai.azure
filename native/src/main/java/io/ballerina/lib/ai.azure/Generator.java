@@ -32,9 +32,12 @@ public class Generator {
     public static Object generate(Environment env, BObject modelProvider,
                                   BObject prompt, BTypedesc expectedResponseTypedesc) {
         return env.getRuntime().callFunction(
-                new Module("ballerinax", "ai.model.provider.azure", "1"), "generateLlmResponse", null,
-                modelProvider.get(StringUtils.fromString("llmClient")), modelProvider.get(StringUtils.fromString(
-                        "deploymentId")), modelProvider.get(StringUtils.fromString("apiVersion")),
+                new Module("ballerinax", "ai.azure", "1"), "generateLlmResponse", null,
+                modelProvider.get(StringUtils.fromString("llmClient")), 
+                modelProvider.get(StringUtils.fromString("deploymentId")), 
+                modelProvider.get(StringUtils.fromString("apiVersion")),
+                modelProvider.get(StringUtils.fromString("temperature")), 
+                modelProvider.get(StringUtils.fromString("maxTokens")),
                 prompt, expectedResponseTypedesc);
     }
 }

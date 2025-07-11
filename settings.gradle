@@ -30,17 +30,17 @@ plugins {
     id "com.gradle.enterprise" version "3.2"
 }
 
-rootProject.name = 'module-ballerinax-ai.model.provider.azure'
+rootProject.name = 'module-ballerinax-ai.azure'
 
 include ':checkstyle'
-include ':ai.model.provider.azure-native'
-include ':ai.model.provider.azure-ballerina'
-include ':ai.model.provider.azure-compiler-plugin'
+include ':ai.azure-native'
+include ':ai.azure-ballerina'
+include ':ai.azure-compiler-plugin'
 
 project(':checkstyle').projectDir = file("build-config${File.separator}checkstyle")
-project(':ai.model.provider.azure-native').projectDir = file("native")
-project(':ai.model.provider.azure-ballerina').projectDir = file("ballerina")
-project(':ai.model.provider.azure-compiler-plugin').projectDir = file('compiler-plugin')
+project(':ai.azure-native').projectDir = file("native")
+project(':ai.azure-ballerina').projectDir = file("ballerina")
+project(':ai.azure-compiler-plugin').projectDir = file('compiler-plugin')
 
 gradleEnterprise {
     buildScan {

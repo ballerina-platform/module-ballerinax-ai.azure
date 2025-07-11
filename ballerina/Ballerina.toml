@@ -3,9 +3,9 @@ authors = ["Ballerina"]
 distribution = "2201.12.0"
 keywords = ["AI", "Agent", "Azure", "Model", "Provider"]
 license = ["Apache-2.0"]
-name = "ai.model.provider.azure"
+name = "ai.azure"
 org = "ballerinax"
-repository = "https://github.com/ballerina-platform/module-ballerinax-ai.model.provider.azure"
+repository = "https://github.com/ballerina-platform/module-ballerinax-ai.azure"
 version = "1.0.0"
 
 [platform.java21]
@@ -13,6 +13,6 @@ graalvmCompatible = true
 
 [[platform.java21.dependency]]
 groupId = "io.ballerina.lib"
-artifactId = "ai.model.provider.azure-native"
+artifactId = "ai.azure-native"
 version = "1.0.0"
-path = "../native/build/libs/ai.model.provider.azure-native-1.0.0-SNAPSHOT.jar"
+path = "../native/build/libs/ai.azure-native-1.0.0-SNAPSHOT.jar"

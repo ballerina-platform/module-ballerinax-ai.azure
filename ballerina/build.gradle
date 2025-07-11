@@ -24,7 +24,7 @@ plugins{
 
 description = 'Azure Model Provider - Ballerina'
 
-def packageName = "ai.model.provider.azure"
+def packageName = "ai.azure"
 def packageOrg = "ballerinax"
 def tomlVersion = stripBallerinaExtensionVersion("${project.version}")
 def ballerinaTomlFilePlaceHolder = new File("${project.rootDir}/build-config/resources/Ballerina.toml")
@@ -102,8 +102,8 @@ clean {
     delete 'build'
 }
 
-build.dependsOn ':ai.model.provider.azure-native:build'
-build.dependsOn ":ai.model.provider.azure-compiler-plugin:build"
+build.dependsOn ':ai.azure-native:build'
+build.dependsOn ":ai.azure-compiler-plugin:build"
 build.dependsOn "generatePomFileForMavenPublication"
 publishToMavenLocal.dependsOn build
 publish.dependsOn build
