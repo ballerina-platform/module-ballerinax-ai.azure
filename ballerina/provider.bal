@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/ai;
+import ballerina/jballerina.java;
 import ballerinax/azure.openai.chat;
 
 const DEFAULT_MAX_TOKEN_COUNT = 512;
@@ -113,6 +114,16 @@ public isolated client class OpenAiProvider {
         }
         return chatAssistantMessage;
     }
+
+    # Sends a chat request to the model and generates a value that belongs to the type
+    # corresponding to the type descriptor argument.
+    # 
+    # + prompt - The prompt to use in the chat messages
+    # + td - Type descriptor specifying the expected return type format
+    # + return - Generates a value that belongs to the type, or an error if generation fails
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>) returns td|ai:Error = @java:Method {
+        'class: "io.ballerina.lib.ai.azure.Generator"
+    } external;
 
     private isolated function mapToChatCompletionRequestMessage(ai:ChatMessage[] messages)
         returns chat:ChatCompletionRequestMessage[] {

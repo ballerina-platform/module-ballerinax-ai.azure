@@ -1,0 +1,9 @@
+[plugin]
+id = "ai-compiler-plugin"
+class = "io.ballerina.lib.ai.azure.AiAzureCompilerPlugin"
+
+[[dependency]]
+path = "../compiler-plugin/build/libs/ai.model.provider.azure-compiler-plugin-@project.version@.jar"
+
+[[dependency]]
+path = "../compiler-plugin/build/libs/ballerina-to-openapi-@ballerinaToOpenApiVersion.version@.jar"

@@ -17,6 +17,7 @@
  */
 
 plugins {
+    id "com.github.spotbugs-base"
     id 'com.github.johnrengelman.shadow'
     id 'de.undercouch.download'
     id 'net.researchgate.release'
@@ -60,8 +61,12 @@ allprojects {
 def moduleVersion = project.version.replace("-SNAPSHOT", "")
 
 task build {
+    dependsOn(':ai.model.provider.azure-compiler-plugin:build')
+    dependsOn(':ai.model.provider.azure-native:build')
     dependsOn(':ai.model.provider.azure-ballerina:build')
 }
+
+tasks.findByPath(':ai.model.provider.azure-ballerina:build').mustRunAfter(':ai.model.provider.azure-native:build')
 
 release {
     buildTasks = ['build']
