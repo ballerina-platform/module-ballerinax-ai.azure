@@ -30,7 +30,7 @@ plugins {
     id "com.gradle.enterprise" version "3.2"
 }
 
-rootProject.name = 'module-ballerinax-ai.model.provider.azure'
+rootProject.name = 'module-ballerinax-ai.azure'
 
 include ':checkstyle'
 include ':ai.model.provider.azure-native'
