@@ -24,11 +24,13 @@ plugins{
 
 description = 'Azure Model Provider - Ballerina'
 
-def packageName = "ai.model.provider.azure"
+def packageName = "ai.azure"
 def packageOrg = "ballerinax"
 def tomlVersion = stripBallerinaExtensionVersion("${project.version}")
 def ballerinaTomlFilePlaceHolder = new File("${project.rootDir}/build-config/resources/Ballerina.toml")
+def compilerPluginTomlFilePlaceHolder = new File("${project.rootDir}/build-config/resources/CompilerPlugin.toml")
 def ballerinaTomlFile = new File("$project.projectDir/Ballerina.toml")
+def compilerPluginTomlFile = new File("$project.projectDir/CompilerPlugin.toml")
 
 def stripBallerinaExtensionVersion(String extVersion) {
     if (extVersion.matches(project.ext.timestampedVersionRegex)) {
@@ -57,6 +59,11 @@ task updateTomlFiles {
         def newBallerinaToml = ballerinaTomlFilePlaceHolder.text.replace("@project.version@", project.version)
         newBallerinaToml = newBallerinaToml.replace("@toml.version@", tomlVersion)
         ballerinaTomlFile.text = newBallerinaToml
+
+        def ballerinaToOpenApiVersion = project.ballerinaToOpenApiVersion
+        def newCompilerPluginToml = compilerPluginTomlFilePlaceHolder.text.replace("@project.version@", project.version)
+        newCompilerPluginToml = newCompilerPluginToml.replace("@ballerinaToOpenApiVersion.version@", ballerinaToOpenApiVersion)
+        compilerPluginTomlFile.text = newCompilerPluginToml
     }
 }
 
@@ -95,6 +102,8 @@ clean {
     delete 'build'
 }
 
+build.dependsOn ':ai.azure-native:build'
+build.dependsOn ":ai.azure-compiler-plugin:build"
 build.dependsOn "generatePomFileForMavenPublication"
 publishToMavenLocal.dependsOn build
 publish.dependsOn build

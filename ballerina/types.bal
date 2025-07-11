@@ -14,6 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import ballerina/ai;
 import ballerina/http;
 
 # Configurations for controlling the behaviours when communicating with a remote HTTP endpoint.
@@ -75,4 +76,14 @@ public type ConnectionConfig record {|
     # Enables the inbound payload validation functionality which provided by the constraint package. Enabled by default
     @display {label: "Payload Validation"}
     boolean validation = true;
+|};
+
+type AzureChatUserMessage record {|
+    *ai:ChatUserMessage;
+    string content;
+|};
+
+type AzureChatSystemMessage record {|
+    *ai:ChatSystemMessage;
+    string content;
 |};
