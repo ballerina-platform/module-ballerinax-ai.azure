@@ -35,7 +35,7 @@ final ai:ModelProvider  azureOpenAiModel = check new azure:OpenAiModelProvider("
 
 ### Step 4: Invoke chat completion
 
-```
+```ballerina
 ai:ChatMessage[] chatMessages = [{role: "user", content: "hi"}];
 ai:ChatAssistantMessage response = check azureOpenAiModel->chat(chatMessages, tools = []);
 
