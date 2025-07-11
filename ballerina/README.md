@@ -12,14 +12,14 @@ Before using this module in your Ballerina application, first you must obtain th
 
 ## Quickstart
 
-To use the `ai.model.provider.azure` module in your Ballerina application, update the `.bal` file as follows:
+To use the `ai.azure` module in your Ballerina application, update the `.bal` file as follows:
 
 ### Step 1: Import the module
 
-Import the `ai.model.provider.azure;` module.
+Import the `ai.azure;` module.
 
 ```ballerina
-import ballerinax/ai.model.provider.azure;
+import ballerinax/ai.azure;
 ```
 
 ### Step 2: Intialize the Model Provider
@@ -28,14 +28,14 @@ Here's how to initialize the Model Provider:
 
 ```ballerina
 import ballerina/ai;
-import ballerinax/ai.model.provider.azure;
+import ballerinax/ai.azure;
 
-final ai:ModelProvider  azureOpenAiModel = check new azure:OpenAiProvider("https://service-url", "api-key", "deployment-id", "deployment-version");
+final ai:ModelProvider  azureOpenAiModel = check new azure:OpenAiModelProvider("https://service-url", "api-key", "deployment-id", "deployment-version");
 ```
 
 ### Step 4: Invoke chat completion
 
-```
+```ballerina
 ai:ChatMessage[] chatMessages = [{role: "user", content: "hi"}];
 ai:ChatAssistantMessage response = check azureOpenAiModel->chat(chatMessages, tools = []);
 

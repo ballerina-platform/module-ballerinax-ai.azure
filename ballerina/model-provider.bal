@@ -21,11 +21,13 @@ const DEFAULT_MAX_TOKEN_COUNT = 512;
 const DEFAULT_TEMPERATURE = 0.7d;
 
 # OpenAiProvider is a client class that provides an interface for interacting with Azure-hosted OpenAI language models.
-public isolated client class OpenAiProvider {
+public isolated client class OpenAiModelProvider {
     *ai:ModelProvider;
     private final chat:Client llmClient;
     private final string deploymentId;
     private final string apiVersion;
+    private final decimal temperature;
+    private final int maxTokens;
 
     # Initializes the Azure OpenAI model with the given connection configuration and model configuration.
     #
@@ -74,17 +76,24 @@ public isolated client class OpenAiProvider {
         self.llmClient = llmClient;
         self.deploymentId = deploymentId;
         self.apiVersion = apiVersion;
+        self.temperature = temperature;
+        self.maxTokens = maxTokens;
     }
 
     # Sends a chat request to the OpenAI model with the given messages and tools.
     #
-    # + messages - List of chat messages 
+    # + messages - List of chat messages or a user message
     # + tools - Tool definitions to be used for the tool call
     # + stop - Stop sequence to stop the completion
     # + return - Function to be called, chat response or an error in-case of failures
-    isolated remote function chat(ai:ChatMessage[] messages, ai:ChatCompletionFunctions[] tools, string? stop = ())
-        returns ai:ChatAssistantMessage|ai:LlmError {
-        chat:CreateChatCompletionRequest request = {stop, messages: self.mapToChatCompletionRequestMessage(messages)};
+    isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages, ai:ChatCompletionFunctions[] tools, string? stop = ())
+        returns ai:ChatAssistantMessage|ai:Error {
+        chat:CreateChatCompletionRequest request = {
+            stop,
+            messages: check self.mapToChatCompletionRequestMessage(messages),
+            temperature: self.temperature,
+            max_tokens: self.maxTokens
+        };
         if tools.length() > 0 {
             request.functions = tools;
         }
@@ -114,11 +123,17 @@ public isolated client class OpenAiProvider {
         return chatAssistantMessage;
     }
 
-    private isolated function mapToChatCompletionRequestMessage(ai:ChatMessage[] messages)
-        returns chat:ChatCompletionRequestMessage[] {
+    private isolated function mapToChatCompletionRequestMessage(ai:ChatMessage[]|ai:ChatUserMessage messages)
+        returns chat:ChatCompletionRequestMessage[]|ai:Error {
         chat:ChatCompletionRequestMessage[] chatCompletionRequestMessages = [];
+        if messages is ai:ChatUserMessage {
+            chatCompletionRequestMessages.push(check self.mapToAzureChatMessage(messages));
+            return chatCompletionRequestMessages;
+        }
         foreach ai:ChatMessage message in messages {
-            if message is ai:ChatAssistantMessage {
+            if message is ai:ChatUserMessage|ai:ChatSystemMessage {
+                chatCompletionRequestMessages.push(check self.mapToAzureChatMessage(message));
+            } else if message is ai:ChatAssistantMessage {
                 chat:ChatCompletionRequestMessage assistantMessage = {role: ai:ASSISTANT};
                 ai:FunctionCall[]? toolCalls = message.toolCalls;
                 if toolCalls is ai:FunctionCall[] {
@@ -131,7 +146,7 @@ public isolated client class OpenAiProvider {
                     assistantMessage["content"] = message?.content;
                 }
                 chatCompletionRequestMessages.push(assistantMessage);
-            } else {
+            } else if message is ai:ChatFunctionMessage {
                 chatCompletionRequestMessages.push(message);
             }
         }
@@ -148,4 +163,64 @@ public isolated client class OpenAiProvider {
             return error ai:LlmError("Invalid or malformed arguments received in function call response.", e);
         }
     }
+
+    private isolated function mapToAzureChatMessage(ai:ChatUserMessage|ai:ChatSystemMessage message)
+    returns AzureChatUserMessage|AzureChatSystemMessage|ai:Error {
+        if message is ai:ChatSystemMessage {
+            return {
+                role: ai:SYSTEM,
+                content: check getChatMessageStringContent(message.content),
+                name: message.name
+            };
+        }
+        return {
+            role: ai:USER,
+            content: check getChatMessageStringContent(message.content),
+            name: message.name
+        };
+    }
+
+    // TODO
+    isolated remote function generate(ai:Prompt prompt, typedesc<anydata> td = <>) returns td|ai:Error = external;
+}
+
+isolated function getChatMessageStringContent(ai:Prompt|string prompt) returns string|ai:Error {
+    if prompt is string {
+        return prompt;
+    }
+    string[] & readonly strings = prompt.strings;
+    anydata[] insertions = prompt.insertions;
+    string promptStr = strings[0];
+    foreach int i in 0 ..< insertions.length() {
+        string str = strings[i + 1];
+        anydata insertion = insertions[i];
+
+        if insertion is ai:TextDocument|ai:TextChunk {
+            promptStr += insertion.content + " " + str;
+            continue;
+        }
+
+        if insertion is ai:TextDocument[] {
+            foreach ai:TextDocument doc in insertion {
+                promptStr += doc.content + " ";
+            }
+            promptStr += str;
+            continue;
+        }
+
+        if insertion is ai:TextChunk[] {
+            foreach ai:TextChunk doc in insertion {
+                promptStr += doc.content + " ";
+            }
+            promptStr += str;
+            continue;
+        }
+
+        if insertion is ai:Document {
+            return error ai:Error("Only Text Documents are currently supported.");
+        }
+
+        promptStr += insertion.toString() + str;
+    }
+    return promptStr.trim();
 }

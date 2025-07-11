@@ -29,11 +29,11 @@ plugins {
     id "com.gradle.enterprise" version "3.2"
 }
 
-rootProject.name = 'module-ballerinax-ai.model.provider.azure'
+rootProject.name = 'module-ballerinax-ai.azure'
 
-include ':ai.model.provider.azure-ballerina'
+include ':ai.azure-ballerina'
 
-project(':ai.model.provider.azure-ballerina').projectDir = file("ballerina")
+project(':ai.azure-ballerina').projectDir = file("ballerina")
 
 gradleEnterprise {
     buildScan {
