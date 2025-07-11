@@ -1,5 +1,5 @@
 [plugin]
-id = "ai-compiler-plugin"
+id = "ai-azure-compiler-plugin"
 class = "io.ballerina.lib.ai.azure.AiAzureCompilerPlugin"
 
 [[dependency]]
