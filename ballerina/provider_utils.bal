@@ -15,11 +15,23 @@
 // under the License.
 
 import ballerina/ai;
+import ballerina/constraint;
+import ballerina/lang.array;
 import ballerinax/azure.openai.chat;
 
 type ResponseSchema record {|
     map<json> schema;
     boolean isOriginallyJsonObject = true;
+|};
+
+type TextContentPart record {|
+    readonly string 'type = "text";
+    string text;
+|};
+
+type ImageContentPart record {|
+    readonly string 'type = "image_url";
+    record {|string url;|} image_url;
 |};
 
 const JSON_CONVERSION_ERROR = "FromJsonStringError";
@@ -95,35 +107,86 @@ isolated function getGetResultsTool(map<json> parameters) returns chat:ChatCompl
         }
     ];
 
-isolated function generateChatCreationContent(ai:Prompt prompt) returns string|ai:Error {
+isolated function generateChatCreationMultimodalContent(ai:Prompt prompt)
+                        returns (TextContentPart|ImageContentPart)[]|ai:Error {
     string[] & readonly strings = prompt.strings;
     anydata[] insertions = prompt.insertions;
-    string promptStr = strings[0];
+    (TextContentPart|ImageContentPart)[] contentParts = [];
+
+    if strings.length() > 0 {
+        contentParts.push({
+            text: strings[0]
+        });
+    }
+
     foreach int i in 0 ..< insertions.length() {
-        string str = strings[i + 1];
         anydata insertion = insertions[i];
+        string str = strings[i + 1];
 
         if insertion is ai:TextDocument {
-            promptStr += insertion.content + " " + str;
-            continue;
-        }
-
-        if insertion is ai:TextDocument[] {
+            contentParts.push({
+                text: insertion.content
+            });
+        } else if insertion is ai:TextDocument[] {
             foreach ai:TextDocument doc in insertion {
-                promptStr += doc.content  + " ";
-                
+                contentParts.push({
+                    text: doc.content
+                });
             }
-            promptStr += str;
-            continue;
+        } else if insertion is ai:ImageDocument {
+            contentParts.push(check buildImageContentPart(insertion));
+        } else if insertion is ai:ImageDocument[] {
+            foreach ai:ImageDocument doc in insertion {
+                contentParts.push(check buildImageContentPart(doc));
+            }
+        } else if insertion is ai:Document {
+            return error("Only text, image, audio, and file documents are supported.");
+        } else {
+            contentParts.push({
+                text: insertion.toString()
+            });
         }
 
-        if insertion is ai:Document {
-            return error ai:Error("Only Text Documents are currently supported.");
+        if str.trim().length() > 0 {
+            contentParts.push({
+                text: str
+            });
         }
-
-        promptStr += insertion.toString() + str;
     }
-    return promptStr.trim();
+    return contentParts;
+}
+
+isolated function buildImageContentPart(ai:ImageDocument doc) returns ImageContentPart|ai:Error {
+    ai:ImageDocument|constraint:Error validatedImageDoc = constraint:validate(doc);
+    if validatedImageDoc is error {
+        return error("Invalid image document: " + validatedImageDoc.message());
+    }
+
+    return {
+        "image_url": {
+            "url": check constructImageUrl(doc.content, doc.metadata?.mimeType)
+        }
+    };
+}
+
+isolated function constructImageUrl(ai:Url|byte[] content, string? mimeType) returns string|ai:Error {
+    if content is ai:Url {
+        return content;
+    }
+
+    return string `data:${mimeType ?: "image/*"};base64,${check getBase64EncodedString(content)}`;
+}
+
+isolated function getBase64EncodedString(byte[] content) returns string|ai:Error {
+    if content.length() == 0 {
+        return error("Image content is empty.");
+    }
+    string|error binaryContent = array:toBase64(content);
+    if binaryContent is error {
+        return error("Failed to convert byte array to string: " + binaryContent.message() + ", " +
+                        binaryContent.detail().toBalString());
+    }
+    return binaryContent;
 }
 
 isolated function handleParseResponseError(error chatResponseError) returns error {
@@ -137,7 +200,7 @@ isolated function handleParseResponseError(error chatResponseError) returns erro
 isolated function generateLlmResponse(chat:Client llmClient, string deploymentId,
         string apiVersion, decimal temperature, int maxTokens, ai:Prompt prompt, 
         typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
-    string content = check generateChatCreationContent(prompt);
+    (TextContentPart|ImageContentPart)[] content = check generateChatCreationMultimodalContent(prompt);
     ResponseSchema ResponseSchema = check getExpectedResponseSchema(expectedResponseTypedesc);
     chat:ChatCompletionTool[]|error tools = getGetResultsTool(ResponseSchema.schema);
     if tools is error {

@@ -112,6 +112,58 @@ function testGenerateMethodWithTextDocumentArray() returns error? {
 }
 
 @test:Config
+function testGenerateMethodWithImageDocumentWithBinaryData() returns ai:Error? {
+    ai:ImageDocument img = {
+        content: imageBinaryData
+    };
+
+    string|error description = openAiProvider->generate(`Describe the following image. ${img}.`);
+    test:assertEquals(description, "This is a sample image description.");
+}
+
+@test:Config
+function testGenerateMethodWithImageDocumentWithUrl() returns ai:Error? {
+    ai:ImageDocument img = {
+        content: "https://example.com/image.jpg",
+        metadata: {
+            mimeType: "image/jpg"
+        }
+    };
+
+    string|error description = openAiProvider->generate(`Describe the image. ${img}.`);
+    test:assertEquals(description, "This is a sample image description.");
+}
+
+// Disabled due to https://github.com/ballerina-platform/ballerina-library/issues/8102.
+@test:Config {enable: false}
+function testGenerateMethodWithImageDocumentWithInvalidUrl() returns ai:Error? {
+    ai:ImageDocument img = {
+        content: "This-is-not-a-valid-url"
+    };
+
+    string|ai:Error description = openAiProvider->generate(`Please describe the image. ${img}.`);
+    test:assertTrue(description is ai:Error);
+    test:assertTrue((<ai:Error>description).message().includes("Must be a valid URL"));
+}
+
+@test:Config
+function testGenerateMethodWithImageDocumentArray() returns ai:Error? {
+    ai:ImageDocument img = {
+        content: imageBinaryData,
+        metadata: {
+            mimeType: "image/png"
+        }
+    };
+    ai:ImageDocument img2 = {
+        content: "https://example.com/image.jpg"
+    };
+
+    string[]|error descriptions = openAiProvider->generate(
+        `Describe the following images. ${<ai:ImageDocument[]>[img, img2]}.`);
+    test:assertEquals(descriptions, ["This is a sample image description.", "This is a sample image description."]);
+}
+
+@test:Config
 function testGenerateMethodWithRecordArrayReturnType() returns error? {
     int maxScore = 10;
     Review r = check review.fromJsonStringWithType(Review);
