@@ -24,6 +24,8 @@ type ResponseSchema record {|
     boolean isOriginallyJsonObject = true;
 |};
 
+type DocumentContentPart TextContentPart|ImageContentPart;
+
 type TextContentPart record {|
     readonly string 'type = "text";
     string text;
@@ -107,70 +109,80 @@ isolated function getGetResultsTool(map<json> parameters) returns chat:ChatCompl
         }
     ];
 
-isolated function generateChatCreationMultimodalContent(ai:Prompt prompt)
-                        returns (TextContentPart|ImageContentPart)[]|ai:Error {
+isolated function generateChatCreationContent(ai:Prompt prompt)returns DocumentContentPart[]|ai:Error {
     string[] & readonly strings = prompt.strings;
     anydata[] insertions = prompt.insertions;
-    (TextContentPart|ImageContentPart)[] contentParts = [];
+    DocumentContentPart[] contentParts = [];
+    string accumulatedTextContent = "";
 
     if strings.length() > 0 {
-        contentParts.push({
-            text: strings[0]
-        });
+        accumulatedTextContent += strings[0];
     }
 
     foreach int i in 0 ..< insertions.length() {
         anydata insertion = insertions[i];
         string str = strings[i + 1];
 
-        if insertion is ai:TextDocument {
-            contentParts.push({
-                text: insertion.content
-            });
-        } else if insertion is ai:TextDocument[] {
-            foreach ai:TextDocument doc in insertion {
-                contentParts.push({
-                    text: doc.content
-                });
+        if insertion is ai:Document {
+            addTextContentPart(buildTextContentPart(accumulatedTextContent), contentParts);
+            check addDocumentContentPart(insertion, contentParts);
+            accumulatedTextContent = "";
+        } else if insertion is ai:Document[] {
+            addTextContentPart(buildTextContentPart(accumulatedTextContent), contentParts);
+            foreach ai:Document doc in insertion {
+                check addDocumentContentPart(doc, contentParts);
             }
-        } else if insertion is ai:ImageDocument {
-            contentParts.push(check buildImageContentPart(insertion));
-        } else if insertion is ai:ImageDocument[] {
-            foreach ai:ImageDocument doc in insertion {
-                contentParts.push(check buildImageContentPart(doc));
-            }
-        } else if insertion is ai:Document {
-            return error("Only text, image, audio, and file documents are supported.");
+            accumulatedTextContent = "";
         } else {
-            contentParts.push({
-                text: insertion.toString()
-            });
+            accumulatedTextContent += insertion.toString();
         }
-
-        if str.trim().length() > 0 {
-            contentParts.push({
-                text: str
-            });
-        }
+        accumulatedTextContent += str;
     }
+
+    addTextContentPart(buildTextContentPart(accumulatedTextContent), contentParts);
     return contentParts;
 }
 
-isolated function buildImageContentPart(ai:ImageDocument doc) returns ImageContentPart|ai:Error {
-    ai:ImageDocument|constraint:Error validatedImageDoc = constraint:validate(doc);
-    if validatedImageDoc is error {
-        return error("Invalid image document: " + validatedImageDoc.message());
+isolated function addDocumentContentPart(ai:Document doc, DocumentContentPart[] contentParts) returns ai:Error? {
+    if doc is ai:TextDocument {
+        return addTextContentPart(buildTextContentPart(doc.content), contentParts);
+    } else if doc is ai:ImageDocument {
+        return contentParts.push(check buildImageContentPart(doc));
+    }
+    return error ai:Error("Only text and image documents are supported.");
+}
+
+isolated function addTextContentPart(TextContentPart? contentPart, DocumentContentPart[] contentParts) {
+    if contentPart is TextContentPart {
+        return contentParts.push(contentPart);
+    }
+}
+
+isolated function buildTextContentPart(string content) returns TextContentPart? {
+    if content.length() == 0 {
+        return;
     }
 
     return {
-        "image_url": {
-            "url": check constructImageUrl(doc.content, doc.metadata?.mimeType)
+        'type: "text",
+        text: content
+    };
+}
+
+isolated function buildImageContentPart(ai:ImageDocument doc) returns ImageContentPart|ai:Error {
+    return {
+        image_url: {
+            url: check buildImageUrl(doc.content, doc.metadata?.mimeType)
         }
     };
 }
 
-isolated function constructImageUrl(ai:Url|byte[] content, string? mimeType) returns string|ai:Error {
+isolated function buildImageUrl(ai:Url|byte[] content, string? mimeType) returns string|ai:Error {
     if content is ai:Url {
+        ai:Url|constraint:Error validationRes = constraint:validate(content);
+        if validationRes is error {
+            return error(validationRes.message(), validationRes.cause());
+        }
         return content;
     }
 
@@ -178,9 +190,6 @@ isolated function constructImageUrl(ai:Url|byte[] content, string? mimeType) ret
 }
 
 isolated function getBase64EncodedString(byte[] content) returns string|ai:Error {
-    if content.length() == 0 {
-        return error("Image content is empty.");
-    }
     string|error binaryContent = array:toBase64(content);
     if binaryContent is error {
         return error("Failed to convert byte array to string: " + binaryContent.message() + ", " +
@@ -200,7 +209,7 @@ isolated function handleParseResponseError(error chatResponseError) returns erro
 isolated function generateLlmResponse(chat:Client llmClient, string deploymentId,
         string apiVersion, decimal temperature, int maxTokens, ai:Prompt prompt, 
         typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
-    (TextContentPart|ImageContentPart)[] content = check generateChatCreationMultimodalContent(prompt);
+    DocumentContentPart[] content = check generateChatCreationContent(prompt);
     ResponseSchema ResponseSchema = check getExpectedResponseSchema(expectedResponseTypedesc);
     chat:ChatCompletionTool[]|error tools = getGetResultsTool(ResponseSchema.schema);
     if tools is error {
@@ -223,7 +232,7 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
     chat:CreateChatCompletionResponse|error response =
         llmClient->/deployments/[deploymentId]/chat/completions.post(apiVersion, request);
     if response is error {
-        return error("LLM call failed: " + response.message());
+        return error("LLM call failed: " + response.message(), response.cause());
     }
 
     record {
