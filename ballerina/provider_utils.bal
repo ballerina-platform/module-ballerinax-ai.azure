@@ -24,16 +24,31 @@ type ResponseSchema record {|
     boolean isOriginallyJsonObject = true;
 |};
 
-type DocumentContentPart TextContentPart|ImageContentPart;
+type DocumentContentPart TextContentPart|ImageContentPart|AudioContentPart|FileContentPart;
 
 type TextContentPart record {|
-    readonly string 'type = "text";
+    readonly "text" 'type = "text";
     string text;
 |};
 
 type ImageContentPart record {|
-    readonly string 'type = "image_url";
+    readonly "image_url" 'type = "image_url";
     record {|string url;|} image_url;
+|};
+
+type AudioContentPart record {|
+    readonly "input_audio" 'type = "input_audio";
+    record {|
+        string format;
+        string data;
+    |} input_audio;
+|};
+
+type FileContentPart record {|
+    readonly "file" 'type = "file";
+    string file_data?;
+    string file_id?;
+    string filename?;
 |};
 
 const JSON_CONVERSION_ERROR = "FromJsonStringError";
@@ -99,17 +114,17 @@ isolated function getGetResultsToolChoice() returns chat:ChatCompletionNamedTool
 
 isolated function getGetResultsTool(map<json> parameters) returns chat:ChatCompletionTool[]|error =>
     [
-        {
-            'type: FUNCTION,
-            'function: {
-                name: GET_RESULTS_TOOL,
-                parameters: check parameters.cloneWithType(),
-                description: "Tool to call with the response from a large language model (LLM) for a user prompt."
-            }
+    {
+        'type: FUNCTION,
+        'function: {
+            name: GET_RESULTS_TOOL,
+            parameters: check parameters.cloneWithType(),
+            description: "Tool to call with the response from a large language model (LLM) for a user prompt."
         }
-    ];
+    }
+];
 
-isolated function generateChatCreationContent(ai:Prompt prompt)returns DocumentContentPart[]|ai:Error {
+isolated function generateChatCreationContent(ai:Prompt prompt) returns DocumentContentPart[]|ai:Error {
     string[] & readonly strings = prompt.strings;
     anydata[] insertions = prompt.insertions;
     DocumentContentPart[] contentParts = [];
@@ -125,14 +140,14 @@ isolated function generateChatCreationContent(ai:Prompt prompt)returns DocumentC
 
         if insertion is ai:Document {
             addTextContentPart(buildTextContentPart(accumulatedTextContent), contentParts);
-            check addDocumentContentPart(insertion, contentParts);
             accumulatedTextContent = "";
+            check addDocumentContentPart(insertion, contentParts);
         } else if insertion is ai:Document[] {
             addTextContentPart(buildTextContentPart(accumulatedTextContent), contentParts);
+            accumulatedTextContent = "";
             foreach ai:Document doc in insertion {
                 check addDocumentContentPart(doc, contentParts);
             }
-            accumulatedTextContent = "";
         } else {
             accumulatedTextContent += insertion.toString();
         }
@@ -148,6 +163,10 @@ isolated function addDocumentContentPart(ai:Document doc, DocumentContentPart[] 
         return addTextContentPart(buildTextContentPart(doc.content), contentParts);
     } else if doc is ai:ImageDocument {
         return contentParts.push(check buildImageContentPart(doc));
+    } else if doc is ai:AudioDocument {
+        return contentParts.push(check buildAudioContentPart(doc));
+    } else if doc is ai:FileDocument {
+        return contentParts.push(check buildFileContentPart(doc));
     }
     return error ai:Error("Only text and image documents are supported.");
 }
@@ -169,13 +188,48 @@ isolated function buildTextContentPart(string content) returns TextContentPart? 
     };
 }
 
-isolated function buildImageContentPart(ai:ImageDocument doc) returns ImageContentPart|ai:Error {
-    return {
-        image_url: {
-            url: check buildImageUrl(doc.content, doc.metadata?.mimeType)
-        }
-    };
+isolated function buildImageContentPart(ai:ImageDocument doc) returns ImageContentPart|ai:Error =>
+    {
+    image_url: {
+        url: check buildImageUrl(doc.content, doc.metadata?.mimeType)
+    }
+};
+
+isolated function buildAudioContentPart(ai:AudioDocument doc) returns AudioContentPart|ai:Error {
+    "mp3"|"wav"|error format = doc?.metadata["format"].ensureType();
+    if format is error {
+        return error("Please specify the audio format in the 'format' field of the metadata; supported values are 'mp3' and 'wav'");
+    }
+
+    ai:Url|byte[] content = doc.content;
+    if content is ai:Url {
+        return error("URL-based audio content isn’t supported at the moment.");
+    }
+
+    return {input_audio: {format, data: check getBase64EncodedString(content)}};
 }
+
+isolated function buildFileContentPart(ai:FileDocument doc) returns FileContentPart|ai:Error {
+    string? fileName = doc.metadata?.fileName;
+    byte[]|ai:Url|ai:FileId content = doc.content;
+    if content is ai:Url {
+        return error("URL-based file content isn’t supported at the moment.");
+    }
+
+    if content is ai:FileId {
+        return {
+            file_id: content.fileId,
+            filename: fileName
+        };
+    }
+
+    if content is byte[] {
+        return {
+            file_data: check getBase64EncodedString(content),
+            filename: fileName
+        };
+    }
+};
 
 isolated function buildImageUrl(ai:Url|byte[] content, string? mimeType) returns string|ai:Error {
     if content is ai:Url {
@@ -207,7 +261,7 @@ isolated function handleParseResponseError(error chatResponseError) returns erro
 }
 
 isolated function generateLlmResponse(chat:Client llmClient, string deploymentId,
-        string apiVersion, decimal temperature, int maxTokens, ai:Prompt prompt, 
+        string apiVersion, decimal temperature, int maxTokens, ai:Prompt prompt,
         typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
     DocumentContentPart[] content = check generateChatCreationContent(prompt);
     ResponseSchema ResponseSchema = check getExpectedResponseSchema(expectedResponseTypedesc);
