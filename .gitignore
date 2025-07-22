@@ -45,7 +45,6 @@ gradle-app.setting
 examples/**/Dependencies.toml
 examples/**/Config.toml
 examples/**/target
-ballerina/Dependencies.toml
 ballerina/Config.toml
 ballerina/target
 ballerina/sample*
