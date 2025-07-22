@@ -198,12 +198,14 @@ isolated function buildImageContentPart(ai:ImageDocument doc) returns ImageConte
 isolated function buildAudioContentPart(ai:AudioDocument doc) returns AudioContentPart|ai:Error {
     "mp3"|"wav"|error format = doc?.metadata["format"].ensureType();
     if format is error {
-        return error("Please specify the audio format in the 'format' field of the metadata; supported values are 'mp3' and 'wav'");
+        return error(
+            "Please specify the audio format in the 'format' field of the metadata; supported values are 'mp3' and 'wav'"
+        );
     }
 
     ai:Url|byte[] content = doc.content;
     if content is ai:Url {
-        return error("URL-based audio content isn’t supported at the moment.");
+        return error("URL-based audio content is not supported at the moment.");
     }
 
     return {input_audio: {format, data: check getBase64EncodedString(content)}};
@@ -213,7 +215,7 @@ isolated function buildFileContentPart(ai:FileDocument doc) returns FileContentP
     string? fileName = doc.metadata?.fileName;
     byte[]|ai:Url|ai:FileId content = doc.content;
     if content is ai:Url {
-        return error("URL-based file content isn’t supported at the moment.");
+        return error("URL-based file content is not supported at the moment.");
     }
 
     if content is ai:FileId {
