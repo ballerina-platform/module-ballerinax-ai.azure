@@ -93,6 +93,38 @@ isolated function getExpectedParameterSchema(string message) returns map<json> {
         };
     }
 
+    if message.startsWith("Give me a random joke about cricketers") {
+        return expectedParameterSchemaForRecUnionBasicType;
+    }
+
+    if message.startsWith("Give me a random joke") {
+        return {"type":"object","properties":{"result":{"anyOf":[{"type":"string"},{"type":"null"}]}}};
+    }
+
+    if message.startsWith("Name a random world class cricketer in India") {
+        return expectedParameterSchemaForRecUnionNull;
+    }
+
+    if message.startsWith("Name 10 world class cricketers in India") {
+        return expectedParameterSchemaForArrayOnly;
+    }
+
+    if message.startsWith("Name 10 world class cricketers as string") {
+        return expectedParameterSchemaForArrayUnionBasicType;
+    }
+
+    if message.startsWith("Name top 10 world class cricketers") {
+        return expectedParameterSchemaForArrayUnionRec;
+    }
+
+    if message.startsWith("Name a random world class cricketer") {
+        return expectedParameterSchemaForArrayUnionRec;
+    }
+
+    if message.startsWith("Name 10 world class cricketers") {
+        return expectedParamSchemaForArrayUnionNull;
+    }
+
     return {};
 }
 
@@ -152,6 +184,26 @@ isolated function getTheMockLLMResult(string message) returns string {
 
     if message.startsWith("How would you rate this blog") {
         return review;
+    }
+
+    if message.startsWith("Name a random world class cricketer in India") {
+        return "{\"result\": {\"name\": \"Sanga\"}}";
+    }
+
+    if message.startsWith("Name a random world class cricketer") {
+        return "{\"result\": {\"name\": \"Sanga\"}}";
+    }
+
+    if message.startsWith("Name 10 world class cricketers") {
+        return "{\"result\": [{\"name\": \"Virat Kohli\"}, {\"name\": \"Joe Root\"}, {\"name\": \"Steve Smith\"}, {\"name\": \"Kane Williamson\"}, {\"name\": \"Babar Azam\"}, {\"name\": \"Ben Stokes\"}, {\"name\": \"Jasprit Bumrah\"}, {\"name\": \"Pat Cummins\"}, {\"name\": \"Shaheen Afridi\"}, {\"name\": \"Rashid Khan\"}]}";
+    }
+
+    if message.startsWith("Name top 10 world class cricketers") {
+        return "{\"result\": [{\"name\": \"Virat Kohli\"}, {\"name\": \"Joe Root\"}, {\"name\": \"Steve Smith\"}, {\"name\": \"Kane Williamson\"}, {\"name\": \"Babar Azam\"}, {\"name\": \"Ben Stokes\"}, {\"name\": \"Jasprit Bumrah\"}, {\"name\": \"Pat Cummins\"}, {\"name\": \"Shaheen Afridi\"}, {\"name\": \"Rashid Khan\"}]}";
+    }
+
+    if message.startsWith("Give me a random joke") {
+        return "{\"result\": \"This is a random joke\"}";
     }
 
     return "INVALID";
@@ -238,6 +290,38 @@ isolated function getExpectedPrompt(string message) returns string {
         return string `Who is a popular sportsperson that was 
         born in the decade starting from 1990 with Simone in 
         their name?`;
+    }
+
+    if message.startsWith("Name 10 world class cricketers in India") {
+        return "Name 10 world class cricketers in India";
+    }
+
+    if message.startsWith("Name 10 world class cricketers as string") {
+        return "Name 10 world class cricketers as string";
+    }
+
+    if message.startsWith("Name 10 world class cricketers") {
+        return "Name 10 world class cricketers";
+    }
+
+    if message.startsWith("Name top 10 world class cricketers") {
+        return "Name top 10 world class cricketers"; 
+    }
+
+    if message.startsWith("Name a random world class cricketer in India") {
+        return "Name a random world class cricketer in India";
+    }
+
+    if message.startsWith("Name a random world class cricketer") {
+        return "Name a random world class cricketer";
+    }
+
+    if message.startsWith("Give me a random joke about cricketers") {
+        return "Give me a random joke about cricketers";
+    }
+
+    if message.startsWith("Give me a random joke") {
+        return "Give me a random joke";
     }
 
     return "INVALID";
