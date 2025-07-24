@@ -85,6 +85,14 @@ isolated function getExpectedParameterSchema(string message) returns map<json> {
         return expectedParameterSchemaStringForRateBlog8;
     }
 
+    if message.startsWith("Please describe the audio content. ") {
+        return expectedParameterSchemaStringForRateBlog8;
+    }
+
+    if message.startsWith("Please describe the following audio contents.") {
+        return expectedParameterSchemaStringForRateBlog7;
+    }
+
     if message.startsWith("Who is a popular sportsperson") {
         return {
             "type": "object",
@@ -186,6 +194,15 @@ isolated function getTheMockLLMResult(string message) returns string {
         return "{\"result\": \"This is a sample image description.\"}";
     }
 
+    if message.startsWith("Please describe the audio content. ") {
+        return "{\"result\": \"This is a sample audio description.\"}";
+    }
+
+
+    if message.startsWith("Please describe the following audio contents.") {
+        return "{\"result\": [\"This is a sample audio description.\", \"This is a sample audio description.\"]}";
+    }
+
     return "INVALID";
 }
 
@@ -271,7 +288,7 @@ isolated function getExpectedContentParts(string message) returns (map<anydata>)
             {
                 "type": "image_url",
                 "image_url": {
-                    "url": string `data:image/png;base64,${imageStr}`
+                    "url": string `data:image/png;base64,${sampleBinaryStr}`
                 }
             },
             {
@@ -290,7 +307,7 @@ isolated function getExpectedContentParts(string message) returns (map<anydata>)
             {
                 "type": "image_url",
                 "image_url": {
-                    "url": string `data:image/png;base64,${imageStr}`
+                    "url": string `data:image/png;base64,${sampleBinaryStr}`
                 }
             },
             {
@@ -307,7 +324,7 @@ isolated function getExpectedContentParts(string message) returns (map<anydata>)
             {
                 "type": "image_url",
                 "image_url": {
-                    "url": string `data:image/png;base64,${imageStr}`
+                    "url": string `data:image/png;base64,${sampleBinaryStr}`
                 }
             },
             {
@@ -323,7 +340,7 @@ isolated function getExpectedContentParts(string message) returns (map<anydata>)
             {
                 "type": "image_url",
                 "image_url": {
-                    "url": string `data:image/*;base64,${imageStr}`
+                    "url": string `data:image/*;base64,${sampleBinaryStr}`
                 }
             },
             {"type": "text", "text": "."}
@@ -350,6 +367,41 @@ isolated function getExpectedContentParts(string message) returns (map<anydata>)
                 "type": "image_url",
                 "image_url": {
                     "url": "This-is-not-a-valid-url"
+                }
+            },
+            {"type": "text", "text": "."}
+        ];
+    }
+
+    if message.startsWith("Please describe the audio content. ") {
+        return [
+            {"type": "text", "text": "Please describe the audio content. "},
+            {
+                "type": "input_audio",
+                "input_audio": {
+                    "data": sampleBinaryStr,
+                    "format":"mp3"
+                }
+            },
+            {"type": "text", "text": "."}
+        ];
+    }
+
+    if message.startsWith("Please describe the following audio contents.") {
+        return [
+            {"type": "text", "text": "Please describe the following audio contents. "},
+            {
+                "type": "input_audio",
+                "input_audio": {
+                    "data": sampleBinaryStr,
+                    "format":"mp3"
+                }
+            },
+            {
+                "type": "input_audio",
+                "input_audio": {
+                    "data": sampleBinaryStr,
+                    "format":"mp3"
                 }
             },
             {"type": "text", "text": "."}

@@ -24,7 +24,7 @@ type ResponseSchema record {|
     boolean isOriginallyJsonObject = true;
 |};
 
-type DocumentContentPart TextContentPart|ImageContentPart|AudioContentPart|FileContentPart;
+type DocumentContentPart TextContentPart|ImageContentPart|AudioContentPart;
 
 type TextContentPart record {|
     readonly "text" 'type = "text";
@@ -42,13 +42,6 @@ type AudioContentPart record {|
         string format;
         string data;
     |} input_audio;
-|};
-
-type FileContentPart record {|
-    readonly "file" 'type = "file";
-    string file_data?;
-    string file_id?;
-    string filename?;
 |};
 
 const JSON_CONVERSION_ERROR = "FromJsonStringError";
@@ -165,10 +158,8 @@ isolated function addDocumentContentPart(ai:Document doc, DocumentContentPart[] 
         return contentParts.push(check buildImageContentPart(doc));
     } else if doc is ai:AudioDocument {
         return contentParts.push(check buildAudioContentPart(doc));
-    } else if doc is ai:FileDocument {
-        return contentParts.push(check buildFileContentPart(doc));
     }
-    return error ai:Error("Only text and image documents are supported.");
+    return error ai:Error("Only text, image and audio documents are supported.");
 }
 
 isolated function addTextContentPart(TextContentPart? contentPart, DocumentContentPart[] contentParts) {
@@ -210,28 +201,6 @@ isolated function buildAudioContentPart(ai:AudioDocument doc) returns AudioConte
 
     return {input_audio: {format, data: check getBase64EncodedString(content)}};
 }
-
-isolated function buildFileContentPart(ai:FileDocument doc) returns FileContentPart|ai:Error {
-    string? fileName = doc.metadata?.fileName;
-    byte[]|ai:Url|ai:FileId content = doc.content;
-    if content is ai:Url {
-        return error("URL-based file content is not supported at the moment.");
-    }
-
-    if content is ai:FileId {
-        return {
-            file_id: content.fileId,
-            filename: fileName
-        };
-    }
-
-    if content is byte[] {
-        return {
-            file_data: check getBase64EncodedString(content),
-            filename: fileName
-        };
-    }
-};
 
 isolated function buildImageUrl(ai:Url|byte[] content, string? mimeType) returns string|ai:Error {
     if content is ai:Url {
@@ -288,7 +257,7 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
     chat:CreateChatCompletionResponse|error response =
         llmClient->/deployments/[deploymentId]/chat/completions.post(apiVersion, request);
     if response is error {
-        return error("LLM call failed: " + response.message(), response.cause());
+        return error("LLM call failed: " + response.message(), cause = response.cause(), detail = response.detail());
     }
 
     record {

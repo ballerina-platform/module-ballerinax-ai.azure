@@ -82,7 +82,7 @@ function testGenerateMethodWithTextDocumentArray() returns error? {
 @test:Config
 function testGenerateMethodWithImageDocumentWithBinaryData() returns ai:Error? {
     ai:ImageDocument img = {
-        content: imageBinaryData
+        content: sampleBinaryData
     };
 
     string|error description = openAiProvider->generate(`Describe the following image. ${img}.`);
@@ -120,7 +120,7 @@ function testGenerateMethodWithImageDocumentWithInvalidUrl() returns ai:Error? {
 @test:Config
 function testGenerateMethodWithImageDocumentArray() returns ai:Error? {
     ai:ImageDocument img = {
-        content: imageBinaryData,
+        content: sampleBinaryData,
         metadata: {
             mimeType: "image/png"
         }
@@ -137,7 +137,7 @@ function testGenerateMethodWithImageDocumentArray() returns ai:Error? {
 @test:Config
 function testGenerateMethodWithTextAndImageDocumentArray() returns ai:Error? {
     ai:ImageDocument img = {
-        content: imageBinaryData,
+        content: sampleBinaryData,
         metadata: {
             mimeType: "image/png"
         }
@@ -154,7 +154,7 @@ function testGenerateMethodWithTextAndImageDocumentArray() returns ai:Error? {
 @test:Config
 function testGenerateMethodWithImageDocumentsandTextDocuments() returns ai:Error? {
     ai:ImageDocument img = {
-        content: imageBinaryData,
+        content: sampleBinaryData,
         metadata: {
             mimeType: "image/png"
         }
@@ -169,15 +169,45 @@ function testGenerateMethodWithImageDocumentsandTextDocuments() returns ai:Error
 }
 
 @test:Config
+function testGenerateMethodWithAudioDocument() returns ai:Error? {
+    ai:AudioDocument aud = {
+        content: sampleBinaryData,
+        metadata: {
+            "format": "mp3"
+        }
+    };
+
+    string|error description = openAiProvider->generate(`Please describe the audio content. ${aud}.`);
+    test:assertEquals(description, "This is a sample audio description.");
+
+    string[]|error descriptions = openAiProvider->generate(
+        `Please describe the following audio contents. ${<ai:AudioDocument[]>[aud, aud]}.`);
+    test:assertEquals(descriptions, ["This is a sample audio description.", "This is a sample audio description."]);
+
+    ai:AudioDocument aud2 = {
+        content: sampleBinaryData
+    };
+
+    description = openAiProvider->generate(`Please describe the audio content. ${aud2}.`);
+    if description is string {
+        test:assertFail();
+    }
+
+    test:assertTrue(description is ai:Error);
+    test:assertTrue((<ai:Error>description).message().includes(
+        "Please specify the audio format in the 'format' field of the metadata; supported values are 'mp3' and 'wav'"
+    ));
+}
+
+@test:Config
 function testGenerateMethodWithUnsupportedDocument() returns ai:Error? {
-    ai:Document doc = {
-        'type: "audio",
+    ai:FileDocument doc = {
         content: "dummy-data"
     };
 
     string[]|error descriptions = openAiProvider->generate(`What is the content in this document. ${doc}.`);
     test:assertTrue(descriptions is error);
-    test:assertTrue((<error>descriptions).message().includes("Only text and image documents are supported."));
+    test:assertTrue((<error>descriptions).message().includes("Only text, image and audio documents are supported."));
 }
 
 @test:Config

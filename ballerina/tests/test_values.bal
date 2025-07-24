@@ -43,8 +43,8 @@ const blog2 = {
         Don't forget to maintain proper hydration and nutrition for optimal performance.`
 };
 
-final byte[] imageBinaryData = [137, 80, 78, 71, 13, 10, 26, 10];
-final string imageStr = array:toBase64(imageBinaryData);
+final readonly & byte[] sampleBinaryData = [137, 80, 78, 71, 13, 10, 26, 10];
+final string sampleBinaryStr = array:toBase64(sampleBinaryData);
 const sampleImageUrl = "https://example.com/image.jpg";
 
 const review = "{\"rating\": 8, \"comment\": \"Talks about essential aspects of sports performance " +
