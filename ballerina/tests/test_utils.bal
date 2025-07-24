@@ -198,7 +198,6 @@ isolated function getTheMockLLMResult(string message) returns string {
         return "{\"result\": \"This is a sample audio description.\"}";
     }
 
-
     if message.startsWith("Please describe the following audio contents.") {
         return "{\"result\": [\"This is a sample audio description.\", \"This is a sample audio description.\"]}";
     }
@@ -380,7 +379,7 @@ isolated function getExpectedContentParts(string message) returns (map<anydata>)
                 "type": "input_audio",
                 "input_audio": {
                     "data": sampleBinaryStr,
-                    "format":"mp3"
+                    "format": "mp3"
                 }
             },
             {"type": "text", "text": "."}
@@ -394,14 +393,14 @@ isolated function getExpectedContentParts(string message) returns (map<anydata>)
                 "type": "input_audio",
                 "input_audio": {
                     "data": sampleBinaryStr,
-                    "format":"mp3"
+                    "format": "mp3"
                 }
             },
             {
                 "type": "input_audio",
                 "input_audio": {
                     "data": sampleBinaryStr,
-                    "format":"mp3"
+                    "format": "mp3"
                 }
             },
             {"type": "text", "text": "."}

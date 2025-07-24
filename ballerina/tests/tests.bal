@@ -195,8 +195,8 @@ function testGenerateMethodWithAudioDocument() returns ai:Error? {
 
     test:assertTrue(description is ai:Error);
     test:assertTrue((<ai:Error>description).message().includes(
-        "Please specify the audio format in the 'format' field of the metadata; supported values are 'mp3' and 'wav'"
-    ));
+            "Please specify the audio format in the 'format' field of the metadata; supported values are 'mp3' and 'wav'"
+            ));
 }
 
 @test:Config
@@ -238,7 +238,7 @@ function testGenerateMethodWithInvalidRecordType() returns ai:Error? {
     string msg = (<error>rating).message();
     test:assertTrue(rating is error);
     test:assertTrue(msg.includes(RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE),
-        string `expected error message to contain: ${RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE}, but found ${msg}`);
+            string `expected error message to contain: ${RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE}, but found ${msg}`);
 }
 
 type ProductNameArray ProductName[];
