@@ -19,16 +19,23 @@ import io.ballerina.runtime.api.Module;
 import io.ballerina.runtime.api.creators.ErrorCreator;
 import io.ballerina.runtime.api.creators.TypeCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
+import io.ballerina.runtime.api.types.AnnotatableType;
 import io.ballerina.runtime.api.types.ArrayType;
 import io.ballerina.runtime.api.types.JsonType;
 import io.ballerina.runtime.api.types.PredefinedTypes;
+import io.ballerina.runtime.api.types.ReferenceType;
 import io.ballerina.runtime.api.types.Type;
+import io.ballerina.runtime.api.types.TypeTags;
+import io.ballerina.runtime.api.types.UnionType;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.utils.TypeUtils;
+import io.ballerina.runtime.api.values.BArray;
 import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.api.values.BTypedesc;
+
+import java.util.List;
 
 import static io.ballerina.runtime.api.creators.ValueCreator.createMapValue;
 
@@ -38,6 +45,10 @@ import static io.ballerina.runtime.api.creators.ValueCreator.createMapValue;
  * @since 1.0.0
  */
 public class Native {
+    public static final String ANY_OF = "anyOf";
+    public static final String BALLERINA_AI = "ballerina/ai";
+    public static final String JSON_SCHEMA = "JsonSchema";
+
     public static Object generateJsonSchemaForTypedescNative(BTypedesc td) {
         SchemaGenerationContext schemaGenerationContext = new SchemaGenerationContext();
         try {
@@ -58,6 +69,9 @@ public class Native {
         return switch (impliedType) {
             case JsonType ignored -> generateJsonSchemaForJson();
             case ArrayType arrayType -> generateJsonSchemaForArrayType(arrayType, schemaGenerationContext);
+            case UnionType unionType -> generateUnionTypeSchema(unionType, schemaGenerationContext);
+            case ReferenceType referenceType -> getJsonSchemaFromAnnotatableType(referenceType,
+                    schemaGenerationContext);
             default -> throw ErrorCreator.createError(StringUtils.fromString(
                     "Runtime schema generation is not yet supported for type: " + impliedType.getName()));
         };
@@ -87,11 +101,50 @@ public class Native {
         return schemaMap;
     }
 
+    private static Object generateUnionTypeSchema(UnionType unionType,
+                                                  SchemaGenerationContext schemaGenerationContext) {
+        BMap<BString, Object> schemaMap = createMapValue(TypeCreator.createMapType(PredefinedTypes.TYPE_JSON));
+        List<Type> memberTypes = unionType.getMemberTypes();
+        BArray schemas = ValueCreator.createArrayValue(
+                TypeCreator.createArrayType(PredefinedTypes.TYPE_JSON));
+        for (Type memberType : memberTypes) {
+            Object schema = generateJsonSchemaForType(memberType, schemaGenerationContext);
+            schemas.append(schema);
+        }
+        if (schemas.size() == 1) {
+            return schemas.get(0);
+        }
+        schemaMap.put(StringUtils.fromString(ANY_OF), schemas);
+        return schemaMap;
+    }
+
+    private static Object getJsonSchemaFromAnnotatableType(ReferenceType referenceType,
+                                                           SchemaGenerationContext schemaGenerationContext) {
+        Type referredType = referenceType.getReferredType();
+        if (referredType instanceof  AnnotatableType annotatableType) {
+            BMap<BString, Object> annotations = annotatableType.getAnnotations();
+            for (BString key : annotations.getKeys()) {
+                if (key.getValue().startsWith(BALLERINA_AI) && key.getValue().endsWith(JSON_SCHEMA)) {
+                    Object schema = annotations.get(key);
+                    if (schema instanceof BMap) {
+                        return schema;
+                    }
+                }
+            }
+        }
+        throw ErrorCreator.createError(StringUtils.fromString(
+                "Runtime schema generation is not yet supported for type: " + referenceType.getName()));
+    }
+
+
     private static boolean isSimpleType(Type type) {
         return type.getBasicType().all() <= 0b100000;
     }
 
     private static String getStringRepresentation(Type type) {
+        if (type.getTag() == TypeTags.NULL_TAG) {
+            return "null";
+        }
         return switch (type.getBasicType().all()) {
             case 0b000000 -> "null";
             case 0b000010 -> "boolean";
