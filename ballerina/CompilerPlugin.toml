@@ -3,7 +3,7 @@ id = "ai-azure-compiler-plugin"
 class = "io.ballerina.lib.ai.azure.AiAzureCompilerPlugin"
 
 [[dependency]]
-path = "../compiler-plugin/build/libs/ai.azure-compiler-plugin-1.0.1-SNAPSHOT.jar"
+path = "../compiler-plugin/build/libs/ai.azure-compiler-plugin-1.1.0-SNAPSHOT.jar"
 
 [[dependency]]
 path = "../compiler-plugin/build/libs/ballerina-to-openapi-2.3.0.jar"
