@@ -117,6 +117,38 @@ isolated function getExpectedParameterSchema(string message) returns map<json> {
         };
     }
 
+    if message.startsWith("Give me a random joke about cricketers") {
+        return expectedParameterSchemaForRecUnionBasicType;
+    }
+
+    if message.startsWith("Give me a random joke") {
+        return {"type":"object","properties":{"result":{"anyOf":[{"type":"string"},{"type":"null"}]}}};
+    }
+
+    if message.startsWith("Name a random world class cricketer in India") {
+        return expectedParameterSchemaForRecUnionNull;
+    }
+
+    if message.startsWith("Name 10 world class cricketers in India") {
+        return expectedParameterSchemaForArrayOnly;
+    }
+
+    if message.startsWith("Name 10 world class cricketers as string") {
+        return expectedParameterSchemaForArrayUnionBasicType;
+    }
+
+    if message.startsWith("Name top 10 world class cricketers") {
+        return expectedParameterSchemaForArrayUnionRec;
+    }
+
+    if message.startsWith("Name a random world class cricketer") {
+        return expectedParameterSchemaForArrayUnionRec;
+    }
+
+    if message.startsWith("Name 10 world class cricketers") {
+        return expectedParamSchemaForArrayUnionNull;
+    }
+
     return {};
 }
 
@@ -200,6 +232,26 @@ isolated function getTheMockLLMResult(string message) returns string {
 
     if message.startsWith("Please describe the following audio contents.") {
         return "{\"result\": [\"This is a sample audio description.\", \"This is a sample audio description.\"]}";
+    }
+
+    if message.startsWith("Name a random world class cricketer in India") {
+        return "{\"result\": {\"name\": \"Sanga\"}}";
+    }
+
+    if message.startsWith("Name a random world class cricketer") {
+        return "{\"result\": {\"name\": \"Sanga\"}}";
+    }
+
+    if message.startsWith("Name 10 world class cricketers") {
+        return "{\"result\": [{\"name\": \"Virat Kohli\"}, {\"name\": \"Joe Root\"}, {\"name\": \"Steve Smith\"}, {\"name\": \"Kane Williamson\"}, {\"name\": \"Babar Azam\"}, {\"name\": \"Ben Stokes\"}, {\"name\": \"Jasprit Bumrah\"}, {\"name\": \"Pat Cummins\"}, {\"name\": \"Shaheen Afridi\"}, {\"name\": \"Rashid Khan\"}]}";
+    }
+
+    if message.startsWith("Name top 10 world class cricketers") {
+        return "{\"result\": [{\"name\": \"Virat Kohli\"}, {\"name\": \"Joe Root\"}, {\"name\": \"Steve Smith\"}, {\"name\": \"Kane Williamson\"}, {\"name\": \"Babar Azam\"}, {\"name\": \"Ben Stokes\"}, {\"name\": \"Jasprit Bumrah\"}, {\"name\": \"Pat Cummins\"}, {\"name\": \"Shaheen Afridi\"}, {\"name\": \"Rashid Khan\"}]}";
+    }
+
+    if message.startsWith("Give me a random joke") {
+        return "{\"result\": \"This is a random joke\"}";
     }
 
     return "INVALID";
@@ -405,6 +457,38 @@ isolated function getExpectedContentParts(string message) returns (map<anydata>)
             },
             {"type": "text", "text": "."}
         ];
+    }
+
+    if message.startsWith("Name 10 world class cricketers in India") {
+        return {'type: "text", "Name 10 world class cricketers in India"};
+    }
+
+    if message.startsWith("Name 10 world class cricketers as string") {
+        return {'type: "text", "Name 10 world class cricketers as string"};
+    }
+
+    if message.startsWith("Name 10 world class cricketers") {
+        return {'type: "text", "Name 10 world class cricketers"};
+    }
+
+    if message.startsWith("Name top 10 world class cricketers") {
+        return {'type: "text", "Name top 10 world class cricketers";} 
+    }
+
+    if message.startsWith("Name a random world class cricketer in India") {
+        return {'type: "text", "Name a random world class cricketer in India"};
+    }
+
+    if message.startsWith("Name a random world class cricketer") {
+        return {'type: "text", "Name a random world class cricketer"};
+    }
+
+    if message.startsWith("Give me a random joke about cricketers") {
+        return {'type: "text", "Give me a random joke about cricketers"};
+    }
+
+    if message.startsWith("Give me a random joke") {
+        return {'type: "text", "Give me a random joke"};
     }
 
     return [

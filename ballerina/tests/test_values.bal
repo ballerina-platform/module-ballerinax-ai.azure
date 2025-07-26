@@ -225,3 +225,166 @@ const expectedParameterSchemaStringForRateBlog8 =
 
 const expectedParamterSchemaStringForCountry =
     {"type": "object", "properties": {"result": {"type": "string"}}};
+
+const expectedParamSchemaForArrayUnionNull =
+    {
+        "type": "object",
+        "properties": {
+            "result": {
+                "anyOf": [
+                    {
+                        "type": "array",
+                        "items": {
+                            "required": [
+                                "name"
+                            ],
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "type": "null"
+                    }
+                ]
+            }
+        }
+    };
+
+const expectedParameterSchemaForArrayUnionRec =
+    {
+        "type": "object",
+        "properties": {
+            "result": {
+                "anyOf": [
+                    {
+                        "type": "array",
+                        "items": {
+                            "required": [
+                                "name"
+                            ],
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "required": [
+                            "name"
+                        ],
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+    };
+
+    const expectedParameterSchemaForArrayUnionBasicType = 
+    {
+        "type": "object",
+        "properties": {
+            "result": {
+                "anyOf": [
+                    {
+                        "type": "array",
+                        "items": {
+                            "required": [
+                                "name"
+                            ],
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "type": "string"
+                    }
+                ]
+            }
+        }
+    };
+
+const expectedParameterSchemaForArrayOnly = 
+    {
+        "type": "object",
+        "properties": {
+            "result": {
+                "type": "array",
+                "items": {
+                    "required": [
+                        "name"
+                    ],
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+const expectedParameterSchemaForRecUnionBasicType = 
+    {
+        "type": "object",
+        "properties": {
+            "result": {
+                "anyOf": [
+                    {
+                        "required": [
+                            "name"
+                        ],
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    {
+                        "type": "string"
+                    }
+                ]
+            }
+        }
+    };
+
+const expectedParameterSchemaForRecUnionNull = 
+    {
+        "type": "object",
+        "properties": {
+            "result": {
+                "anyOf": [
+                    {
+                        "required": [
+                            "name"
+                        ],
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    {
+                        "type": "null"
+                    }
+                ]
+            }
+        }
+    };

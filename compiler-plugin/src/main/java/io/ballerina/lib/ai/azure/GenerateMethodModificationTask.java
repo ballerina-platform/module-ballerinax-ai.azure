@@ -20,10 +20,12 @@ package io.ballerina.lib.ai.azure;
 
 import io.ballerina.compiler.api.ModuleID;
 import io.ballerina.compiler.api.SemanticModel;
+import io.ballerina.compiler.api.symbols.ArrayTypeSymbol;
 import io.ballerina.compiler.api.symbols.ClassSymbol;
-import io.ballerina.compiler.api.symbols.ErrorTypeSymbol;
 import io.ballerina.compiler.api.symbols.ModuleSymbol;
+import io.ballerina.compiler.api.symbols.RecordTypeSymbol;
 import io.ballerina.compiler.api.symbols.Symbol;
+import io.ballerina.compiler.api.symbols.TupleTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeReferenceTypeSymbol;
 import io.ballerina.compiler.api.symbols.TypeSymbol;
 import io.ballerina.compiler.api.symbols.UnionTypeSymbol;
@@ -241,38 +243,31 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
         }
 
         private void updateTypeSchemaForTypeDef(RemoteMethodCallActionNode remoteMethodCallActionNode) {
-            semanticModel.typeOf(remoteMethodCallActionNode).ifPresent(this::updateTypeSchema);
-        }
-
-        private void updateTypeSchema(TypeSymbol expTypeSymbol) {
-            if (!(expTypeSymbol instanceof UnionTypeSymbol expTypeUnionSymbol)) {
-                return;
-            }
-
-            TypeSymbol nonErrorTypeSymbol = null;
-            TypeSymbol typeRefTypeSymbol = null;
-            List<TypeSymbol> memberTypeSymbols = expTypeUnionSymbol.memberTypeDescriptors();
-            for (TypeSymbol memberTypeSymbol: memberTypeSymbols) {
-                if (memberTypeSymbol instanceof TypeReferenceTypeSymbol typeReferenceTypeSymbol) {
-                    typeRefTypeSymbol = typeReferenceTypeSymbol.typeDescriptor();
-                }
-
-                if (!(typeRefTypeSymbol instanceof ErrorTypeSymbol)) {
-                    nonErrorTypeSymbol = memberTypeSymbol;
-                }
-            }
-
-            if (!(nonErrorTypeSymbol instanceof TypeReferenceTypeSymbol)) {
-                return;
-            }
-            populateTypeSchema(nonErrorTypeSymbol, typeMapper, modifierData.typeSchemas);
+            semanticModel.typeOf(remoteMethodCallActionNode).ifPresent(symbol -> populateTypeSchema(symbol,
+                    this.typeMapper, modifierData.typeSchemas, this.semanticModel.types().ANYDATA));
         }
 
         private static void populateTypeSchema(TypeSymbol memberType, TypeMapper typeMapper,
-                                               Map<String, String> typeSchemas) {
-            if (memberType instanceof TypeReferenceTypeSymbol typeReference) {
-                typeSchemas.put(typeReference.definition().getName().get(),
-                        getJsonSchema(typeMapper.getSchema(typeReference)));
+                                               Map<String, String> typeSchemas, TypeSymbol anydataType) {
+            switch (memberType) {
+                case TypeReferenceTypeSymbol typeReference -> {
+                    if (!typeReference.subtypeOf(anydataType)) {
+                        return;
+                    }
+                    typeSchemas.put(typeReference.definition().getName().get(),
+                            getJsonSchema(typeMapper.getSchema(typeReference)));
+                }
+                case ArrayTypeSymbol arrayType ->
+                        populateTypeSchema(arrayType.memberTypeDescriptor(), typeMapper, typeSchemas, anydataType);
+                case TupleTypeSymbol tupleType ->
+                        tupleType.members().forEach(member ->
+                                populateTypeSchema(member.typeDescriptor(), typeMapper, typeSchemas, anydataType));
+                case RecordTypeSymbol recordType ->
+                        recordType.fieldDescriptors().values().forEach(field ->
+                                populateTypeSchema(field.typeDescriptor(), typeMapper, typeSchemas, anydataType));
+                case UnionTypeSymbol unionTypeSymbol -> unionTypeSymbol.memberTypeDescriptors().forEach(member ->
+                        populateTypeSchema(member, typeMapper, typeSchemas, anydataType));
+                default -> { }
             }
         }
 
