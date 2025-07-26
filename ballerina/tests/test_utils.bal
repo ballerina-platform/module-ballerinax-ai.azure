@@ -460,35 +460,35 @@ isolated function getExpectedContentParts(string message) returns (map<anydata>)
     }
 
     if message.startsWith("Name 10 world class cricketers in India") {
-        return {'type: "text", "Name 10 world class cricketers in India"};
+        return [{"type": "text", "text": "Name 10 world class cricketers in India"}];
     }
 
     if message.startsWith("Name 10 world class cricketers as string") {
-        return {'type: "text", "Name 10 world class cricketers as string"};
+        return [{"type": "text", "text": "Name 10 world class cricketers as string"}];
     }
 
     if message.startsWith("Name 10 world class cricketers") {
-        return {'type: "text", "Name 10 world class cricketers"};
+        return [{"type": "text", "text": "Name 10 world class cricketers"}];
     }
 
     if message.startsWith("Name top 10 world class cricketers") {
-        return {'type: "text", "Name top 10 world class cricketers";} 
+        return [{"type": "text", "text": "Name top 10 world class cricketers"}];
     }
 
     if message.startsWith("Name a random world class cricketer in India") {
-        return {'type: "text", "Name a random world class cricketer in India"};
+        return [{"type": "text", "text": "Name a random world class cricketer in India"}];
     }
 
     if message.startsWith("Name a random world class cricketer") {
-        return {'type: "text", "Name a random world class cricketer"};
+        return [{"type": "text", "text": "Name a random world class cricketer"}];
     }
 
     if message.startsWith("Give me a random joke about cricketers") {
-        return {'type: "text", "Give me a random joke about cricketers"};
+        return [{"type": "text", "text": "Give me a random joke about cricketers"}];
     }
 
     if message.startsWith("Give me a random joke") {
-        return {'type: "text", "Give me a random joke"};
+        return [{"type": "text", "text": "Give me a random joke"}];
     }
 
     return [
