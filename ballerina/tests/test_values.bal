@@ -13,6 +13,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+import ballerina/lang.array;
 
 type Blog record {
     string title;
@@ -42,66 +43,110 @@ const blog2 = {
         Don't forget to maintain proper hydration and nutrition for optimal performance.`
 };
 
+final readonly & byte[] sampleBinaryData = [137, 80, 78, 71, 13, 10, 26, 10];
+final string sampleBinaryStr = array:toBase64(sampleBinaryData);
+const sampleImageUrl = "https://example.com/image.jpg";
+
 const review = "{\"rating\": 8, \"comment\": \"Talks about essential aspects of sports performance " +
         "including warm-up, form, equipment, and nutrition.\"}";
 
-final string expectedPromptStringForRateBlog = string `Rate this blog out of 10.
+final readonly & map<anydata>[] expectedContentPartsForRateBlog = [
+    {
+        "type": "text",
+        "text": string `Rate this blog out of 10.
         Title: ${blog1.title}
-        Content: ${blog1.content}`;
+        Content: ${blog1.content}`
+    }
+];
 
-final string expectedPromptStringForRateBlog2 = string `Please rate this blog out of 10.
+final readonly & map<anydata>[] expectedContentPartsForRateBlog2 = [
+    {
+        "type": "text",
+        "text": string `Please rate this blog out of 10.
         Title: ${blog2.title}
-        Content: ${blog2.content}`;
+        Content: ${blog2.content}`
+    }
+];
 
-const expectedPromptStringForRateBlog3 = string `What is 1 + 1?`;
+const map<anydata>[] expectedContentPartsForRateBlog3 = [
+    {"type": "text", "text": "What is 1 + 1?"}
+];
 
-const expectedPromptStringForRateBlog4 = string `Tell me name and the age of the top 10 world class cricketers`;
+const map<anydata>[] expectedContentPartsForRateBlog4 = [
+    {"type": "text", "text": "Tell me name and the age of the top 10 world class cricketers"}
+];
 
-final string expectedPromptStringForRateBlog5 =
-        string `How would you rate this blog content out of 10. Title: ${blog1.title} Content: ${blog1.content} .`;
+final readonly & map<anydata>[] expectedContentPartsForRateBlog5 = [
+    {"type": "text", "text": "How would you rate this blog content out of 10. "},
+    {
+        "type": "text",
+        "text": "Title: Tips for Growing a Beautiful Garden Content: " +
+        "Spring is the perfect time to start your garden. \n        Begin by preparing your soil " +
+        "with organic compost and ensure proper drainage. \n        Choose plants suitable for your " +
+        "climate zone, and remember to water them regularly. \n        Don't forget to mulch to retain " +
+        "moisture and prevent weeds."
+    },
+    {"type": "text", "text": "."}
+];
 
-final string expectedPromptStringForRateBlog6 =
-        string `How would you rate this blog out of 10. Title: ${blog1.title} Content: ${blog1.content}`;
+final readonly & map<anydata>[] expectedContentPartsForRateBlog7 = [
+    {
+        "type": "text",
+        "text": string `Please rate this blogs out of 10.
+        [{Title: ${blog1.title}, Content: ${blog1.content}}, {Title: ${blog2.title}, Content: ${blog2.content}}]`
+    }
+];
 
-final string expectedPromptStringForRateBlog7 =
-        string `Please rate this blogs out of 10.
-        [{Title: ${blog1.title}, Content: ${blog1.content}}, {Title: ${blog2.title}, Content: ${blog2.content}}]`;
+final readonly & map<anydata>[] expectedContentPartsForRateBlog8 = [
+    {"type": "text", "text": "How would you rate this text blog out of 10, "},
+    {
+        "type": "text",
+        "text": "Title: Tips for Growing a Beautiful Garden Content: " +
+        "Spring is the perfect time to start your garden. \n        Begin by preparing your soil with " +
+        "organic compost and ensure proper drainage. \n        Choose plants suitable for your climate zone, " +
+        "and remember to water them regularly. \n        Don't forget to mulch to retain moisture and prevent weeds."
+    },
+    {"type": "text", "text": "."}
+];
 
-final string expectedPromptStringForRateBlog8 =
-    string `How would you rate this text blog out of 10, Title: ${blog1.title} Content: ${blog1.content} .`;
+final readonly & map<anydata>[] expectedContentPartsForRateBlog9 = [
+    {"type": "text", "text": "How would you rate these text blogs out of 10. "},
+    {
+        "type": "text",
+        "text": "Title: Tips for Growing a Beautiful Garden Content: " +
+        "Spring is the perfect time to start your garden. \n        Begin by preparing your soil with " +
+        "organic compost and ensure proper drainage. \n        Choose plants suitable for your climate zone, " +
+        "and remember to water them regularly. \n        Don't forget to mulch to retain moisture and prevent weeds."
+    },
+    {
+        "type": "text",
+        "text": "Title: Tips for Growing a Beautiful Garden Content: " +
+        "Spring is the perfect time to start your garden. \n        " +
+        "Begin by preparing your soil with organic compost and ensure proper drainage. \n        " +
+        "Choose plants suitable for your climate zone, and remember to water them regularly. \n        " +
+        "Don't forget to mulch to retain moisture and prevent weeds."
+    },
+    {"type": "text", "text": ". Thank you!"}
+];
 
-final string expectedPromptStringForRateBlog9 = string 
-    `How would you rate this text blogs out of 10. Title: ${blog1.title} Content: ${blog1.content} Title: ${blog1.title} Content: ${blog1.content} . Thank you!`;
-
-final string expectedPromptStringForRateBlog10 = string `Evaluate this blogs out of 10.
+final readonly & map<anydata>[] expectedContentPartsForRateBlog10 = [
+    {
+        "type": "text",
+        "text": string `Evaluate this blogs out of 10.
         Title: ${blog1.title}
         Content: ${blog1.content}
 
         Title: ${blog1.title}
-        Content: ${blog1.content}`;
-
-final string expectedPromptStringForRateBlog11 =
-        string `How do you rate this blog content out of 10. Title: ${blog1.title} Content: ${blog1.content} .`;
-
-const expectedPromptStringForBalProgram = string `What's the output of the Ballerina code below?
-
-    ${"```"}ballerina
-    import ballerina/io;
-
-    public function main() {
-        int x = 10;
-        int y = 20;
-        io:println(x + y);
+        Content: ${blog1.content}`
     }
-    ${"```"}`;
+];
 
-const expectedPromptStringForCountry = string `Which country is known as the pearl of the Indian Ocean?`;
+final readonly & map<anydata>[] expectedContentPartsForCountry = [
+    {"type": "text", "text": "Which country is known as the pearl of the Indian Ocean?"}
+];
 
 const expectedParameterSchemaStringForRateBlog =
     {"type": "object", "properties": {"result": {"type": "integer"}}};
-
-const expectedParameterSchemaStringForRateBlog7 =
-    {"type":"object","properties":{"result":{"type":["integer", "null"]}}};
 
 const expectedParameterSchemaStringForRateBlog2 =
     {
@@ -162,8 +207,21 @@ const expectedParameterSchemaStringForRateBlog6 =
     }
 };
 
-const expectedParamterSchemaStringForBalProgram =
-    {"type": "object", "properties": {"result": {"type": "integer"}}};
+const expectedParameterSchemaStringForRateBlog7 =
+    {
+    "type": "object",
+    "properties": {
+        "result": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        }
+    }
+};
+
+const expectedParameterSchemaStringForRateBlog8 =
+    {"type": "object", "properties": {"result": {"type": "string"}}};
 
 const expectedParamterSchemaStringForCountry =
     {"type": "object", "properties": {"result": {"type": "string"}}};

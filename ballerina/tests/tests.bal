@@ -31,10 +31,6 @@ function testGenerateMethodWithBasicReturnType() returns ai:Error? {
     int|error rating = openAiProvider->generate(`Rate this blog out of 10.
         Title: ${blog1.title}
         Content: ${blog1.content}`);
-
-    if rating is error {
-        test:assertFail(rating.message());
-    }
     test:assertEquals(rating, 4);
 }
 
@@ -46,21 +42,14 @@ function testGenerateMethodWithBasicArrayReturnType() returns ai:Error? {
 
         Title: ${blog1.title}
         Content: ${blog1.content}`);
-
-    if rating is error {
-        test:assertFail(rating.message());
-    }
     test:assertEquals(rating, [9, 1]);
 }
 
 @test:Config
 function testGenerateMethodWithRecordReturnType() returns error? {
-    Review|error result = openAiProvider->generate(`Please rate this blog out of 10.
+    Review|error result = openAiProvider->generate(`Please rate this blog out of ${"10"}.
         Title: ${blog2.title}
         Content: ${blog2.content}`);
-    if result is error {
-        test:assertFail(result.message());
-    }
     test:assertEquals(result, check review.fromJsonStringWithType(Review));
 }
 
@@ -72,25 +61,7 @@ function testGenerateMethodWithTextDocument() returns ai:Error? {
     int maxScore = 10;
 
     int|error rating = openAiProvider->generate(`How would you rate this ${"blog"} content out of ${maxScore}. ${blog}.`);
-    if rating is error {
-        test:assertFail(rating.message());
-    }
     test:assertEquals(rating, 4);
-}
-
-@test:Config
-function testGenerateMethodWithTextDocument2() returns error? {
-    ai:TextDocument blog = {
-        content: string `Title: ${blog1.title} Content: ${blog1.content}`
-    };
-    int maxScore = 10;
-
-    Review|error result = openAiProvider->generate(`How would you rate this text blog out of ${maxScore}, ${blog}.`);
-    if result is error {
-        test:assertFail(result.message());
-    }
-
-    test:assertEquals(result, check review.fromJsonStringWithType(Review));
 }
 
 type ReviewArray Review[];
@@ -104,11 +75,139 @@ function testGenerateMethodWithTextDocumentArray() returns error? {
     int maxScore = 10;
     Review r = check review.fromJsonStringWithType(Review);
 
-    ReviewArray|error result = openAiProvider->generate(`How would you rate this text blogs out of ${maxScore}. ${blogs}. Thank you!`);
-    if result is error {
-        test:assertFail(result.message());
-    }
+    ReviewArray|error result = openAiProvider->generate(`How would you rate these text blogs out of ${maxScore}. ${blogs}. Thank you!`);
     test:assertEquals(result, [r, r]);
+}
+
+@test:Config
+function testGenerateMethodWithImageDocumentWithBinaryData() returns ai:Error? {
+    ai:ImageDocument img = {
+        content: sampleBinaryData
+    };
+
+    string|error description = openAiProvider->generate(`Describe the following image. ${img}.`);
+    test:assertEquals(description, "This is a sample image description.");
+}
+
+@test:Config
+function testGenerateMethodWithImageDocumentWithUrl() returns ai:Error? {
+    ai:ImageDocument img = {
+        content: "https://example.com/image.jpg",
+        metadata: {
+            mimeType: "image/jpg"
+        }
+    };
+
+    string|error description = openAiProvider->generate(`Describe the image. ${img}.`);
+    test:assertEquals(description, "This is a sample image description.");
+}
+
+@test:Config
+function testGenerateMethodWithImageDocumentWithInvalidUrl() returns ai:Error? {
+    ai:ImageDocument img = {
+        content: "This-is-not-a-valid-url"
+    };
+
+    string|ai:Error description = openAiProvider->generate(`Please describe the image. ${img}.`);
+    test:assertTrue(description is ai:Error);
+
+    string actualErrorMessage = (<ai:Error>description).message();
+    string expectedErrorMessage = "Must be a valid URL";
+    test:assertTrue((<ai:Error>description).message().includes("Must be a valid URL"),
+            string `expected '${expectedErrorMessage}', found ${actualErrorMessage}`);
+}
+
+@test:Config
+function testGenerateMethodWithImageDocumentArray() returns ai:Error? {
+    ai:ImageDocument img = {
+        content: sampleBinaryData,
+        metadata: {
+            mimeType: "image/png"
+        }
+    };
+    ai:ImageDocument img2 = {
+        content: "https://example.com/image.jpg"
+    };
+
+    string[]|error descriptions = openAiProvider->generate(
+        `Describe the following ${"2"} images. ${<ai:ImageDocument[]>[img, img2]}.`);
+    test:assertEquals(descriptions, ["This is a sample image description.", "This is a sample image description."]);
+}
+
+@test:Config
+function testGenerateMethodWithTextAndImageDocumentArray() returns ai:Error? {
+    ai:ImageDocument img = {
+        content: sampleBinaryData,
+        metadata: {
+            mimeType: "image/png"
+        }
+    };
+    ai:TextDocument blog = {
+        content: string `Title: ${blog1.title} Content: ${blog1.content}`
+    };
+
+    string[]|error descriptions = openAiProvider->generate(
+        `Please describe the following image and the doc. ${<ai:Document[]>[img, blog]}.`);
+    test:assertEquals(descriptions, ["This is a sample image description.", "This is a sample doc description."]);
+}
+
+@test:Config
+function testGenerateMethodWithImageDocumentsandTextDocuments() returns ai:Error? {
+    ai:ImageDocument img = {
+        content: sampleBinaryData,
+        metadata: {
+            mimeType: "image/png"
+        }
+    };
+    ai:TextDocument blog = {
+        content: string `Title: ${blog1.title} Content: ${blog1.content}`
+    };
+
+    string[]|error descriptions = openAiProvider->generate(
+        `${"Describe"} the following ${"text"} ${"document"} and image document. ${img}${blog}`);
+    test:assertEquals(descriptions, ["This is a sample image description.", "This is a sample doc description."]);
+}
+
+@test:Config
+function testGenerateMethodWithAudioDocument() returns ai:Error? {
+    ai:AudioDocument aud = {
+        content: sampleBinaryData,
+        metadata: {
+            "format": "mp3"
+        }
+    };
+
+    string|error description = openAiProvider->generate(`Please describe the audio content. ${aud}.`);
+    test:assertEquals(description, "This is a sample audio description.");
+
+    string[]|error descriptions = openAiProvider->generate(
+        `Please describe the following audio contents. ${<ai:AudioDocument[]>[aud, aud]}.`);
+    test:assertEquals(descriptions, ["This is a sample audio description.", "This is a sample audio description."]);
+
+    ai:AudioDocument aud2 = {
+        content: sampleBinaryData
+    };
+
+    description = openAiProvider->generate(`Please describe the audio content. ${aud2}.`);
+    if description is string {
+        test:assertFail();
+    }
+
+    test:assertTrue(description is ai:Error);
+    test:assertTrue((<ai:Error>description).message().includes(
+            "Please specify the audio format in the 'format' field of the metadata; supported values are 'mp3' and 'wav'"
+            ));
+}
+
+@test:Config
+function testGenerateMethodWithUnsupportedDocument() returns ai:Error? {
+    ai:FileDocument doc = {
+        content: "dummy-data"
+    };
+
+    string[]|error descriptions = openAiProvider->generate(`What is the content in this document. ${doc}.`);
+    test:assertTrue(descriptions is error);
+    test:assertTrue((<error>descriptions).message().includes("Only text, image and audio documents are supported."));
 }
 
 @test:Config
@@ -118,10 +217,6 @@ function testGenerateMethodWithRecordArrayReturnType() returns error? {
 
     ReviewArray|error result = openAiProvider->generate(`Please rate this blogs out of ${maxScore}.
         [{Title: ${blog1.title}, Content: ${blog1.content}}, {Title: ${blog2.title}, Content: ${blog2.content}}]`);
-
-    if result is error {
-        test:assertFail(result.message());
-    }
     test:assertEquals(result, [r, r]);
 }
 
@@ -143,7 +238,7 @@ function testGenerateMethodWithInvalidRecordType() returns ai:Error? {
     string msg = (<error>rating).message();
     test:assertTrue(rating is error);
     test:assertTrue(msg.includes(RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE),
-        string `expected error message to contain: ${RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE}, but found ${msg}`);
+            string `expected error message to contain: ${RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE}, but found ${msg}`);
 }
 
 type ProductNameArray ProductName[];

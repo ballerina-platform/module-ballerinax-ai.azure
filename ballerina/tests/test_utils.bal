@@ -33,7 +33,7 @@ isolated function getExpectedParameterSchema(string message) returns map<json> {
         return expectedParameterSchemaStringForRateBlog2;
     }
 
-    if message.startsWith("What is 1 + 1?") {
+    if message.startsWith("What is") {
         return expectedParameterSchemaStringForRateBlog3;
     }
 
@@ -41,11 +41,7 @@ isolated function getExpectedParameterSchema(string message) returns map<json> {
         return expectedParameterSchemaStringForRateBlog4;
     }
 
-    if message.startsWith("How would you rate this blog content") {
-        return expectedParameterSchemaStringForRateBlog;
-    }
-
-    if message.startsWith("How would you rate this text blogs") {
+    if message.startsWith("How would you rate these text blogs") {
         return expectedParameterSchemaStringForRateBlog5;
     }
 
@@ -53,20 +49,48 @@ isolated function getExpectedParameterSchema(string message) returns map<json> {
         return expectedParameterSchemaStringForRateBlog2;
     }
 
-    if message.startsWith("How do you rate this blog") {
-        return expectedParameterSchemaStringForRateBlog7;
-    }
-
-    if message.startsWith("How would you rate this blog") {
-        return expectedParameterSchemaStringForRateBlog2;
-    }
-
-    if message.startsWith("What's the output of the Ballerina code below?") {
-        return expectedParamterSchemaStringForBalProgram;
+    if message.startsWith("How would you rate this") {
+        return expectedParameterSchemaStringForRateBlog;
     }
 
     if message.startsWith("Which country") {
         return expectedParamterSchemaStringForCountry;
+    }
+
+    if message.startsWith("Describe the following 2 images") {
+        return expectedParameterSchemaStringForRateBlog7;
+    }
+
+    if message.startsWith("Please describe the following image and the doc") {
+        return expectedParameterSchemaStringForRateBlog7;
+    }
+
+    if message.startsWith("Describe the following text document and image document") {
+        return expectedParameterSchemaStringForRateBlog7;
+    }
+
+    if message.startsWith("What is the content in this document") {
+        return expectedParameterSchemaStringForRateBlog7;
+    }
+
+    if message.startsWith("Describe the following image") {
+        return expectedParameterSchemaStringForRateBlog8;
+    }
+
+    if message.startsWith("Describe the image") {
+        return expectedParameterSchemaStringForRateBlog8;
+    }
+
+    if message.startsWith("Please describe the image") {
+        return expectedParameterSchemaStringForRateBlog8;
+    }
+
+    if message.startsWith("Please describe the audio content. ") {
+        return expectedParameterSchemaStringForRateBlog8;
+    }
+
+    if message.startsWith("Please describe the following audio contents.") {
+        return expectedParameterSchemaStringForRateBlog7;
     }
 
     if message.startsWith("Who is a popular sportsperson") {
@@ -145,16 +169,12 @@ isolated function getTheMockLLMResult(string message) returns string {
         return review;
     }
 
-    if message.startsWith("What is 1 + 1?") {
+    if message.startsWith("What is") {
         return "{\"result\": 2}";
     }
 
     if message.startsWith("Tell me") {
         return "{\"result\": [{\"name\": \"Virat Kohli\", \"age\": 33}, {\"name\": \"Kane Williamson\", \"age\": 30}]}";
-    }
-
-    if message.startsWith("What's the output of the Ballerina code below?") {
-        return "{\"result\": 30}";
     }
 
     if message.startsWith("Which country") {
@@ -166,15 +186,7 @@ isolated function getTheMockLLMResult(string message) returns string {
             "\"lastName\": \"Biles\", \"yearOfBirth\": 1997, \"sport\": \"Gymnastics\"}}";
     }
 
-    if message.startsWith("How would you rate this blog content") {
-        return "{\"result\": 4}";
-    }
-
-    if message.startsWith("How do you rate this blog") {
-        return "{\"result\": 4}";
-    }
-
-    if message.startsWith("How would you rate this text blogs") {
+    if message.startsWith("How would you rate these text blogs") {
         return string `{"result": [${review}, ${review}]}`;
     }
 
@@ -182,8 +194,44 @@ isolated function getTheMockLLMResult(string message) returns string {
         return review;
     }
 
-    if message.startsWith("How would you rate this blog") {
-        return review;
+    if message.startsWith("How would you rate this") {
+        return "{\"result\": 4}";
+    }
+
+    if message.startsWith("Describe the following 2 images") {
+        return "{\"result\": [\"This is a sample image description.\", \"This is a sample image description.\"]}";
+    }
+
+    if message.startsWith("Please describe the following image and the doc") {
+        return "{\"result\": [\"This is a sample image description.\", \"This is a sample doc description.\"]}";
+    }
+
+    if message.startsWith("Describe the following text document and image document") {
+        return "{\"result\": [\"This is a sample image description.\", \"This is a sample doc description.\"]}";
+    }
+
+    if message.startsWith("What is the content in this document") {
+        return "{\"result\": [\"This is a sample image description.\"]}";
+    }
+
+    if message.startsWith("Describe the following image") {
+        return "{\"result\": \"This is a sample image description.\"}";
+    }
+
+    if message.startsWith("Describe the image") {
+        return "{\"result\": \"This is a sample image description.\"}";
+    }
+
+    if message.startsWith("Please describe the image") {
+        return "{\"result\": \"This is a sample image description.\"}";
+    }
+
+    if message.startsWith("Please describe the audio content. ") {
+        return "{\"result\": \"This is a sample audio description.\"}";
+    }
+
+    if message.startsWith("Please describe the following audio contents.") {
+        return "{\"result\": [\"This is a sample audio description.\", \"This is a sample audio description.\"]}";
     }
 
     if message.startsWith("Name a random world class cricketer in India") {
@@ -233,96 +281,220 @@ isolated function getTestServiceResponse(string content) returns chat:CreateChat
     ]
 };
 
-isolated function getExpectedPrompt(string message) returns string {
+isolated function getExpectedContentParts(string message) returns (map<anydata>)[] {
     if message.startsWith("Rate this blog") {
-        return expectedPromptStringForRateBlog;
+        return expectedContentPartsForRateBlog;
     }
 
     if message.startsWith("Evaluate this") {
-        return expectedPromptStringForRateBlog10;
+        return expectedContentPartsForRateBlog10;
     }
 
     if message.startsWith("Please rate this blogs") {
-        return expectedPromptStringForRateBlog7;
+        return expectedContentPartsForRateBlog7;
     }
 
     if message.startsWith("Please rate this blog") {
-        return expectedPromptStringForRateBlog2;
+        return expectedContentPartsForRateBlog2;
     }
 
-    if message.startsWith("What is 1 + 1?") {
-        return expectedPromptStringForRateBlog3;
+    if message.startsWith("What is") {
+        return expectedContentPartsForRateBlog3;
     }
 
     if message.startsWith("Tell me") {
-        return expectedPromptStringForRateBlog4;
+        return expectedContentPartsForRateBlog4;
     }
 
-    if message.startsWith("How would you rate this blog content") {
-        return expectedPromptStringForRateBlog5;
-    }
-
-    if message.startsWith("How do you rate this blog") {
-        return expectedPromptStringForRateBlog11;
-    }
-
-    if message.startsWith("How would you rate this text blogs") {
-        return expectedPromptStringForRateBlog9;
+    if message.startsWith("How would you rate these text blogs") {
+        return expectedContentPartsForRateBlog9;
     }
 
     if message.startsWith("How would you rate this text blog") {
-        return expectedPromptStringForRateBlog8;
+        return expectedContentPartsForRateBlog8;
     }
 
-    if message.startsWith("How would you rate this blog") {
-        return expectedPromptStringForRateBlog6;
-    }
-
-    if message.startsWith("What's the output of the Ballerina code below?") {
-        return expectedPromptStringForBalProgram;
+    if message.startsWith("How would you rate this") {
+        return expectedContentPartsForRateBlog5;
     }
 
     if message.startsWith("Which country") {
-        return expectedPromptStringForCountry;
+        return expectedContentPartsForCountry;
     }
 
     if message.startsWith("Who is a popular sportsperson") {
-        return string `Who is a popular sportsperson that was 
-        born in the decade starting from 1990 with Simone in 
-        their name?`;
+        return [
+            {
+                "type": "text",
+                "text": string `Who is a popular sportsperson that was 
+                    born in the decade starting from 1990 with Simone in 
+                    their name?`
+            }
+        ];
+    }
+
+    if message.startsWith("Describe the following 2 images") {
+        return [
+            {"type": "text", "text": "Describe the following 2 images. "},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": string `data:image/png;base64,${sampleBinaryStr}`
+                }
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": sampleImageUrl
+                }
+            },
+            {"type": "text", "text": "."}
+        ];
+    }
+
+    if message.startsWith("Please describe the following image and the doc") {
+        return [
+            {"type": "text", "text": "Please describe the following image and the doc. "},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": string `data:image/png;base64,${sampleBinaryStr}`
+                }
+            },
+            {
+                "type": "text",
+                "text": string `Title: ${blog1.title} Content: ${blog1.content}`
+            },
+            {"type": "text", "text": "."}
+        ];
+    }
+
+    if message.startsWith("Describe the following text document and image document") {
+        return [
+            {"type": "text", "text": "Describe the following text document and image document. "},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": string `data:image/png;base64,${sampleBinaryStr}`
+                }
+            },
+            {
+                "type": "text",
+                "text": string `Title: ${blog1.title} Content: ${blog1.content}`
+            }
+        ];
+    }
+
+    if message.startsWith("Describe the following image") {
+        return [
+            {"type": "text", "text": "Describe the following image. "},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": string `data:image/*;base64,${sampleBinaryStr}`
+                }
+            },
+            {"type": "text", "text": "."}
+        ];
+    }
+
+    if message.startsWith("Describe the image") {
+        return [
+            {"type": "text", "text": "Describe the image. "},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": sampleImageUrl
+                }
+            },
+            {"type": "text", "text": "."}
+        ];
+    }
+
+    if message.startsWith("Please describe the image") {
+        return [
+            {"type": "text", "text": "Please describe the image. "},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "This-is-not-a-valid-url"
+                }
+            },
+            {"type": "text", "text": "."}
+        ];
+    }
+
+    if message.startsWith("Please describe the audio content. ") {
+        return [
+            {"type": "text", "text": "Please describe the audio content. "},
+            {
+                "type": "input_audio",
+                "input_audio": {
+                    "data": sampleBinaryStr,
+                    "format": "mp3"
+                }
+            },
+            {"type": "text", "text": "."}
+        ];
+    }
+
+    if message.startsWith("Please describe the following audio contents.") {
+        return [
+            {"type": "text", "text": "Please describe the following audio contents. "},
+            {
+                "type": "input_audio",
+                "input_audio": {
+                    "data": sampleBinaryStr,
+                    "format": "mp3"
+                }
+            },
+            {
+                "type": "input_audio",
+                "input_audio": {
+                    "data": sampleBinaryStr,
+                    "format": "mp3"
+                }
+            },
+            {"type": "text", "text": "."}
+        ];
     }
 
     if message.startsWith("Name 10 world class cricketers in India") {
-        return "Name 10 world class cricketers in India";
+        return [{"type": "text", "text": "Name 10 world class cricketers in India"}];
     }
 
     if message.startsWith("Name 10 world class cricketers as string") {
-        return "Name 10 world class cricketers as string";
+        return [{"type": "text", "text": "Name 10 world class cricketers as string"}];
     }
 
     if message.startsWith("Name 10 world class cricketers") {
-        return "Name 10 world class cricketers";
+        return [{"type": "text", "text": "Name 10 world class cricketers"}];
     }
 
     if message.startsWith("Name top 10 world class cricketers") {
-        return "Name top 10 world class cricketers"; 
+        return [{"type": "text", "text": "Name top 10 world class cricketers"}];
     }
 
     if message.startsWith("Name a random world class cricketer in India") {
-        return "Name a random world class cricketer in India";
+        return [{"type": "text", "text": "Name a random world class cricketer in India"}];
     }
 
     if message.startsWith("Name a random world class cricketer") {
-        return "Name a random world class cricketer";
+        return [{"type": "text", "text": "Name a random world class cricketer"}];
     }
 
     if message.startsWith("Give me a random joke about cricketers") {
-        return "Give me a random joke about cricketers";
+        return [{"type": "text", "text": "Give me a random joke about cricketers"}];
     }
 
     if message.startsWith("Give me a random joke") {
-        return "Give me a random joke";
+        return [{"type": "text", "text": "Give me a random joke"}];
     }
 
-    return "INVALID";
+    return [
+        {
+            "type": "text",
+            "text": "INVALID"
+        }
+    ];
 }
