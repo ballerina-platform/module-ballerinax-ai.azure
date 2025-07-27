@@ -169,9 +169,9 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
     }
 
     private void analyzeGenerateMethod(SemanticModel semanticModel,
-                                        ModulePartNode modulePartNode, Optional<Symbol> openAiModelProviderSymbol,
+                                        ModulePartNode modulePartNode, Optional<Symbol> azureOpenAiModelProviderSymbol,
                                        AiAzureCodeModifier.AnalysisData analysisData) {
-        new GenerateMethodJsonSchemaGenerator(semanticModel, openAiModelProviderSymbol, analysisData)
+        new GenerateMethodJsonSchemaGenerator(semanticModel, azureOpenAiModelProviderSymbol, analysisData)
                 .generate(modulePartNode);
     }
 
@@ -218,17 +218,17 @@ class GenerateMethodModificationTask implements ModifierTask<SourceModifierConte
         private final ClassSymbol azureOpenAIProviderSymbol;
 
         public GenerateMethodJsonSchemaGenerator(SemanticModel semanticModel,
-                 Optional<Symbol> openAiModelProviderSymbolOpt, AiAzureCodeModifier.AnalysisData analyserData) {
+                 Optional<Symbol> azureOpenAiModelProviderSymbolOpt, AiAzureCodeModifier.AnalysisData analyserData) {
             this.semanticModel = semanticModel;
             this.typeMapper = analyserData.typeMapper;
-            if (openAiModelProviderSymbolOpt.isEmpty()) {
+            if (azureOpenAiModelProviderSymbolOpt.isEmpty()) {
                 this.azureOpenAIProviderSymbol = null;
                 return;
             }
 
-            Symbol openAiModelProviderSymbol = openAiModelProviderSymbolOpt.get();
-            if (openAiModelProviderSymbol instanceof ClassSymbol openAiModelProviderClassSymbol) {
-                this.azureOpenAIProviderSymbol = openAiModelProviderClassSymbol;
+            Symbol azureOpenAiModelProviderSymbol = azureOpenAiModelProviderSymbolOpt.get();
+            if (azureOpenAiModelProviderSymbol instanceof ClassSymbol azureOpenAiModelProviderClassSymbol) {
+                this.azureOpenAIProviderSymbol = azureOpenAiModelProviderClassSymbol;
             } else {
                 this.azureOpenAIProviderSymbol = null;
             }
