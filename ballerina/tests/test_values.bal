@@ -49,6 +49,10 @@ const sampleImageUrl = "https://example.com/image.jpg";
 
 const review = "{\"rating\": 8, \"comment\": \"Talks about essential aspects of sports performance " +
         "including warm-up, form, equipment, and nutrition.\"}";
+const reviewRecord = {
+    rating: 8,
+    comment: "Talks about essential aspects of sports performance including warm-up, form, equipment, and nutrition."
+};
 
 final readonly & map<anydata>[] expectedContentPartsForRateBlog = [
     {
