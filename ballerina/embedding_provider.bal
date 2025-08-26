@@ -99,11 +99,8 @@ public distinct isolated client class EmbeddingProvider {
             return error("Unsupported chunk type. only 'ai:TextChunk[]|ai:TextDocument[]' is supported");
         }
         do {
-            embeddings:InputItemsString[] inputItems = [];
-            foreach ai:Chunk chunk in chunks {
-                embeddings:InputItemsString item = check chunk.content.cloneWithType();
-                inputItems.push(item);
-            }
+            embeddings:InputItemsString[] inputItems = from ai:Chunk chunk in chunks
+                select check chunk.content.cloneWithType();
             embeddings:Inline_response_200 response = check self.embeddingsClient->/deployments/[self.deploymentId]/embeddings.post(
                 apiVersion = self.apiVersion,
                 payload = {
