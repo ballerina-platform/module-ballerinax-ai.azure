@@ -19,6 +19,7 @@ import ballerina/test;
 
 const SERVICE_URL = "http://localhost:8080/llm/azureopenai";
 const DEPLOYMENT_ID = "gpt4onew";
+const RETRY_DEPLOYMENT_ID = "gpt4onew-retry";
 const API_VERSION = "2023-08-01-preview";
 const API_KEY = "not-a-real-api-key";
 const ERROR_MESSAGE = "Error occurred while attempting to parse the response from the LLM as the expected type. Retrying and/or validating the prompt could fix the response.";
@@ -253,7 +254,7 @@ function testGenerateMethodWithRecordArrayReturnType() returns error? {
 }
 
 @test:Config
-function testGenerateMethodWithInvalidBasicType() returns ai:Error? {
+function testGenerateMethodWithInvalidBasicType() {
     boolean|error rating = openAiProvider->generate(`What is ${1} + ${1}?`);
     test:assertTrue(rating is error);
     test:assertTrue((<error>rating).message().includes(ERROR_MESSAGE));
@@ -265,7 +266,7 @@ type ProductName record {|
 
 @test:Config
 function testGenerateMethodWithInvalidRecordType() returns ai:Error? {
-    ProductName[]|map<string>|error rating = trap openAiProvider->generate(
+    ProductName[]|map<string>|error rating = openAiProvider->generate(
                 `Tell me name and the age of the top 10 world class cricketers`);
     string msg = (<error>rating).message();
     test:assertTrue(rating is error);
@@ -366,4 +367,70 @@ function testGenerateMethodWithArrayUnionRecord() returns ai:Error? {
 function testGenerateMethodWithArrayUnionRecord2() returns ai:Error? {
    Cricketers7[]|Cricketers8|error result = openAiProvider->generate(`Name a random world class cricketer`);
     test:assertTrue(result is Cricketers8);
+}
+
+@test:Config
+function testGenerateWithValidRetryConfig() returns error? {
+    final OpenAiModelProvider modelProvider =
+        check new (SERVICE_URL, API_KEY, 
+            RETRY_DEPLOYMENT_ID, API_VERSION, generatorConfig = {retryConfig: {count: 2, interval: 2}});
+
+    int|ai:Error rating = modelProvider->generate(`What is the result of ${1} + ${1}?`);
+    test:assertEquals(rating, 2, "Failed with valid retry config {count: 2, interval: 2}");
+}
+
+@test:Config
+function testGenerateWithDefaultRetryInterval() returns error? {
+    final OpenAiModelProvider modelProvider =
+        check new (SERVICE_URL, API_KEY, 
+            RETRY_DEPLOYMENT_ID, API_VERSION, generatorConfig = {retryConfig: {count: 2}});
+
+    int|ai:Error rating = modelProvider->generate(`What is the result of 1 + 2?`);
+    test:assertEquals(rating, 3, "Failed with retry config {count: 2}");
+}
+
+@test:Config
+function testGenerateWithSingleRetry() returns error? {
+    final OpenAiModelProvider modelProvider =
+        check new (SERVICE_URL, API_KEY, 
+            RETRY_DEPLOYMENT_ID, API_VERSION, generatorConfig = {retryConfig: {count: 1}});
+
+    int|ai:Error rating = modelProvider->generate(`What is the result of 1 + 3?`);
+    test:assertEquals(rating, 4, "Failed with retry config {count: 1}");
+}
+
+@test:Config
+function testGenerateWithEmptyRetryConfig() returns error? {
+    final OpenAiModelProvider modelProvider =
+        check new (SERVICE_URL, API_KEY, 
+            RETRY_DEPLOYMENT_ID, API_VERSION, generatorConfig = {retryConfig: {}});
+
+    int|ai:Error rating = modelProvider->generate(`What is the result of 1 + 4?`);
+    test:assertEquals(rating, 5, "Failed with empty retry config {}");
+}
+
+@test:Config
+function testGenerateFailsWithInvalidNegativeRetryCount() returns error? {
+    final OpenAiModelProvider modelProvider =
+        check new (SERVICE_URL, API_KEY, 
+            RETRY_DEPLOYMENT_ID, API_VERSION, generatorConfig = {retryConfig: {count: -1}});
+
+    int|ai:Error rating = modelProvider->generate(`What is the result of ${1} + ${6}?`);
+    test:assertTrue(rating is error, "Expected an error for negative retry count");
+    if rating is error {
+        test:assertEquals(rating.message(), "Invalid retry count: -1");
+    }
+}
+
+@test:Config
+function testGenerateFailsWithInvalidNegativeRetryInterval() returns error? {
+    final OpenAiModelProvider modelProvider =
+        check new (SERVICE_URL, API_KEY, 
+            RETRY_DEPLOYMENT_ID, API_VERSION, generatorConfig = {retryConfig: {count: 4, interval: -1}});
+
+    int|ai:Error rating = modelProvider->generate(`What is the result of ${1} + ${6}?`);
+    test:assertTrue(rating is error, "Expected an error for negative retry interval");
+    if rating is error {
+        test:assertEquals(rating.message(), "Invalid retry interval: -1");
+    }
 }

@@ -17,6 +17,7 @@
 import ballerina/ai;
 import ballerina/constraint;
 import ballerina/lang.array;
+import ballerina/lang.runtime;
 import ballerinax/azure.openai.chat;
 
 type ResponseSchema record {|
@@ -74,18 +75,17 @@ isolated function generateJsonObjectSchema(map<json> schema) returns ResponseSch
     return {schema: updatedSchema, isOriginallyJsonObject: false};
 }
 
-isolated function parseResponseAsType(string resp,
+isolated function parseResponseAsType(map<json> resp,
         typedesc<anydata> expectedResponseTypedesc, boolean isOriginallyJsonObject) returns anydata|error {
     if !isOriginallyJsonObject {
-        map<json> respContent = check resp.fromJsonStringWithType();
-        anydata|error result = trap respContent[RESULT].fromJsonWithType(expectedResponseTypedesc);
+        anydata|error result = trap resp[RESULT].fromJsonWithType(expectedResponseTypedesc);
         if result is error {
             return handleParseResponseError(result);
         }
         return result;
     }
 
-    anydata|error result = resp.fromJsonStringWithType(expectedResponseTypedesc);
+    anydata|error result = resp.fromJsonWithType(expectedResponseTypedesc);
     if result is error {
         return handleParseResponseError(result);
     }
@@ -232,27 +232,33 @@ isolated function handleParseResponseError(error chatResponseError) returns erro
 }
 
 isolated function generateLlmResponse(chat:Client llmClient, string deploymentId,
-        string apiVersion, decimal temperature, int maxTokens, ai:Prompt prompt,
-        typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
+        string apiVersion, decimal temperature, ai:GeneratorConfig generatorConfig, int maxTokens,
+        ai:Prompt prompt, typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
+
     DocumentContentPart[] content = check generateChatCreationContent(prompt);
-    ResponseSchema ResponseSchema = check getExpectedResponseSchema(expectedResponseTypedesc);
-    chat:ChatCompletionTool[]|error tools = getGetResultsTool(ResponseSchema.schema);
+    ResponseSchema responseSchema = check getExpectedResponseSchema(expectedResponseTypedesc);
+    chat:ChatCompletionTool[]|error tools = getGetResultsTool(responseSchema.schema);
     if tools is error {
         return error("Error in generated schema: " + tools.message());
     }
 
     chat:CreateChatCompletionRequest request = {
-        messages: [
-            {
-                role: ai:USER,
-                "content": content
-            }
-        ],
+        messages: [{role: ai:USER, "content": content}],
         tools,
         temperature,
         max_tokens: maxTokens,
         tool_choice: getGetResultsToolChoice()
     };
+
+    [int, decimal] [count, interval] = check getRetryConfigValues(generatorConfig);
+    return getLlmResponseWithRetries(llmClient, deploymentId, apiVersion, request,
+        expectedResponseTypedesc, responseSchema.isOriginallyJsonObject, count, interval);
+}
+
+isolated function getLlmResponseWithRetries(chat:Client llmClient, string deploymentId,
+        string apiVersion, chat:CreateChatCompletionRequest request,
+        typedesc<json> expectedResponseTypedesc, boolean isOriginallyJsonObject,
+        int retryCount, decimal retryInterval) returns anydata|ai:Error {
 
     chat:CreateChatCompletionResponse|error response =
         llmClient->/deployments/[deploymentId]/chat/completions.post(apiVersion, request);
@@ -271,6 +277,11 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
         return error("No completion choices");
     }
 
+    chat:ChatCompletionRequestMessage[]? history = request.messages;
+    if history is () {
+        return error("No messages present in the request");
+    }
+
     chat:ChatCompletionResponseMessage? message = choices[0].message;
     chat:ChatCompletionMessageToolCall[]? toolCalls = message?.tool_calls;
     if toolCalls is () || toolCalls.length() == 0 {
@@ -283,18 +294,70 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
         return error(NO_RELEVANT_RESPONSE_FROM_THE_LLM);
     }
 
-    anydata|error res = parseResponseAsType(arguments.toJsonString(), expectedResponseTypedesc,
-            ResponseSchema.isOriginallyJsonObject);
-    if res is error {
-        return error ai:LlmInvalidGenerationError(string `Invalid value returned from the LLM Client, expected: '${
-            expectedResponseTypedesc.toBalString()}', found '${res.toBalString()}'`);
+    history.push({
+        role: ai:ASSISTANT,
+        "tool_calls": [tool]
+    });
+
+    anydata|error result = handleResponseWithExpectedType(arguments, isOriginallyJsonObject, 
+                        typeof response, expectedResponseTypedesc);
+
+    if result is error && retryCount > 0 {
+        string|error repairMessage = getRepairMessage(result, tool.id, tool.'function.name);
+        if repairMessage is error {
+            return error("Failed to generate a valid response: " + repairMessage.message());
+        }
+
+        history.push({
+            role: ai:USER,
+            "content": repairMessage
+        });
+
+        runtime:sleep(retryInterval);
+
+        return getLlmResponseWithRetries(llmClient, deploymentId, apiVersion, request,
+            expectedResponseTypedesc, isOriginallyJsonObject, retryCount - 1, retryInterval);
     }
 
-    anydata|error result = res.ensureType(expectedResponseTypedesc);
-
-    if result is error {
-        return error ai:LlmInvalidGenerationError(string `Invalid value returned from the LLM Client, expected: '${
-            expectedResponseTypedesc.toBalString()}', found '${(typeof response).toBalString()}'`);
+    if result is anydata {
+        return result;
     }
-    return result;
+
+    return error ai:LlmInvalidGenerationError(string `Invalid value returned from the LLM Client after retries, expected: '${
+            expectedResponseTypedesc.toBalString()}', found '${result.toBalString()}'`);
+}
+
+isolated function handleResponseWithExpectedType(map<json> arguments, boolean isOriginallyJsonObject,
+        typedesc responseType, typedesc<anydata> expectedResponseTypedesc) returns anydata|error {
+    anydata res = check parseResponseAsType(arguments, expectedResponseTypedesc, isOriginallyJsonObject);
+    return res.ensureType(expectedResponseTypedesc);
+}
+
+isolated function getRepairMessage(error e, string toolId, string functionName) returns string|error {
+    error? cause = e.cause();
+    if cause is () {
+        return e;
+    }
+
+    return string `The tool call with ID '${toolId}' for the function '${functionName}' failed.
+        Error: ${cause.toString()}
+        You must correct the function arguments based on this error and respond with a valid tool call.`;
+}
+
+isolated function getRetryConfigValues(ai:GeneratorConfig generatorConfig) returns [int, decimal]|ai:Error {
+    ai:RetryConfig? retryConfig = generatorConfig.retryConfig;
+    if retryConfig != () {
+        int count = retryConfig.count;
+        decimal? interval = retryConfig.interval;
+
+        if count < 0 {
+            return error("Invalid retry count: " + count.toString());
+        }
+        if interval < 0d {
+            return error("Invalid retry interval: " + interval.toString());
+        }
+
+        return [count, interval ?: 0d];
+    }
+    return [0, 0d];
 }
