@@ -30,7 +30,7 @@ service /llm on new http:Listener(8080) {
         test:assertEquals(content, check getExpectedContentParts(initialText),
             string `Prompt assertion failed for prompt starting with '${initialText}'`);
 
-        return check getTestServiceResponse(initialText);
+        return getTestServiceResponse(initialText);
     }
 
     isolated resource function post azureopenai/deployments/gpt4onew\-retry/chat/completions(
@@ -43,7 +43,7 @@ service /llm on new http:Listener(8080) {
         }
 
         check assertContentParts(messages, initialText, index);
-        return check getTestServiceResponse(initialText, index);
+        return getTestServiceResponse(initialText, index);
     }
 
     resource function post deployments/[string deploymentId]/embeddings(string api\-version, embeddings:Deploymentid_embeddings_body payload)
