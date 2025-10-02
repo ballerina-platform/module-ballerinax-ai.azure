@@ -17,6 +17,7 @@
 import ballerina/http;
 import ballerina/test;
 import ballerinax/azure.openai.chat;
+import ballerinax/azure.openai.embeddings;
 
 service /llm on new http:Listener(8080) {
     resource function post azureopenai/deployments/gpt4onew/chat/completions(
@@ -51,5 +52,25 @@ service /llm on new http:Listener(8080) {
         test:assertEquals(parameters, getExpectedParameterSchema(initialText),
                 string `Test failed for prompt with initial content, ${initialText}`);
         return getTestServiceResponse(initialText);
+    }
+
+    resource function post deployments/[string deploymentId]/embeddings(string api\-version, embeddings:Deploymentid_embeddings_body payload)
+        returns embeddings:Inline_response_200|error {
+        embeddings:Inline_response_200_data[] data = from int i in 0 ..< 2
+            select {
+                embedding: from int j in 0 ..< 1536
+                    select 0.1 + j * 0.1,
+                index: i,
+                'object: "list"
+            };
+        return {
+            data: payload.input is embeddings:InputItemsString[] ? data : [data[0]],
+            model: "text-embedding-3-small",
+            usage: {
+                prompt_tokens: 15,
+                total_tokens: 15
+            },
+            'object: "list"
+        };
     }
 }
