@@ -37,6 +37,7 @@ public class Generator {
                 modelProvider.get(StringUtils.fromString("deploymentId")), 
                 modelProvider.get(StringUtils.fromString("apiVersion")),
                 modelProvider.get(StringUtils.fromString("temperature")), 
+                modelProvider.get(StringUtils.fromString("generatorConfig")),
                 modelProvider.get(StringUtils.fromString("maxTokens")),
                 prompt, expectedResponseTypedesc);
     }
