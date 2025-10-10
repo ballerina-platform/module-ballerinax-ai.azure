@@ -227,6 +227,15 @@ const expectedParameterSchemaStringForRateBlog7 =
 const expectedParameterSchemaStringForRateBlog8 =
     {"type": "object", "properties": {"result": {"type": "string"}}};
 
+final readonly & map<anydata>[] expectedContentPartsForRateBlog11 = [
+    {
+        "type": "text",
+        "text": string `On a scale from 1 to 10, how would you rank this blog?.
+        Title: ${blog2.title}
+        Content: ${blog2.content}`
+    }
+];
+
 const expectedParamterSchemaStringForCountry =
     {"type": "object", "properties": {"result": {"type": "string"}}};
 
