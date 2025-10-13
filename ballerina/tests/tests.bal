@@ -29,13 +29,7 @@ final OpenAiModelProvider openAiProvider = check new (SERVICE_URL, API_KEY, DEPL
 string apiKey = "mock-api-key";
 string serviceUrl = "http://localhost:8080/llm";
 string embeddingDeploymentId = "text-embed-3-small";
-EmbeddingProvider embeddingProvider = check new (serviceUrl, {
-    apiVersion: API_VERSION, 
-    deploymentId: DEPLOYMENT_ID,
-    auth: {
-        apiKey
-    }
-});
+EmbeddingProvider embeddingProvider = check new (serviceUrl, apiKey, API_VERSION, DEPLOYMENT_ID);
 
 @test:Config {}
 function testEmbeddings() returns error? {
