@@ -15,7 +15,6 @@
 // under the License.
 
 import ballerina/ai;
-import ballerina/http;
 import ballerinax/azure.openai.embeddings;
 
 # EmbeddingProvider provides an interface for interacting with Azure OpenAI Embedding Models.
@@ -43,14 +42,9 @@ public distinct isolated client class EmbeddingProvider {
         if http1Settings is error {
             return error ai:Error("Failed to clone http1Settings", http1Settings);
         }
-        http:BearerTokenConfig|embeddings:ApiKeysConfig? authConfig = config?.auth;
-        if authConfig is () {
-            return error ai:Error("Authentication configurations must be provided");
-        }
-        string apiKey = authConfig is http:BearerTokenConfig ? authConfig.token : authConfig.apiKey;
         embeddings:ConnectionConfig openAiConfig = {
             auth: {
-                apiKey
+                apiKey: accessToken
             },
             httpVersion: config.httpVersion,
             http1Settings: http1Settings,
