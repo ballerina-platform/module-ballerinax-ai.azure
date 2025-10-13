@@ -37,7 +37,7 @@ public distinct isolated client class EmbeddingProvider {
             @display {label: "Access Token"} string accessToken,
             @display {label: "API Version"} string apiVersion,
             @display {label: "Deployment ID"} string deploymentId,
-            @display {label: "HTTP Configuration"} *ConnectionConfig config) returns ai:Error? {
+            @display {label: "HTTP Configurations"} *ConnectionConfig config) returns ai:Error? {
         embeddings:ClientHttp1Settings?|error http1Settings = config?.http1Settings.cloneWithType();
         if http1Settings is error {
             return error ai:Error("Failed to clone http1Settings", http1Settings);
