@@ -28,10 +28,17 @@ public distinct isolated client class EmbeddingProvider {
     # Initializes the OpenAI embedding model with the given connection configuration.
     #
     # + serviceUrl - The base URL of OpenAI API endpoint
-    # + config - configuration for the Azure OpenAI API
-    # 
+    # + accessToken - The access token for authenticating API requests
+    # + apiVersion - The API version of the Azure OpenAI API
+    # + deploymentId - The deployment ID of the embedding model
+    #
     # + return - `nil` on successful initialization; otherwise, returns an `ai:Error`
-    public isolated function init(string serviceUrl, EmbeddingConfig config) returns ai:Error? {
+    public isolated function init(
+            @display {label: "Service URL"} string serviceUrl,
+            @display {label: "Access Token"} string accessToken,
+            @display {label: "API Version"} string apiVersion,
+            @display {label: "Deployment ID"} string deploymentId,
+            @display {label: "HTTP Configuration"} *ConnectionConfig config) returns ai:Error? {
         embeddings:ClientHttp1Settings?|error http1Settings = config?.http1Settings.cloneWithType();
         if http1Settings is error {
             return error ai:Error("Failed to clone http1Settings", http1Settings);
@@ -65,8 +72,8 @@ public distinct isolated client class EmbeddingProvider {
             return error ai:Error("Failed to initialize OpenAI embedding provider", embeddingsClient);
         }
         self.embeddingsClient = embeddingsClient;
-        self.apiVersion = config.apiVersion;
-        self.deploymentId = config.deploymentId;
+        self.apiVersion = apiVersion;
+        self.deploymentId = deploymentId;
     }
 
     # Generates an embedding vector for the provided chunk.
