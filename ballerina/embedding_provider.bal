@@ -30,6 +30,7 @@ public distinct isolated client class EmbeddingProvider {
     # + accessToken - The access token for authenticating API requests
     # + apiVersion - The API version of the Azure OpenAI API
     # + deploymentId - The deployment ID of the embedding model
+    # + config - The connection configurations for the HTTP endpoint
     #
     # + return - `nil` on successful initialization; otherwise, returns an `ai:Error`
     public isolated function init(
