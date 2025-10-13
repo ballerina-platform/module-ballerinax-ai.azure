@@ -16,16 +16,6 @@
 
 import ballerina/ai;
 import ballerina/http;
-import ballerinax/azure.openai.embeddings;
-
-# Embedding configuration for the Azure OpenAI API
-public type EmbeddingConfig record {|
-    *ConnectionConfig;
-    # The API version of the Azure OpenAI API
-    string apiVersion;
-    # The deployment ID of the embedding model
-    string deploymentId;
-|};
 
 # Configurations for controlling the behaviours when communicating with a remote HTTP endpoint.
 @display {label: "Connection Configuration"}
@@ -86,9 +76,6 @@ public type ConnectionConfig record {|
     # Enables the inbound payload validation functionality which provided by the constraint package. Enabled by default
     @display {label: "Payload Validation"}
     boolean validation = true;
-
-    # Configurations related to client authentication
-    http:BearerTokenConfig|embeddings:ApiKeysConfig auth?;
 |};
 
 type AzureChatUserMessage record {|
