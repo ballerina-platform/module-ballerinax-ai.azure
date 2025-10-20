@@ -18,7 +18,7 @@ import ballerina/test;
 
 @test:Config
 function testGenerateMethodUsageInFileWithoutAiImport() returns error? {
-    Review|error result = openAiProvider->generate(`Please rate this blog out of ${"10"}.
+    Review|error result = openAiProvider->generate(`On a scale from 1 to 10, how would you rank this blog?.
         Title: ${blog2.title}
         Content: ${blog2.content}`);
     test:assertEquals(result, reviewRecord);
