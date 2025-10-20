@@ -95,6 +95,7 @@ public distinct isolated client class EmbeddingProvider {
                 }
             );
 
+            span.addResponseModel(response.model);
             span.addInputTokenCount(response.usage.prompt_tokens);
             if response.data.length() == 0 {
                 ai:Error err = error("No embeddings generated for the provided chunk");
