@@ -26,6 +26,38 @@ const RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE = "Runtime schema generation is
 
 final OpenAiModelProvider openAiProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
 
+string apiKey = "mock-api-key";
+string serviceUrl = "http://localhost:8080/llm";
+string embeddingDeploymentId = "text-embed-3-small";
+EmbeddingProvider embeddingProvider = check new (serviceUrl, apiKey, API_VERSION, DEPLOYMENT_ID);
+
+@test:Config {}
+function testEmbeddings() returns error? {
+    ai:TextChunk chunk = {
+        content: "Hello, world!"
+    };
+    ai:Embedding data = check embeddingProvider->embed(chunk);
+    float[] vectors = check data.cloneWithType();
+    test:assertEquals(vectors.length(), 1536);
+}
+
+@test:Config {}
+function testBatchEmbeddings() returns error? {
+    ai:TextChunk[] chunks = [
+        {
+            content: "Hello, world!"
+        }, {
+            content: "Hello, world!!!"
+        }
+    ];
+    ai:Embedding[] results = check embeddingProvider->batchEmbed(chunks);
+    test:assertEquals(results.length(), 2);
+    foreach ai:Embedding result in results {
+        float[] vectors = check result.cloneWithType();
+        test:assertEquals(vectors.length(), 1536);
+    }
+}
+
 @test:Config
 function testGenerateMethodWithBasicReturnType() returns ai:Error? {
     int|error rating = openAiProvider->generate(`Rate this blog out of 10.
