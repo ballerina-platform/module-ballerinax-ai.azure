@@ -297,6 +297,7 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
         return result;
     }
     span.addOutputMessages(result.toJson());
+    span.addOutputType(observe:JSON);
     span.close();
     return result;
 }
