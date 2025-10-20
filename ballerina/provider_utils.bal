@@ -242,7 +242,8 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
         typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
     observe:GenerateContentSpan span = observe:createGenerateContentSpan(deploymentId);
     span.addTemperature(temperature);
-
+    span.addProvider("azure.ai.openai");
+    
     DocumentContentPart[] content;
     ResponseSchema responseSchema;
     chat:ChatCompletionTool[] tools;
