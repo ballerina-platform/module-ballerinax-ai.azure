@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/ai;
+import ballerina/ai.observe;
 import ballerinax/azure.openai.embeddings;
 
 # EmbeddingProvider provides an interface for interacting with Azure OpenAI Embedding Models.
@@ -76,19 +77,38 @@ public distinct isolated client class EmbeddingProvider {
     # + chunk - The `ai:Chunk` containing the content to embed
     # + return - The resulting `ai:Embedding` on success; otherwise, returns an `ai:Error`
     isolated remote function embed(ai:Chunk chunk) returns ai:Embedding|ai:Error {
+        observe:EmbeddingSpan span = observe:createEmbeddingSpan(self.deploymentId);
+        span.addProvider("azure.ai.openai");
+
         if chunk !is ai:TextDocument|ai:TextChunk {
-            return error ai:Error("Unsupported document type. only 'ai:TextDocument' or 'ai:TextChunk' is supported");
+            ai:Error err = error ai:Error("Unsupported chunk type. only 'ai:TextDocument|ai:TextChunk' is supported");
+            span.close(err);
+            return err;
         }
+
         do {
+            span.addInputContent(chunk.content);
             embeddings:Inline_response_200 response = check self.embeddingsClient->/deployments/[self.deploymentId]/embeddings.post(
                 apiVersion = self.apiVersion,
                 payload = {
                     input: chunk.content
                 }
             );
-            return check response.data[0].embedding.cloneWithType();
+
+            span.addInputTokenCount(response.usage.prompt_tokens);
+            if response.data.length() == 0 {
+                ai:Error err = error("No embeddings generated for the provided chunk");
+                span.close(err);
+                return err;
+            }
+
+            ai:Embedding embedding = check response.data[0].embedding.cloneWithType();
+            span.close();
+            return embedding;
         } on fail error e {
-            return error ai:Error("Unable to obtain embedding for the provided chunk", e);
+            ai:Error err = error ai:Error("Unable to obtain embedding for the provided chunk", e);
+            span.close(err);
+            return err;
         }
     }
 
@@ -97,10 +117,18 @@ public distinct isolated client class EmbeddingProvider {
     # + chunks - The array of chunks to be converted into embeddings
     # + return - An array of embeddings on success, or an `ai:Error`
     isolated remote function batchEmbed(ai:Chunk[] chunks) returns ai:Embedding[]|ai:Error {
+        observe:EmbeddingSpan span = observe:createEmbeddingSpan(self.deploymentId);
+        span.addProvider("azure.ai.openai");
+
         if !chunks.every(chunk => chunk is ai:TextChunk|ai:TextDocument) {
-            return error("Unsupported chunk type. only 'ai:TextChunk[]|ai:TextDocument[]' is supported");
+            ai:Error err = error("Unsupported chunk type. only 'ai:TextChunk[]|ai:TextDocument[]' is supported");
+            span.close(err);
+            return err;
         }
         do {
+            string[] input = chunks.map(chunk => chunk.content.toString());
+            span.addInputContent(input);
+
             embeddings:InputItemsString[] inputItems = from ai:Chunk chunk in chunks
                 select check chunk.content.cloneWithType();
             embeddings:Inline_response_200 response = check self.embeddingsClient->/deployments/[self.deploymentId]/embeddings.post(
@@ -109,11 +137,16 @@ public distinct isolated client class EmbeddingProvider {
                     input: inputItems
                 }
             );
-            return
-                from embeddings:Inline_response_200_data data in response.data
-                    select check data.embedding.cloneWithType();
+
+            span.addInputTokenCount(response.usage.prompt_tokens);
+            ai:Embedding[] embeddings = from embeddings:Inline_response_200_data data in response.data
+                select check data.embedding.cloneWithType();
+            span.close();
+            return embeddings;
         } on fail error e {
-            return error ai:Error("Unable to obtain embedding for the provided document", e);
+            ai:Error err = error("Unable to obtain embedding for the provided document", e);
+            span.close(err);
+            return err;
         }
     }
 }

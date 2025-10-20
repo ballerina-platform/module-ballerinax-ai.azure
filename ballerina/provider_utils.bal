@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/ai;
+import ballerina/ai.observe;
 import ballerina/constraint;
 import ballerina/lang.array;
 import ballerinax/azure.openai.chat;
@@ -105,17 +106,22 @@ isolated function getGetResultsToolChoice() returns chat:ChatCompletionNamedTool
     }
 };
 
-isolated function getGetResultsTool(map<json> parameters) returns chat:ChatCompletionTool[]|error =>
-    [
-    {
-        'type: FUNCTION,
-        'function: {
-            name: GET_RESULTS_TOOL,
-            parameters: check parameters.cloneWithType(),
-            description: "Tool to call with the response from a large language model (LLM) for a user prompt."
-        }
+isolated function getGetResultsTool(map<json> parameters) returns chat:ChatCompletionTool[]|ai:Error {
+    chat:ChatCompletionFunctionParameters|error toolParam = parameters.ensureType();
+    if toolParam is error {
+        return error("Error in generated schema: " + toolParam.message());
     }
-];
+    return [
+        {
+            'type: FUNCTION,
+            'function: {
+                name: GET_RESULTS_TOOL,
+                parameters: toolParam,
+                description: "Tool to call with the response from a large language model (LLM) for a user prompt."
+            }
+        }
+    ];
+}
 
 isolated function generateChatCreationContent(ai:Prompt prompt) returns DocumentContentPart[]|ai:Error {
     string[] & readonly strings = prompt.strings;
@@ -234,11 +240,19 @@ isolated function handleParseResponseError(error chatResponseError) returns erro
 isolated function generateLlmResponse(chat:Client llmClient, string deploymentId,
         string apiVersion, decimal temperature, int maxTokens, ai:Prompt prompt,
         typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
-    DocumentContentPart[] content = check generateChatCreationContent(prompt);
-    ResponseSchema ResponseSchema = check getExpectedResponseSchema(expectedResponseTypedesc);
-    chat:ChatCompletionTool[]|error tools = getGetResultsTool(ResponseSchema.schema);
-    if tools is error {
-        return error("Error in generated schema: " + tools.message());
+    observe:GenerateContentSpan span = observe:createGenerateContentSpan(deploymentId);
+    span.addTemperature(temperature);
+
+    DocumentContentPart[] content;
+    ResponseSchema responseSchema;
+    chat:ChatCompletionTool[] tools;
+    do {
+        content = check generateChatCreationContent(prompt);
+        responseSchema = check getExpectedResponseSchema(expectedResponseTypedesc);
+        tools = check getGetResultsTool(responseSchema.schema);
+    } on fail ai:Error err {
+        span.close(err);
+        return err;
     }
 
     chat:CreateChatCompletionRequest request = {
@@ -253,13 +267,43 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
         max_tokens: maxTokens,
         tool_choice: getGetResultsToolChoice()
     };
+    span.addInputMessages(request.messages.toJson());
 
     chat:CreateChatCompletionResponse|error response =
         llmClient->/deployments/[deploymentId]/chat/completions.post(apiVersion, request);
     if response is error {
-        return error("LLM call failed: " + response.message(), cause = response.cause(), detail = response.detail());
+        ai:Error err = error("LLM call failed: " + response.message(), cause = response.cause(), detail = response.detail());
+        span.close(err);
+        return err;
     }
 
+    string? responseId = response.id;
+    if responseId is string {
+        span.addResponseId(responseId);
+    }
+    int? inputTokens = response.usage?.prompt_tokens;
+    if inputTokens is int {
+        span.addInputTokenCount(inputTokens);
+    }
+    int? outputTokens = response.usage?.completion_tokens;
+    if outputTokens is int {
+        span.addOutputTokenCount(outputTokens);
+    }
+
+    anydata|ai:Error result = ensureAnydataResult(response, expectedResponseTypedesc,
+            responseSchema.isOriginallyJsonObject, span);
+    if result is ai:Error {
+        span.close(result);
+        return result;
+    }
+    span.addOutputMessages(result.toJson());
+    span.close();
+    return result;
+}
+
+isolated function ensureAnydataResult(chat:CreateChatCompletionResponse response,
+        typedesc<json> expectedResponseTypedesc, boolean isOriginallyJsonObject,
+        observe:GenerateContentSpan span) returns anydata|ai:Error {
     record {
         chat:ChatCompletionResponseMessage message?;
         chat:ContentFilterChoiceResults content_filter_results?;
@@ -276,6 +320,10 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
     if toolCalls is () || toolCalls.length() == 0 {
         return error(NO_RELEVANT_RESPONSE_FROM_THE_LLM);
     }
+    string? finishReason = choices[0].finish_reason;
+    if finishReason is string {
+        span.addFinishReason(finishReason);
+    }
 
     chat:ChatCompletionMessageToolCall tool = toolCalls[0];
     map<json>|error arguments = tool.'function.arguments.fromJsonStringWithType();
@@ -283,8 +331,7 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
         return error(NO_RELEVANT_RESPONSE_FROM_THE_LLM);
     }
 
-    anydata|error res = parseResponseAsType(arguments.toJsonString(), expectedResponseTypedesc,
-            ResponseSchema.isOriginallyJsonObject);
+    anydata|error res = parseResponseAsType(arguments.toJsonString(), expectedResponseTypedesc, isOriginallyJsonObject);
     if res is error {
         return error ai:LlmInvalidGenerationError(string `Invalid value returned from the LLM Client, expected: '${
             expectedResponseTypedesc.toBalString()}', found '${res.toBalString()}'`);
