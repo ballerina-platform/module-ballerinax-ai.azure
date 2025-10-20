@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/ai;
+import ballerina/ai.observe;
 import ballerina/jballerina.java;
 import ballerinax/azure.openai.chat;
 
@@ -89,6 +90,21 @@ public isolated client class OpenAiModelProvider {
     # + return - Function to be called, chat response or an error in-case of failures
     isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages, ai:ChatCompletionFunctions[] tools, string? stop = ())
         returns ai:ChatAssistantMessage|ai:Error {
+        observe:ChatSpan span = observe:createChatSpan(self.deploymentId);
+        span.addProvider("azure.ai.openai");
+        span.addOutputType(observe:TEXT);
+        if stop is string {
+            span.addStopSequence(stop);
+        }
+        span.addTemperature(self.temperature);
+        json|ai:Error jsonMsg = check convertMessageToJson(messages);
+        if jsonMsg is ai:Error {
+            ai:Error err = error("Error while transforming input", jsonMsg);
+            span.close(err);
+            return err;
+        }
+        span.addInputMessages(jsonMsg);
+
         chat:CreateChatCompletionRequest request = {
             stop,
             messages: check self.mapToChatCompletionRequestMessage(messages),
@@ -97,11 +113,14 @@ public isolated client class OpenAiModelProvider {
         };
         if tools.length() > 0 {
             request.functions = tools;
+            span.addTools(tools);
         }
         chat:CreateChatCompletionResponse|error response =
             self.llmClient->/deployments/[self.deploymentId]/chat/completions.post(self.apiVersion, request);
         if response is error {
-            return error ai:LlmConnectionError("Error while connecting to the model", response);
+            ai:Error err = error ai:LlmConnectionError("Error while connecting to the model", response);
+            span.close(err);
+            return err;
         }
 
         record {|
@@ -113,24 +132,52 @@ public isolated client class OpenAiModelProvider {
         |}[]? choices = response.choices;
 
         if choices is () || choices.length() == 0 {
-            return error ai:LlmInvalidResponseError("Empty response from the model when using function call API");
+            ai:Error err = error ai:LlmInvalidResponseError("Empty response from the model when using function call API");
+            span.close(err);
+            return err;
         }
+
+        string|int? responseId = response.id;
+        if responseId is string {
+            span.addResponseId(responseId);
+        }
+        int? inputTokens = response.usage?.prompt_tokens;
+        if inputTokens is int {
+            span.addInputTokenCount(inputTokens);
+        }
+        int? outputTokens = response.usage?.completion_tokens;
+        if outputTokens is int {
+            span.addOutputTokenCount(outputTokens);
+        }
+        string? finishReason = choices[0].finish_reason;
+        if finishReason is string {
+            span.addFinishReason(finishReason);
+        }
+
         chat:ChatCompletionResponseMessage? message = choices[0].message;
         ai:ChatAssistantMessage chatAssistantMessage = {role: ai:ASSISTANT, content: message?.content};
         chat:ChatCompletionFunctionCall? functionCall = message?.function_call;
-        if functionCall is chat:ChatCompletionFunctionCall {
-            chatAssistantMessage.toolCalls = [check self.mapToFunctionCall(functionCall)];
+        if functionCall is () {
+            span.addOutputMessages(chatAssistantMessage);
+            span.close();
+            return chatAssistantMessage;
         }
+        ai:FunctionCall|ai:Error toolCall = check self.mapToFunctionCall(functionCall);
+        if toolCall is ai:Error {
+            span.close(toolCall);
+            return toolCall;
+        }
+        chatAssistantMessage.toolCalls = [toolCall];
         return chatAssistantMessage;
     }
 
     # Sends a chat request to the model and generates a value that belongs to the type
     # corresponding to the type descriptor argument.
-    # 
+    #
     # + prompt - The prompt to use in the chat messages
     # + td - Type descriptor specifying the expected return type format
     # + return - Generates a value that belongs to the type, or an error if generation fails
-    isolated remote function generate(ai:Prompt prompt, @display {label: "Expected type"} typedesc<anydata> td = <>) 
+    isolated remote function generate(ai:Prompt prompt, @display {label: "Expected type"} typedesc<anydata> td = <>)
                 returns td|ai:Error = @java:Method {
         'class: "io.ballerina.lib.ai.azure.Generator"
     } external;
@@ -158,7 +205,7 @@ public isolated client class OpenAiModelProvider {
                     assistantMessage["content"] = message?.content;
                 }
                 chatCompletionRequestMessages.push(assistantMessage);
-            } else if message is ai:ChatFunctionMessage {
+            } else {
                 chatCompletionRequestMessages.push(message);
             }
         }
@@ -232,4 +279,15 @@ isolated function getChatMessageStringContent(ai:Prompt|string prompt) returns s
         promptStr += insertion.toString() + str;
     }
     return promptStr.trim();
+}
+
+isolated function convertMessageToJson(ai:ChatMessage[]|ai:ChatMessage messages) returns json|ai:Error {
+    if messages is ai:ChatMessage[] {
+        return messages.'map(msg => msg is ai:ChatUserMessage|ai:ChatSystemMessage ? check convertMessageToJson(msg) : msg);
+    }
+    if messages is ai:ChatUserMessage|ai:ChatSystemMessage {
+
+    }
+    return messages !is ai:ChatUserMessage|ai:ChatSystemMessage ? messages :
+        {role: messages.role, content: check getChatMessageStringContent(messages.content), name: messages.name};
 }

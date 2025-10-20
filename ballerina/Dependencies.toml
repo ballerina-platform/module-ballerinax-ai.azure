@@ -5,12 +5,12 @@
 
 [ballerina]
 dependencies-toml-version = "2"
-distribution-version = "2201.12.9"
+distribution-version = "2201.12.7"
 
 [[package]]
 org = "ballerina"
 name = "ai"
-version = "1.5.4"
+version = "1.6.0"
 dependencies = [
 	{org = "ballerina", name = "constraint"},
 	{org = "ballerina", name = "data.jsondata"},
@@ -26,6 +26,7 @@ dependencies = [
 	{org = "ballerina", name = "math.vector"},
 	{org = "ballerina", name = "mcp"},
 	{org = "ballerina", name = "mime"},
+	{org = "ballerina", name = "observe"},
 	{org = "ballerina", name = "time"},
 	{org = "ballerina", name = "url"},
 	{org = "ballerina", name = "uuid"},
@@ -33,7 +34,8 @@ dependencies = [
 ]
 modules = [
 	{org = "ballerina", packageName = "ai", moduleName = "ai"},
-	{org = "ballerina", packageName = "ai", moduleName = "ai.intelligence"}
+	{org = "ballerina", packageName = "ai", moduleName = "ai.intelligence"},
+	{org = "ballerina", packageName = "ai", moduleName = "ai.observe"}
 ]
 
 [[package]]
@@ -82,7 +84,7 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "data.jsondata"
-version = "1.1.2"
+version = "1.1.3"
 dependencies = [
 	{org = "ballerina", name = "jballerina.java"},
 	{org = "ballerina", name = "lang.object"}
@@ -91,7 +93,7 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "data.xmldata"
-version = "1.5.0"
+version = "1.5.2"
 dependencies = [
 	{org = "ballerina", name = "jballerina.java"},
 	{org = "ballerina", name = "lang.object"}
@@ -278,7 +280,7 @@ version = "1.2.0"
 [[package]]
 org = "ballerina"
 name = "mcp"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
 	{org = "ballerina", name = "http"},
 	{org = "ballerina", name = "jballerina.java"},
