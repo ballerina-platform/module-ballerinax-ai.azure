@@ -75,7 +75,7 @@ type IndexSchemaInfo record {
 };
 
 # Configuration for the Azure AI Service Clients
-public type AzureAiSearchKnowledgeBaseClientConfiguration record {|
+public type AiSearchKnowledgeBaseClientConfiguration record {|
     # Connection configuration for the Azure AI search client that use for create search index
     # This configuration is only required when the `index` parameter
     # is provided as an `search:SearchIndex` (i.e., when the system will create the index).
@@ -88,7 +88,7 @@ public type AzureAiSearchKnowledgeBaseClientConfiguration record {|
 # User should create the required `indexer`, `data source` and `index` beforehand using 
 # the util functions provided in this module. 
 # Currently search fields only supported with `id`, `content` and `type` field names.
-public distinct isolated class AzureAiSearchKnowledgeBase {
+public distinct isolated class AiSearchKnowledgeBase {
     *ai:KnowledgeBase;
     
     private final search:SearchIndex index;
@@ -104,7 +104,7 @@ public distinct isolated class AzureAiSearchKnowledgeBase {
     private final string[] vectorFieldNames;
     private final map<search:SearchField> allFields;
 
-    # Initializes a new `AzureAiSearchKnowledgeBase` instance.
+    # Initializes a new `AiSearchKnowledgeBase` instance.
     # 
     # + serviceUrl - The service URL of the Azure AI Search instance
     # + apiKey - The API key for authenticating with the Azure AI Search service
@@ -116,11 +116,11 @@ public distinct isolated class AzureAiSearchKnowledgeBase {
     # + apiVersion - The API version to use for requests.
     # + clientConfigurations - Additional client configurations for Azure AI Search clients
     # + contentFieldName - The name of the field in the index that contains the main content. Defaults to "content".
-    # + return - An instance of `AzureAiSearchKnowledgeBase` or an `ai:Error` if initialization fails
+    # + return - An instance of `AiSearchKnowledgeBase` or an `ai:Error` if initialization fails
     public isolated function init(string serviceUrl, string apiKey, string|search:SearchIndex index, ai:EmbeddingProvider embeddingModel, 
             ai:Chunker|ai:AUTO|ai:DISABLE chunker = ai:AUTO, boolean verbose = false, 
             string apiVersion = AI_AZURE_KNOWLEDGEBASE_API_VERSION, string contentFieldName = CONTENT_FIELD_NAME, 
-            *AzureAiSearchKnowledgeBaseClientConfiguration clientConfigurations) returns ai:Error? {
+            *AiSearchKnowledgeBaseClientConfiguration clientConfigurations) returns ai:Error? {
         self.chunker = chunker;
         self.embeddingModel = embeddingModel;
         self.verbose = verbose;
@@ -518,9 +518,9 @@ public distinct isolated class AzureAiSearchKnowledgeBase {
 # + err - Optional error to log with additional details
 isolated function logIfVerboseEnable(boolean verbose, string value, 'error? err = ()) {
     if verbose {
-        log:printInfo(string `[AzureAiSearchKnowledgeBase] ${value}`);
+        log:printInfo(string `[AiSearchKnowledgeBase] ${value}`);
         if err is error {
-            log:printError(string `[AzureAiSearchKnowledgeBase] Error Details: ${err.message()}`, err);
+            log:printError(string `[AiSearchKnowledgeBase] Error Details: ${err.message()}`, err);
         }
     }
 }
@@ -563,7 +563,7 @@ isolated function generateVectorFromEmbedding(ai:Embedding embedding) returns ai
         return embedding.dense;
     } else {
         // Explicitly fail for sparse-only embeddings
-        return error ai:Error("AzureAiSearchKnowledgeBase only supports dense or hybrid embeddings, but received a SparseVector.");
+        return error ai:Error("AiSearchKnowledgeBase only supports dense or hybrid embeddings, but received a SparseVector.");
     }
 }
 
