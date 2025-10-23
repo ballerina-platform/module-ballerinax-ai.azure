@@ -22,8 +22,45 @@ import ballerinax/azure.ai.search.index;
 
 const CONTENT_FIELD_NAME = "content";
 const KEY_FIELD_NAME = "id";
-const API_VERSION = "2025-09-01";
+const AI_AZURE_KNOWLEDGEBASE_API_VERSION = "2025-09-01";
 const API_KEY_HEADER_NAME = "api-key";
+
+// Search action constants
+const SEARCH_ACTION_MERGE_OR_UPLOAD = "mergeOrUpload";
+const SEARCH_ACTION_DELETE = "delete";
+
+// Vector search constants
+const VECTOR_QUERY_KIND = "vector";
+
+// Content type constants
+const CONTENT_TYPE_TEXT_CHUNK = "text-chunk";
+const MIME_TYPE_MARKDOWN = "text/markdown";
+const MIME_TYPE_HTML = "text/html";
+
+// File extension constants
+const FILE_EXT_MARKDOWN = ".md";
+const FILE_EXT_HTML = ".html";
+
+// Search field constants
+const SEARCH_SCORE_FIELD = "@search.score";
+const SEARCH_HIGHLIGHTS_FIELD = "@search.highlights";
+const SEARCH_ACTION_FIELD = "@search.action";
+
+// OData operator constants
+const ODATA_OPERATOR_GT = "gt";
+const ODATA_OPERATOR_LT = "lt";
+const ODATA_OPERATOR_GE = "ge";
+const ODATA_OPERATOR_LE = "le";
+const ODATA_OPERATOR_EQ = "eq";
+const ODATA_OPERATOR_NE = "ne";
+const ODATA_OPERATOR_AND = " and ";
+const ODATA_OPERATOR_OR = " or ";
+
+// Preference header constants
+const PREFER_HEADER_RETURN_REPRESENTATION = "return=representation";
+
+// Default field names
+const DEFAULT_TYPE_FIELD_NAME = "type";
 
 # Information about the analyzed index schema
 type IndexSchemaInfo record {
@@ -38,7 +75,7 @@ type IndexSchemaInfo record {
 };
 
 # Configuration for the Azure AI Service Clients
-public type ClientConfiguration record {|
+public type AzureAiSearchKnowledgeBaseClientConfiguration record {|
     # Connection configuration for the Azure AI search client that use for create search index
     # This configuration is only required when the `index` parameter
     # is provided as an `search:SearchIndex` (i.e., when the system will create the index).
@@ -71,7 +108,8 @@ public distinct isolated class AzureAiSearchKnowledgeBase {
     # 
     # + serviceUrl - The service URL of the Azure AI Search instance
     # + apiKey - The API key for authenticating with the Azure AI Search service
-    # + index - The name of an existing search index or a `search:SearchIndex` definition to create
+    # + index - The name of an existing search index or a `search:SearchIndex` definition to create,
+    #   When creating a new index, ensure that it contains one key field of type string.
     # + embeddingModel - The embedding model to use for generating embeddings
     # + chunker - The chunker to use for chunking documents before ingestion. Defaults to `ai:AUTO`.
     # + verbose - Whether to enable verbose logging. Defaults to `false`.
@@ -81,8 +119,8 @@ public distinct isolated class AzureAiSearchKnowledgeBase {
     # + return - An instance of `AzureAiSearchKnowledgeBase` or an `ai:Error` if initialization fails
     public isolated function init(string serviceUrl, string apiKey, string|search:SearchIndex index, ai:EmbeddingProvider embeddingModel, 
             ai:Chunker|ai:AUTO|ai:DISABLE chunker = ai:AUTO, boolean verbose = false, 
-            string apiVersion = API_VERSION, string contentFieldName = CONTENT_FIELD_NAME, 
-            *ClientConfiguration clientConfigurations) returns ai:Error? {
+            string apiVersion = AI_AZURE_KNOWLEDGEBASE_API_VERSION, string contentFieldName = CONTENT_FIELD_NAME, 
+            *AzureAiSearchKnowledgeBaseClientConfiguration clientConfigurations) returns ai:Error? {
         self.chunker = chunker;
         self.embeddingModel = embeddingModel;
         self.verbose = verbose;
@@ -115,7 +153,7 @@ public distinct isolated class AzureAiSearchKnowledgeBase {
         } else {
             logIfVerboseEnable(self.verbose, string `Attempting to create search index ${indexName}...`);
             search:SearchIndex|error createdIndex = self.serviceClient->indexesCreateOrUpdate(indexName, {
-                [API_KEY_HEADER_NAME]: self.apiKey, Prefer: "return=representation"}, index, {api\-version: self.apiVersion});
+                [API_KEY_HEADER_NAME]: self.apiKey, Prefer: PREFER_HEADER_RETURN_REPRESENTATION}, index, {api\-version: self.apiVersion});
             if createdIndex is error {
                 logIfVerboseEnable(self.verbose, string `Failed to create search index ${indexName}: ${createdIndex.message()}`);
                 return error ai:Error("Failed to create search index", createdIndex);
@@ -198,7 +236,7 @@ public distinct isolated class AzureAiSearchKnowledgeBase {
         }
 
         lock {
-            ai:TextChunk queryChunk = {content: query, 'type: "text-chunk"};
+            ai:TextChunk queryChunk = {content: query, 'type: CONTENT_TYPE_TEXT_CHUNK};
             ai:Embedding queryEmbedding = check self.embeddingModel->embed(queryChunk);
 
             // Create vector search request using Azure AI Search's integrated vectorization
@@ -206,14 +244,14 @@ public distinct isolated class AzureAiSearchKnowledgeBase {
             index:VectorQuery[]? vectorQuery = ();
 
             if vectorFieldLength != 0 {
-                ai:Vector|ai:Error vectors = self.generateVector(queryEmbedding);
+                ai:Vector|ai:Error vectors = generateVectorFromEmbedding(queryEmbedding);
                 if vectors is ai:Error {
                     return vectors;
                 }
 
                 vectorQuery = [
                     {
-                        kind: "vector",
+                        kind: VECTOR_QUERY_KIND,
                         k: maxLimit == -1 ? () : <int:Signed32>maxLimit,
                         fields: string:'join(",", ...self.vectorFieldNames),
                         "vector": vectors
@@ -252,9 +290,9 @@ public distinct isolated class AzureAiSearchKnowledgeBase {
             ai:QueryMatch[] matches = [];
             foreach index:SearchResult result in searchResult.value {
                 ai:Chunk chunk = {
-                    'type: "text-chunk",
-                    content: self.getFieldValue(result, self.contentFieldName),
-                    metadata: self.extractMetadata(result)
+                    'type: CONTENT_TYPE_TEXT_CHUNK,
+                    content: extractFieldValue(result, self.contentFieldName, self.verbose),
+                    metadata: extractMetadataFromResult(result, self.contentFieldName, self.keyFieldName, self.vectorFieldNames)
                 };
                 
                 ai:QueryMatch queryMatch = {
@@ -297,7 +335,7 @@ public distinct isolated class AzureAiSearchKnowledgeBase {
         // Extract document IDs
         string[] documentIds = [];
         foreach index:SearchResult result in searchResult.value {
-            string? documentId = self.getFieldValue(result, self.keyFieldName);
+            string? documentId = extractFieldValue(result, self.keyFieldName, self.verbose);
             if documentId is string {
                 documentIds.push(documentId);
             }
@@ -311,7 +349,7 @@ public distinct isolated class AzureAiSearchKnowledgeBase {
         index:IndexAction[] deleteActions = [];
         foreach string docId in documentIds {
             index:IndexAction deleteAction = {
-                \@search\.action: "delete"
+                \@search\.action: SEARCH_ACTION_DELETE
             };
             // Set the key field for deletion
             deleteAction[self.keyFieldName] = docId;
@@ -370,7 +408,7 @@ public distinct isolated class AzureAiSearchKnowledgeBase {
         }
         
         // Combine filters with the appropriate logical operator
-        string logicalOperator = node.condition == ai:AND ? " and " : " or ";
+        string logicalOperator = node.condition == ai:AND ? ODATA_OPERATOR_AND : ODATA_OPERATOR_OR;
         return string `(${string:'join(logicalOperator, ...filterExpressions)})`;
     }
     
@@ -381,28 +419,28 @@ public distinct isolated class AzureAiSearchKnowledgeBase {
         
         match operator {
             ai:EQUAL => {
-                return self.buildEqualityFilter(fieldName, value);
+                return buildEqualityFilter(fieldName, value);
             }
             ai:NOT_EQUAL => {
-                return self.buildInequalityFilter(fieldName, value);
+                return buildInequalityFilter(fieldName, value);
             }
             ai:IN => {
-                return self.buildInFilter(fieldName, value);
+                return buildInFilter(fieldName, value);
             }
             ai:NOT_IN => {
-                return self.buildNotInFilter(fieldName, value);
+                return buildNotInFilter(fieldName, value);
             }
             ai:GREATER_THAN => {
-                return self.buildComparisonFilter(fieldName, value, "gt");
+                return buildComparisonFilter(fieldName, value, ODATA_OPERATOR_GT);
             }
             ai:LESS_THAN => {
-                return self.buildComparisonFilter(fieldName, value, "lt");
+                return buildComparisonFilter(fieldName, value, ODATA_OPERATOR_LT);
             }
             ai:GREATER_THAN_OR_EQUAL => {
-                return self.buildComparisonFilter(fieldName, value, "ge");
+                return buildComparisonFilter(fieldName, value, ODATA_OPERATOR_GE);
             }
             ai:LESS_THAN_OR_EQUAL => {
-                return self.buildComparisonFilter(fieldName, value, "le");
+                return buildComparisonFilter(fieldName, value, ODATA_OPERATOR_LE);
             }
             _ => {
                 return (); // Unsupported operator
@@ -410,109 +448,6 @@ public distinct isolated class AzureAiSearchKnowledgeBase {
         }
     }
     
-    private isolated function buildEqualityFilter(string fieldName, json value) returns string? {
-        string? formattedValue = self.formatValueForOData(value);
-        if formattedValue is string {
-            return string `${fieldName} eq ${formattedValue}`;
-        }
-        return ();
-    }
-    
-    private isolated function buildInequalityFilter(string fieldName, json value) returns string? {
-        string? formattedValue = self.formatValueForOData(value);
-        if formattedValue is string {
-            return string `${fieldName} ne ${formattedValue}`;
-        }
-        return ();
-    }
-
-    private isolated function buildInFilter(string fieldName, json value) returns string? {
-        if value is json[] && value.length() > 0 {
-            string[] conditions = [];
-            foreach json item in value {
-                string? formattedValue = self.formatValueForOData(item);
-                if formattedValue is string {
-                    conditions.push(string `${fieldName} eq ${formattedValue}`);
-                }
-            }
-            if conditions.length() > 0 {
-                return "(" + string:'join(" or ", ...conditions) + ")";
-            }
-        }
-        return ();
-    }
-
-    private isolated function buildNotInFilter(string fieldName, json value) returns string? {
-        if value is json[] && value.length() > 0 {
-            string[] conditions = [];
-            foreach json item in value {
-                string? formattedValue = self.formatValueForOData(item);
-                if formattedValue is string {
-                    conditions.push(string `${fieldName} ne ${formattedValue}`);
-                }
-            }
-            if conditions.length() > 0 {
-                return "(" + string:'join(" and ", ...conditions) + ")";
-            }
-        }
-        return ();
-    }
-    
-    private isolated function buildComparisonFilter(string fieldName, json value, string odataOperator) returns string? {
-        string? formattedValue = self.formatValueForOData(value);
-        if formattedValue is string {
-            return string `${fieldName} ${odataOperator} ${formattedValue}`;
-        }
-        return ();
-    }
-    
-    private isolated function formatValueForOData(json value) returns string? {
-        if value is string {
-            // Escape single quotes in strings and wrap in single quotes
-            string escapedValue = re `'`.replaceAll(value, "''");
-            return string `'${escapedValue}'`;
-        } else if value is int|decimal {
-            return value.toString();
-        } else if value is boolean {
-            return value.toString();
-        }
-        // For other types (like null), return null to indicate unsupported
-        return ();
-    }
-    
-    private isolated function getFieldValue(index:SearchResult result, string fieldName) returns string {
-        anydata fieldValue = result[fieldName];
-        if fieldValue is string {
-            return fieldValue;
-        }
-        if fieldValue is () {
-            logIfVerboseEnable(self.verbose, string `Field ${fieldName} is null in search result.`);
-            return "";
-        }
-        // Handle other types if they are possible content
-        return fieldValue.toString();
-    }
-
-    private isolated function extractMetadata(index:SearchResult result) returns ai:Metadata {
-        lock {
-            ai:Metadata metadata = {};
-
-            // Extract all fields except the core content/title fields as metadata
-            map<anydata> clonedResult = result.cloneReadOnly();
-            foreach string k in clonedResult.keys() {
-                anydata value = clonedResult[k];
-                if k != self.contentFieldName && k != self.keyFieldName && self.vectorFieldNames.indexOf(k) == () &&
-                k != "@search.score" && k != "@search.highlights" {
-                    if value is json {
-                        metadata[k] = value;
-                    }
-                }
-            }
-            
-            return metadata.cloneReadOnly();
-        }
-    }
-
     private isolated function chunk(ai:Document|ai:Document[]|ai:Chunk[] input) returns ai:Chunk[]|ai:Error {
         (ai:Document|ai:Chunk)[] inputs = input is ai:Document[]|ai:Chunk[] ? input : [input];
         ai:Chunker|ai:AUTO|ai:DISABLE chunker = self.chunker;
@@ -533,7 +468,7 @@ public distinct isolated class AzureAiSearchKnowledgeBase {
         search:SearchIndex index,
         ai:Embedding[]? embeddings = (),
         index:DocumentsIndexHeaders headers = {},
-        index:DocumentsIndexQueries queries = {api\-version: API_VERSION}
+        index:DocumentsIndexQueries queries = {api\-version: AI_AZURE_KNOWLEDGEBASE_API_VERSION}
     ) returns index:IndexDocumentsResult|error {
         if embeddings is ai:Embedding[] && embeddings.length() != documents.length() {
             return error ai:Error("Embeddings count does not match documents count, Embeddings length: " +
@@ -546,69 +481,26 @@ public distinct isolated class AzureAiSearchKnowledgeBase {
             ai:Embedding[]? embeddingValues = embeddings.cloneReadOnly();
             foreach int i in 0..<docs.length() {
                 (ai:Document|ai:Chunk) doc = docs[i];
+                ai:Embedding? embedding = embeddingValues is ai:Embedding[] ? embeddingValues[i] : ();
                 
-                // Start with the basic action structure
-                index:IndexAction indexAction = {
-                    \@search\.action: "mergeOrUpload"
-                };
-
-                // Set the key field with a UUID
-                // TODO: handle non-string key fields
-                ai:Metadata? metadata = doc.metadata;
-                string keyValue = metadata !is () && metadata.hasKey(self.keyFieldName)
-                    ? doc.metadata[self.keyFieldName].toString() + i.toString()
-                    : uuid:createType1AsString();
-                    
-                indexAction[self.keyFieldName] = keyValue;
-                logIfVerboseEnable(
-                    self.verbose, string `Set key field ${self.keyFieldName} to value ${keyValue} for document index ${i}.`);
-
-                // Add embeddings to vector fields if available
-                if embeddingValues is ai:Embedding[] {
-                    ai:Embedding embedding = embeddingValues[i];
-                    foreach string vectorFieldName in self.vectorFieldNames {
-                        ai:Vector|ai:Error vectors = self.generateVector(embedding);
-                        if vectors is ai:Error {
-                            logIfVerboseEnable(
-                                self.verbose, string `Failed to generate vector for document index ${i} and field ${vectorFieldName}: ${vectors.message()}`);
-                            return vectors;
-                        }
-
-                        indexAction[vectorFieldName] = vectors;
-                        logIfVerboseEnable(
-                            self.verbose, string `Added vector for document index ${i} to field ${vectorFieldName}.`);
-                    }
-                }
+                index:IndexAction|ai:Error indexAction = createIndexAction(
+                    doc,
+                    embedding,
+                    i,
+                    self.keyFieldName,
+                    self.contentFieldName,
+                    self.vectorFieldNames,
+                    self.allFields,
+                    self.verbose
+                );
                 
-                indexAction[self.contentFieldName] = doc.content;
-                logIfVerboseEnable(
-                    self.verbose, string `Added content for document index ${i} to field ${self.contentFieldName}.`);
-
-                // Add document type if there's a field for it (check if "type" field exists)
-                if self.allFields.hasKey("type") {
-                    indexAction["type"] = doc.'type;
-                }
-
-                // Add metadata fields
-                if metadata is ai:Metadata {
-                    foreach [string, json] [key, value] in metadata.entries() {
-                        boolean isPossibleMetadata = key != self.keyFieldName && key != self.contentFieldName 
-                                && self.vectorFieldNames.indexOf(key) == ();
-                        // Only add metadata if the field exists in the index schema
-                        if self.allFields.hasKey(key) && isPossibleMetadata {
-                            indexAction[key] = value;
-                        } else {
-                            if isPossibleMetadata {
-                                logIfVerboseEnable(
-                                    self.verbose, string `Skipping field ${key} as it does not exist in index schema.`);
-                            }
-                        }
-                    }
+                if indexAction is ai:Error {
+                    return indexAction;
                 }
 
                 indexActions.push(indexAction);
-            }
-
+            }            
+            
             index:IndexBatch batch = {
                 value: indexActions
             };
@@ -617,20 +509,13 @@ public distinct isolated class AzureAiSearchKnowledgeBase {
             return 'client->documentsIndex(batch.cloneReadOnly(), headers.cloneReadOnly(), queries.cloneReadOnly());
         }
     }
-
-    private isolated function generateVector(ai:Embedding embedding) returns ai:Vector|ai:Error {
-        if embedding is ai:Vector {
-            return embedding;
-        } else if embedding is ai:HybridVector {
-            // Return the dense part, discard sparse
-            return embedding.dense;
-        } else {
-            // Explicitly fail for sparse-only embeddings
-            return error ai:Error("AzureAiSearchKnowledgeBase only supports dense or hybrid embeddings, but received a SparseVector.");
-        }
-    }
 }
 
+# Logs informational or error messages if verbose mode is enabled
+#
+# + verbose - Whether verbose logging is enabled
+# + value - The message to log
+# + err - Optional error to log with additional details
 isolated function logIfVerboseEnable(boolean verbose, string value, 'error? err = ()) {
     if verbose {
         log:printInfo(string `[AzureAiSearchKnowledgeBase] ${value}`);
@@ -640,26 +525,272 @@ isolated function logIfVerboseEnable(boolean verbose, string value, 'error? err 
     }
 }
 
+# Determines the appropriate chunker based on document metadata
+#
+# + doc - The document or chunk to determine chunker for
+# + return - The appropriate chunker for the document type
 isolated function guessChunker(ai:Document|ai:Chunk doc) returns ai:Chunker {
     // Guess the chunker based on the document type or mimeType in metadata
     string? mimeType = doc.metadata?.mimeType;
-    if mimeType == "text/markdown" {
+    if mimeType == MIME_TYPE_MARKDOWN {
         return new ai:MarkdownChunker();
     }
-    if mimeType == "text/html" {
+    if mimeType == MIME_TYPE_HTML {
         return new ai:HtmlChunker();
     }
     // Fallback to file name
     string? fileName = doc.metadata?.fileName;
     if fileName is string {
-        if fileName.endsWith(".md") {
+        if fileName.endsWith(FILE_EXT_MARKDOWN) {
             return new ai:MarkdownChunker();
         }
-        if fileName.endsWith(".html") {
+        if fileName.endsWith(FILE_EXT_HTML) {
             return new ai:HtmlChunker();
         }
     }
     return new ai:GenericRecursiveChunker();
+}
+
+# Converts embeddings to vectors for Azure AI Search
+#
+# + embedding - The embedding to convert
+# + return - The vector representation or an error if conversion fails
+isolated function generateVectorFromEmbedding(ai:Embedding embedding) returns ai:Vector|ai:Error {
+    if embedding is ai:Vector {
+        return embedding;
+    } else if embedding is ai:HybridVector {
+        // Return the dense part, discard sparse
+        return embedding.dense;
+    } else {
+        // Explicitly fail for sparse-only embeddings
+        return error ai:Error("AzureAiSearchKnowledgeBase only supports dense or hybrid embeddings, but received a SparseVector.");
+    }
+}
+
+# Formats a JSON value for use in OData expressions
+#
+# + value - The JSON value to format
+# + return - The formatted string or null if type is unsupported
+isolated function formatValueForOData(json value) returns string? {
+    if value is string {
+        // Escape single quotes in strings and wrap in single quotes
+        string escapedValue = re `'`.replaceAll(value, "''");
+        return string `'${escapedValue}'`;
+    } else if value is int|decimal {
+        return value.toString();
+    } else if value is boolean {
+        return value.toString();
+    }
+    // For other types (like null), return null to indicate unsupported
+    return ();
+}
+
+# Builds an equality filter for OData
+#
+# + fieldName - The field name to filter on
+# + value - The value to compare
+# + return - The formatted equality filter or null if value is unsupported
+isolated function buildEqualityFilter(string fieldName, json value) returns string? {
+    string? formattedValue = formatValueForOData(value);
+    if formattedValue is string {
+        return string `${fieldName} ${ODATA_OPERATOR_EQ} ${formattedValue}`;
+    }
+    return ();
+}
+
+# Builds an inequality filter for OData
+#
+# + fieldName - The field name to filter on
+# + value - The value to compare
+# + return - The formatted inequality filter or null if value is unsupported
+isolated function buildInequalityFilter(string fieldName, json value) returns string? {
+    string? formattedValue = formatValueForOData(value);
+    if formattedValue is string {
+        return string `${fieldName} ${ODATA_OPERATOR_NE} ${formattedValue}`;
+    }
+    return ();
+}
+
+# Builds an IN filter for OData
+#
+# + fieldName - The field name to filter on
+# + value - The array of values to check membership
+# + return - The formatted IN filter or null if values are invalid
+isolated function buildInFilter(string fieldName, json value) returns string? {
+    if value is json[] && value.length() > 0 {
+        string[] conditions = [];
+        foreach json item in value {
+            string? formattedValue = formatValueForOData(item);
+            if formattedValue is string {
+                conditions.push(string `${fieldName} ${ODATA_OPERATOR_EQ} ${formattedValue}`);
+            }
+        }
+        if conditions.length() > 0 {
+            return "(" + string:'join(ODATA_OPERATOR_OR, ...conditions) + ")";
+        }
+    }
+    return ();
+}
+
+# Builds a NOT IN filter for OData
+#
+# + fieldName - The field name to filter on
+# + value - The array of values to exclude
+# + return - The formatted NOT IN filter or null if values are invalid
+isolated function buildNotInFilter(string fieldName, json value) returns string? {
+    if value is json[] && value.length() > 0 {
+        string[] conditions = [];
+        foreach json item in value {
+            string? formattedValue = formatValueForOData(item);
+            if formattedValue is string {
+                conditions.push(string `${fieldName} ${ODATA_OPERATOR_NE} ${formattedValue}`);
+            }
+        }
+        if conditions.length() > 0 {
+            return "(" + string:'join(ODATA_OPERATOR_AND, ...conditions) + ")";
+        }
+    }
+    return ();
+}
+
+# Builds a comparison filter for OData
+#
+# + fieldName - The field name to filter on
+# + value - The value to compare
+# + odataOperator - The OData comparison operator to use
+# + return - The formatted comparison filter or null if value is unsupported
+isolated function buildComparisonFilter(string fieldName, json value, string odataOperator) returns string? {
+    string? formattedValue = formatValueForOData(value);
+    if formattedValue is string {
+        return string `${fieldName} ${odataOperator} ${formattedValue}`;
+    }
+    return ();
+}
+
+# Extracts a field value from a search result
+#
+# + result - The search result to extract from
+# + fieldName - The name of the field to extract
+# + verbose - Whether verbose logging is enabled
+# + return - The field value as a string
+isolated function extractFieldValue(index:SearchResult result, string fieldName, boolean verbose) returns string {
+    anydata fieldValue = result[fieldName];
+    if fieldValue is string {
+        return fieldValue;
+    }
+    if fieldValue is () {
+        logIfVerboseEnable(verbose, string `Field ${fieldName} is null in search result.`);
+        return "";
+    }
+    // Handle other types if they are possible content
+    return fieldValue.toString();
+}
+
+# Extracts metadata from a search result, excluding core fields
+#
+# + result - The search result to extract metadata from
+# + contentFieldName - The name of the content field to exclude
+# + keyFieldName - The name of the key field to exclude
+# + vectorFieldNames - Array of vector field names to exclude
+# + return - The extracted metadata
+isolated function extractMetadataFromResult(index:SearchResult result, string contentFieldName, string keyFieldName, string[] vectorFieldNames) returns ai:Metadata {
+    ai:Metadata metadata = {};
+
+    // Extract all fields except the core content/title fields as metadata
+    map<anydata> clonedResult = result.cloneReadOnly();
+    foreach string k in clonedResult.keys() {
+        anydata value = clonedResult[k];
+        if k != contentFieldName && k != keyFieldName && vectorFieldNames.indexOf(k) == () &&
+        k != SEARCH_SCORE_FIELD && k != SEARCH_HIGHLIGHTS_FIELD {
+            if value is json {
+                metadata[k] = value;
+            }
+        }
+    }
+    
+    return metadata.cloneReadOnly();
+}
+
+# Creates an index action for a document or chunk
+#
+# + doc - The document or chunk to create action for
+# + embedding - Optional embedding for vector fields
+# + documentIndex - Index of the document in the batch
+# + keyFieldName - Name of the key field
+# + contentFieldName - Name of the content field  
+# + vectorFieldNames - Array of vector field names
+# + allFields - Map of all fields in the index schema
+# + verbose - Whether verbose logging is enabled
+# + return - The created index action or an error
+isolated function createIndexAction(
+    ai:Document|ai:Chunk doc,
+    ai:Embedding? embedding,
+    int documentIndex,
+    string keyFieldName,
+    string contentFieldName,
+    string[] vectorFieldNames,
+    map<search:SearchField> allFields,
+    boolean verbose
+) returns index:IndexAction|ai:Error {
+    // Start with the basic action structure
+    index:IndexAction indexAction = {
+        \@search\.action: SEARCH_ACTION_MERGE_OR_UPLOAD
+    };
+
+    // Set the key field with a UUID
+    // TODO: handle non-string key fields
+    ai:Metadata? metadata = doc.metadata;
+    string keyValue = metadata !is () && metadata.hasKey(keyFieldName)
+        ? doc.metadata[keyFieldName].toString() + documentIndex.toString()
+        : uuid:createType1AsString();
+        
+    indexAction[keyFieldName] = keyValue;
+    logIfVerboseEnable(
+        verbose, string `Set key field ${keyFieldName} to value ${keyValue} for document index ${documentIndex}.`);
+
+    // Add embeddings to vector fields if available
+    if embedding is ai:Embedding {
+        foreach string vectorFieldName in vectorFieldNames {
+            ai:Vector|ai:Error vectors = generateVectorFromEmbedding(embedding);
+            if vectors is ai:Error {
+                logIfVerboseEnable(
+                    verbose, string `Failed to generate vector for document index ${documentIndex} and field ${vectorFieldName}: ${vectors.message()}`);
+                return vectors;
+            }
+
+            indexAction[vectorFieldName] = vectors;
+            logIfVerboseEnable(
+                verbose, string `Added vector for document index ${documentIndex} to field ${vectorFieldName}.`);
+        }
+    }
+    
+    indexAction[contentFieldName] = doc.content;
+    logIfVerboseEnable(
+        verbose, string `Added content for document index ${documentIndex} to field ${contentFieldName}.`);
+
+    // Add document type if there's a field for it (check if "type" field exists)
+    if allFields.hasKey(DEFAULT_TYPE_FIELD_NAME) {
+        indexAction[DEFAULT_TYPE_FIELD_NAME] = doc.'type;
+    }
+
+    // Add metadata fields
+    if metadata is ai:Metadata {
+        foreach [string, json] [key, value] in metadata.entries() {
+            boolean isPossibleMetadata = key != keyFieldName && key != contentFieldName 
+                    && vectorFieldNames.indexOf(key) == ();
+            // Only add metadata if the field exists in the index schema
+            if allFields.hasKey(key) && isPossibleMetadata {
+                indexAction[key] = value;
+            } else {
+                if isPossibleMetadata {
+                    logIfVerboseEnable(
+                        verbose, string `Skipping field ${key} as it does not exist in index schema.`);
+                }
+            }
+        }
+    }
+
+    return indexAction;
 }
 
 isolated function analyzeIndexSchema(boolean verbose, search:SearchIndex index, string contentFieldName) returns IndexSchemaInfo|ai:Error {
