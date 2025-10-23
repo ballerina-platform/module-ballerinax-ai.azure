@@ -17,15 +17,3 @@ groupId = "io.ballerina.lib"
 artifactId = "ai.azure-native"
 version = "1.2.0"
 path = "../native/build/libs/ai.azure-native-1.2.0-SNAPSHOT.jar"
-
-[[dependency]]
-org="ballerinax"
-name="azure.ai.search"
-version="1.0.0" 
-repository="local"
-
-[[dependency]]
-org="ballerinax"
-name="azure.ai.search.index"
-version="1.0.0" 
-repository="local"
