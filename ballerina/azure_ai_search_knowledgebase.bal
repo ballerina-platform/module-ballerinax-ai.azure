@@ -17,12 +17,12 @@
 import ballerina/ai;
 import ballerina/log;
 import ballerina/uuid;
-import ballerinax/azure.ai.search as search;
+import ballerinax/azure.ai.search;
 import ballerinax/azure.ai.search.index;
 
 const CONTENT_FIELD_NAME = "content";
 const KEY_FIELD_NAME = "id";
-const AI_AZURE_KNOWLEDGEBASE_API_VERSION = "2025-09-01";
+const AI_AZURE_KNOWLEDGE_BASE_API_VERSION = "2025-09-01";
 const API_KEY_HEADER_NAME = "api-key";
 
 // Search action constants
@@ -74,20 +74,7 @@ type IndexSchemaInfo record {
     map<search:SearchField> allFields;
 };
 
-# Configuration for the Azure AI Service Clients
-public type AiSearchKnowledgeBaseClientConfiguration record {|
-    # Connection configuration for the Azure AI search client that use for create search index
-    # This configuration is only required when the `index` parameter
-    # is provided as an `search:SearchIndex` (i.e., when the system will create the index).
-    search:ConnectionConfig searchClientConnectionConfig = {};
-    # Connection configuration for the Azure AI index client that use for index operations
-    index:ConnectionConfig indexClientConnectionConfig = {};
-|};
-
 # Represents the Azure Search Knowledge Base implementation.
-# User should create the required `indexer`, `data source` and `index` beforehand using 
-# the util functions provided in this module. 
-# Currently search fields only supported with `id`, `content` and `type` field names.
 public distinct isolated class AiSearchKnowledgeBase {
     *ai:KnowledgeBase;
     
@@ -116,22 +103,27 @@ public distinct isolated class AiSearchKnowledgeBase {
     # + apiVersion - The API version to use for requests.
     # + clientConfigurations - Additional client configurations for Azure AI Search clients
     # + contentFieldName - The name of the field in the index that contains the main content. Defaults to "content".
+    # + searchClientConnectionConfig - Connection configuration for the Azure AI search client.
+    #                                  This configuration is only required when the `index` parameter is 
+    #                                  provided as an `search:SearchIndex`
+    # + indexClientConnectionConfig - Connection configuration for the Azure AI index client.
     # + return - An instance of `AiSearchKnowledgeBase` or an `ai:Error` if initialization fails
-    public isolated function init(string serviceUrl, string apiKey, string|search:SearchIndex index, ai:EmbeddingProvider embeddingModel, 
+    public isolated function init(string serviceUrl, string apiKey, 
+            string|search:SearchIndex index, ai:EmbeddingProvider embeddingModel, 
             ai:Chunker|ai:AUTO|ai:DISABLE chunker = ai:AUTO, boolean verbose = false, 
-            string apiVersion = AI_AZURE_KNOWLEDGEBASE_API_VERSION, string contentFieldName = CONTENT_FIELD_NAME, 
-            *AiSearchKnowledgeBaseClientConfiguration clientConfigurations) returns ai:Error? {
+            string apiVersion = AI_AZURE_KNOWLEDGE_BASE_API_VERSION, string contentFieldName = CONTENT_FIELD_NAME, 
+            search:ConnectionConfig searchClientConnectionConfig = {},
+            index:ConnectionConfig indexClientConnectionConfig = {}) returns ai:Error? {
         self.chunker = chunker;
         self.embeddingModel = embeddingModel;
         self.verbose = verbose;
         self.contentFieldName = contentFieldName;
         
         // Initialize service client for management operations
-        search:ConnectionConfig searchClientConfig = clientConfigurations.searchClientConnectionConfig;
         self.apiKey = apiKey;
         self.apiVersion = apiVersion;
 
-        search:Client|error serviceClient = new search:Client(serviceUrl, searchClientConfig);
+        search:Client|error serviceClient = new search:Client(serviceUrl, searchClientConnectionConfig);
         if serviceClient is error {
             return error ai:Error("Failed to initialize Azure AI Service Client", serviceClient);
         }
@@ -144,29 +136,34 @@ public distinct isolated class AiSearchKnowledgeBase {
             search:SearchIndex|error searchIndex = self.serviceClient->indexesGet(indexName, {
                 [API_KEY_HEADER_NAME]: self.apiKey}, {api\-version: self.apiVersion});
             if searchIndex is error {
-                logIfVerboseEnable(self.verbose, string `Search index ${indexName} does not exist: ${searchIndex.message()}`);
+                logIfVerboseEnabled(self.verbose, 
+                    string `Search index ${indexName} does not exist: ${searchIndex.message()}`);
                 return error ai:Error("Failed to verify existence of index", searchIndex);
             }
 
             self.index = searchIndex.cloneReadOnly();
-            logIfVerboseEnable(self.verbose, string `Search index ${indexName} exists. Details: ${searchIndex.toJsonString()}`);
+            logIfVerboseEnabled(self.verbose, 
+                string `Search index ${indexName} exists. Details: ${searchIndex.toJsonString()}`);
         } else {
-            logIfVerboseEnable(self.verbose, string `Attempting to create search index ${indexName}...`);
+            logIfVerboseEnabled(self.verbose, string `Attempting to create search index ${indexName}...`);
             search:SearchIndex|error createdIndex = self.serviceClient->indexesCreateOrUpdate(indexName, {
-                [API_KEY_HEADER_NAME]: self.apiKey, Prefer: PREFER_HEADER_RETURN_REPRESENTATION}, index, {api\-version: self.apiVersion});
+                [API_KEY_HEADER_NAME]: self.apiKey, Prefer: PREFER_HEADER_RETURN_REPRESENTATION}, 
+                    index, {api\-version: self.apiVersion});
             if createdIndex is error {
-                logIfVerboseEnable(self.verbose, string `Failed to create search index ${indexName}: ${createdIndex.message()}`);
+                logIfVerboseEnabled(self.verbose, 
+                    string `Failed to create search index ${indexName}: ${createdIndex.message()}`);
                 return error ai:Error("Failed to create search index", createdIndex);
             }
             self.index = createdIndex.cloneReadOnly();
-            logIfVerboseEnable(self.verbose, string `Search index ${indexName} created successfully.`);
+            logIfVerboseEnabled(self.verbose, string `Search index ${indexName} created successfully.`);
         }
 
         string indexServiceUrl = string `${serviceUrl}/indexes('${indexName}')`;
-        logIfVerboseEnable(self.verbose, string `Initializing Azure Index Client for index URL: ${indexServiceUrl}`);
-        index:Client|error indexClient = new (indexServiceUrl, clientConfigurations.indexClientConnectionConfig);
+        logIfVerboseEnabled(self.verbose, string `Initializing Azure Index Client for index URL: ${indexServiceUrl}`);
+        index:Client|error indexClient = new (indexServiceUrl, indexClientConnectionConfig);
         if indexClient is error {
-            logIfVerboseEnable(self.verbose, string `Failed to initialize Azure Index Client: ${indexClient.message()}`);
+            logIfVerboseEnabled(self.verbose, 
+                string `Failed to initialize Azure Index Client: ${indexClient.message()}`);
             return error ai:Error("Failed to initialize Azure Index Client", indexClient);
         }
         self.indexClient = indexClient;
@@ -187,28 +184,33 @@ public distinct isolated class AiSearchKnowledgeBase {
         lock {
             ai:Chunk[]|ai:Error chunks = self.chunk(documents.clone());
             if chunks is ai:Error {
-                logIfVerboseEnable(self.verbose, string `Failed to chunk documents: ${chunks.message()}}`, chunks);
+                logIfVerboseEnabled(self.verbose, 
+                    string `Failed to chunk documents: ${chunks.message()}}`, chunks);
                 return error ai:Error("Failed to chunk documents before ingestion", chunks);
             }
 
             ai:Embedding[]|error embeddings = self.embeddingModel->batchEmbed(chunks);
             if embeddings is error {
-                logIfVerboseEnable(self.verbose, string `Failed to generate embeddings for documents: ${embeddings.message()}}`, embeddings);
+                logIfVerboseEnabled(self.verbose, 
+                    string `Failed to generate embeddings for documents: ${embeddings.message()}}`, embeddings);
                 return error ai:Error("Failed to generate embeddings for documents", embeddings);
             }
-            logIfVerboseEnable(self.verbose, string `Generated embeddings for ${embeddings.length().toString()} chunks.`);
+            logIfVerboseEnabled(self.verbose, 
+                string `Generated embeddings for ${embeddings.length().toString()} chunks.`);
 
             index:IndexDocumentsResult|error uploadResult = self.uploadDocuments(self.indexClient, chunks, self.index, 
                     embeddings, {[API_KEY_HEADER_NAME]: self.apiKey}, {api\-version: self.apiVersion});
             if uploadResult is error {
-                logIfVerboseEnable(self.verbose, string `Failed to upload documents to search index: ${uploadResult.message()}}`, uploadResult);
+                logIfVerboseEnabled(self.verbose, 
+                    string `Failed to upload documents to search index: ${uploadResult.message()}}`, uploadResult);
                 return error ai:Error("Failed to upload documents to search index", uploadResult);
             }
             
             // Validate that all documents were successfully indexed
             foreach index:IndexingResult result in uploadResult.value {
                 if !result.status {
-                    return error ai:Error(string `Failed to index document with key ${result.'key}: ${result.errorMessage ?: "Unknown error"}`);
+                    return error ai:Error(
+                        string `Failed to index document with key ${result.'key}: ${result.errorMessage ?: "Unknown error"}`);
                 }
             }
             
@@ -222,11 +224,8 @@ public distinct isolated class AiSearchKnowledgeBase {
     # + maxLimit - The maximum number of items to return
     # + filters - Optional metadata filters to apply during retrieval
     # + return - An array of matching chunks with similarity scores, or an `ai:Error` if retrieval fails
-    public isolated function retrieve(string query, int maxLimit = 10, ai:MetadataFilters? filters = ()) returns ai:QueryMatch[]|ai:Error {
-        if query is "" {
-            return error ai:Error("Query cannot be empty for retrieval");
-        }
-
+    public isolated function retrieve(string query, int maxLimit = 10, 
+                                ai:MetadataFilters? filters = ()) returns ai:QueryMatch[]|ai:Error {
         if maxLimit != -1 && maxLimit <= 0 {
             return error ai:Error("maxLimit must be a positive integer");
         }
@@ -282,7 +281,8 @@ public distinct isolated class AiSearchKnowledgeBase {
             );
 
             if searchResult is error {
-                logIfVerboseEnable(self.verbose, string `Failed to retrieve documents from Azure AI Search: ${searchResult.message()}}`, searchResult);
+                logIfVerboseEnabled(self.verbose, 
+                    string `Failed to retrieve documents from Azure AI Search: ${searchResult.message()}}`, searchResult);
                 return error ai:Error("Failed to retrieve documents from Azure AI Search", searchResult);
             }
 
@@ -328,18 +328,15 @@ public distinct isolated class AiSearchKnowledgeBase {
         );
 
         if searchResult is error {
-            logIfVerboseEnable(self.verbose, string `Failed to search for documents to delete: ${searchResult.message()}}`, searchResult);
+            logIfVerboseEnabled(self.verbose, 
+                string `Failed to search for documents to delete: ${searchResult.message()}}`, searchResult);
             return error ai:Error("Failed to search for documents to delete", searchResult);
         }
 
-        // Extract document IDs
-        string[] documentIds = [];
-        foreach index:SearchResult result in searchResult.value {
-            string? documentId = extractFieldValue(result, self.keyFieldName, self.verbose);
-            if documentId is string {
-                documentIds.push(documentId);
-            }
-        }
+        string[] documentIds = from index:SearchResult result in searchResult.value
+            let string? documentId = extractFieldValue(result, self.keyFieldName, self.verbose)
+            where documentId is string
+            select documentId;
 
         if documentIds.length() == 0 {
             return; // No documents found matching the filters
@@ -374,7 +371,8 @@ public distinct isolated class AiSearchKnowledgeBase {
         // Check for any failures in the delete operation
         foreach index:IndexingResult result in deleteResult.value {
             if !result.status {
-                return error ai:Error(string `Failed to delete document with key ${result.'key}: ${result.errorMessage ?: "Unknown error"}`);
+                return error ai:Error(string 
+                    `Failed to delete document with key ${result.'key}: ${result.errorMessage ?: "Unknown error"}`);
             }
         }
 
@@ -468,7 +466,7 @@ public distinct isolated class AiSearchKnowledgeBase {
         search:SearchIndex index,
         ai:Embedding[]? embeddings = (),
         index:DocumentsIndexHeaders headers = {},
-        index:DocumentsIndexQueries queries = {api\-version: AI_AZURE_KNOWLEDGEBASE_API_VERSION}
+        index:DocumentsIndexQueries queries = {api\-version: AI_AZURE_KNOWLEDGE_BASE_API_VERSION}
     ) returns index:IndexDocumentsResult|error {
         if embeddings is ai:Embedding[] && embeddings.length() != documents.length() {
             return error ai:Error("Embeddings count does not match documents count, Embeddings length: " +
@@ -505,7 +503,8 @@ public distinct isolated class AiSearchKnowledgeBase {
                 value: indexActions
             };
 
-            logIfVerboseEnable(self.verbose, string `Uploading ${indexActions.length().toString()} documents to Azure AI Search index ${index.name}.`);
+            logIfVerboseEnabled(self.verbose, string 
+                `Uploading ${indexActions.length().toString()} documents to Azure AI Search index ${index.name}.`);
             return 'client->documentsIndex(batch.cloneReadOnly(), headers.cloneReadOnly(), queries.cloneReadOnly());
         }
     }
@@ -516,7 +515,7 @@ public distinct isolated class AiSearchKnowledgeBase {
 # + verbose - Whether verbose logging is enabled
 # + value - The message to log
 # + err - Optional error to log with additional details
-isolated function logIfVerboseEnable(boolean verbose, string value, 'error? err = ()) {
+isolated function logIfVerboseEnabled(boolean verbose, string value, 'error? err = ()) {
     if verbose {
         log:printInfo(string `[AiSearchKnowledgeBase] ${value}`);
         if err is error {
@@ -558,13 +557,13 @@ isolated function guessChunker(ai:Document|ai:Chunk doc) returns ai:Chunker {
 isolated function generateVectorFromEmbedding(ai:Embedding embedding) returns ai:Vector|ai:Error {
     if embedding is ai:Vector {
         return embedding;
-    } else if embedding is ai:HybridVector {
+    } 
+    if embedding is ai:HybridVector {
         // Return the dense part, discard sparse
         return embedding.dense;
-    } else {
-        // Explicitly fail for sparse-only embeddings
-        return error ai:Error("AiSearchKnowledgeBase only supports dense or hybrid embeddings, but received a SparseVector.");
     }
+    // Explicitly fail for sparse-only embeddings
+    return error("AiSearchKnowledgeBase only supports dense or hybrid embeddings, but received a SparseVector.");
 }
 
 # Formats a JSON value for use in OData expressions
@@ -679,7 +678,7 @@ isolated function extractFieldValue(index:SearchResult result, string fieldName,
         return fieldValue;
     }
     if fieldValue is () {
-        logIfVerboseEnable(verbose, string `Field ${fieldName} is null in search result.`);
+        logIfVerboseEnabled(verbose, string `Field ${fieldName} is null in search result.`);
         return "";
     }
     // Handle other types if they are possible content
@@ -693,7 +692,8 @@ isolated function extractFieldValue(index:SearchResult result, string fieldName,
 # + keyFieldName - The name of the key field to exclude
 # + vectorFieldNames - Array of vector field names to exclude
 # + return - The extracted metadata
-isolated function extractMetadataFromResult(index:SearchResult result, string contentFieldName, string keyFieldName, string[] vectorFieldNames) returns ai:Metadata {
+isolated function extractMetadataFromResult(index:SearchResult result, string contentFieldName, 
+        string keyFieldName, string[] vectorFieldNames) returns ai:Metadata {
     ai:Metadata metadata = {};
 
     // Extract all fields except the core content/title fields as metadata
@@ -745,7 +745,7 @@ isolated function createIndexAction(
         : uuid:createType1AsString();
         
     indexAction[keyFieldName] = keyValue;
-    logIfVerboseEnable(
+    logIfVerboseEnabled(
         verbose, string `Set key field ${keyFieldName} to value ${keyValue} for document index ${documentIndex}.`);
 
     // Add embeddings to vector fields if available
@@ -753,19 +753,20 @@ isolated function createIndexAction(
         foreach string vectorFieldName in vectorFieldNames {
             ai:Vector|ai:Error vectors = generateVectorFromEmbedding(embedding);
             if vectors is ai:Error {
-                logIfVerboseEnable(
-                    verbose, string `Failed to generate vector for document index ${documentIndex} and field ${vectorFieldName}: ${vectors.message()}`);
+                logIfVerboseEnabled(
+                    verbose, string 
+                        `Failed to generate vector for document index ${documentIndex} and field ${vectorFieldName}: ${vectors.message()}`);
                 return vectors;
             }
 
             indexAction[vectorFieldName] = vectors;
-            logIfVerboseEnable(
+            logIfVerboseEnabled(
                 verbose, string `Added vector for document index ${documentIndex} to field ${vectorFieldName}.`);
         }
     }
     
     indexAction[contentFieldName] = doc.content;
-    logIfVerboseEnable(
+    logIfVerboseEnabled(
         verbose, string `Added content for document index ${documentIndex} to field ${contentFieldName}.`);
 
     // Add document type if there's a field for it (check if "type" field exists)
@@ -783,7 +784,7 @@ isolated function createIndexAction(
                 indexAction[key] = value;
             } else {
                 if isPossibleMetadata {
-                    logIfVerboseEnable(
+                    logIfVerboseEnabled(
                         verbose, string `Skipping field ${key} as it does not exist in index schema.`);
                 }
             }
@@ -793,7 +794,8 @@ isolated function createIndexAction(
     return indexAction;
 }
 
-isolated function analyzeIndexSchema(boolean verbose, search:SearchIndex index, string contentFieldName) returns IndexSchemaInfo|ai:Error {
+isolated function analyzeIndexSchema(
+        boolean verbose, search:SearchIndex index, string contentFieldName) returns IndexSchemaInfo|ai:Error {
     string? keyFieldName = ();
     string[] vectorFieldNames = [];
     string[] contentFieldNames = [];
@@ -819,7 +821,7 @@ isolated function analyzeIndexSchema(boolean verbose, search:SearchIndex index, 
     }
 
     if vectorFieldNames.length() == 0 {
-        logIfVerboseEnable(verbose, "No vector fields found in index schema.");
+        logIfVerboseEnabled(verbose, "No vector fields found in index schema.");
     }
 
     if contentFieldNames.length() == 0 {
@@ -827,11 +829,12 @@ isolated function analyzeIndexSchema(boolean verbose, search:SearchIndex index, 
     }
 
     if keyFieldName is () {
-        logIfVerboseEnable(verbose, string `No key field defined in index schema. Using default key field name as '${KEY_FIELD_NAME}'.`);
+        logIfVerboseEnabled(verbose, string `No key field defined in index schema. Using default key field name as '${KEY_FIELD_NAME}'.`);
     }
 
     if vectorFieldNames.length() > 1 {
-        logIfVerboseEnable(verbose, string `Multiple vector fields found in index schema: ${string:'join(", ", ...vectorFieldNames)}. Currently one vecotr field is prefered. So for now, there is more than one, all the vector fileds will share the same vectors.`);
+        logIfVerboseEnabled(verbose, string 
+            `Multiple vector fields found in index schema: ${string:'join(", ", ...vectorFieldNames)}. Currently one vecotr field is prefered. So for now, there is more than one, all the vector fileds will share the same vectors.`);
     }
     
     return {
