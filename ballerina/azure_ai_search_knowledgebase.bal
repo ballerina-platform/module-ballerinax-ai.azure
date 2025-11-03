@@ -85,11 +85,12 @@ public distinct isolated class AiSearchKnowledgeBase {
     private final string apiKey;
     private final boolean verbose;
     private final ai:Chunker|ai:AUTO|ai:DISABLE chunker;
-    private final ai:EmbeddingProvider embeddingModel;
+    private final ai:EmbeddingProvider? embeddingModel;
     private final string contentFieldName;
     private final string keyFieldName;
     private final string[] vectorFieldNames;
     private final map<search:SearchField> allFields;
+    private final string? semanticConfigurationName;
 
     # Initializes a new `AiSearchKnowledgeBase` instance.
     # 
@@ -107,17 +108,20 @@ public distinct isolated class AiSearchKnowledgeBase {
     #                                  This configuration is only required when the `index` parameter is 
     #                                  provided as an `search:SearchIndex`
     # + indexClientConnectionConfig - Connection configuration for the Azure AI index client.
+    # + semanticConfigurationName - The name of the semantic configuration to use for semantic search.
     # + return - An instance of `AiSearchKnowledgeBase` or an `ai:Error` if initialization fails
     public isolated function init(string serviceUrl, string apiKey, 
-            string|search:SearchIndex index, ai:EmbeddingProvider embeddingModel, 
+            string|search:SearchIndex index, ai:EmbeddingProvider? embeddingModel = (), 
             ai:Chunker|ai:AUTO|ai:DISABLE chunker = ai:AUTO, boolean verbose = false, 
             string apiVersion = AI_AZURE_KNOWLEDGE_BASE_API_VERSION, string contentFieldName = CONTENT_FIELD_NAME, 
             search:ConnectionConfig searchClientConnectionConfig = {},
-            index:ConnectionConfig indexClientConnectionConfig = {}) returns ai:Error? {
+            index:ConnectionConfig indexClientConnectionConfig = {},
+            string? semanticConfigurationName = ()) returns ai:Error? {
         self.chunker = chunker;
         self.embeddingModel = embeddingModel;
         self.verbose = verbose;
         self.contentFieldName = contentFieldName;
+        self.semanticConfigurationName = semanticConfigurationName;
         
         // Initialize service client for management operations
         self.apiKey = apiKey;
@@ -189,14 +193,22 @@ public distinct isolated class AiSearchKnowledgeBase {
                 return error ai:Error("Failed to chunk documents before ingestion", chunks);
             }
 
-            ai:Embedding[]|error embeddings = self.embeddingModel->batchEmbed(chunks);
-            if embeddings is error {
+            ai:Embedding[]? embeddings = ();
+            ai:EmbeddingProvider? embeddingProvider = self.embeddingModel;
+            if embeddingProvider is ai:EmbeddingProvider {
                 logIfVerboseEnabled(self.verbose, 
-                    string `Failed to generate embeddings for documents: ${embeddings.message()}}`, embeddings);
-                return error ai:Error("Failed to generate embeddings for documents", embeddings);
+                    string `Generating embeddings for ${chunks.length().toString()} chunks using embedding model.`);
+                ai:Embedding[]|error? embeddingResults = embeddingProvider->batchEmbed(chunks);
+                if embeddingResults is error {
+                    logIfVerboseEnabled(self.verbose, 
+                        string `Failed to generate embeddings for documents: ${embeddingResults.message()}}`, embeddingResults);
+                    return error ai:Error("Failed to generate embeddings for documents", embeddingResults);
+                }
+
+                embeddings = embeddingResults;
+                logIfVerboseEnabled(self.verbose, 
+                    string `Generated embeddings for ${embeddings == () ? 0: embeddings.length().toString()} chunks.`);
             }
-            logIfVerboseEnabled(self.verbose, 
-                string `Generated embeddings for ${embeddings.length().toString()} chunks.`);
 
             index:IndexDocumentsResult|error uploadResult = self.uploadDocuments(self.indexClient, chunks, self.index, 
                     embeddings, {[API_KEY_HEADER_NAME]: self.apiKey}, {api\-version: self.apiVersion});
@@ -236,13 +248,17 @@ public distinct isolated class AiSearchKnowledgeBase {
 
         lock {
             ai:TextChunk queryChunk = {content: query, 'type: CONTENT_TYPE_TEXT_CHUNK};
-            ai:Embedding queryEmbedding = check self.embeddingModel->embed(queryChunk);
+            ai:Embedding? queryEmbedding = ();
+            ai:EmbeddingProvider? embeddingProvider = self.embeddingModel;
+            if embeddingProvider is ai:EmbeddingProvider {
+                queryEmbedding = check embeddingProvider->embed(queryChunk);
+            }
 
             // Create vector search request using Azure AI Search's integrated vectorization
             int vectorFieldLength = self.vectorFieldNames.length();
             index:VectorQuery[]? vectorQuery = ();
 
-            if vectorFieldLength != 0 {
+            if vectorFieldLength != 0 && queryEmbedding is ai:Embedding {
                 ai:Vector|ai:Error vectors = generateVectorFromEmbedding(queryEmbedding);
                 if vectors is ai:Error {
                     return vectors;
@@ -258,9 +274,13 @@ public distinct isolated class AiSearchKnowledgeBase {
                 ];
             }
 
+            index:QueryType queryType = self.semanticConfigurationName is string ? "semantic" : "simple";
+
             index:SearchRequest searchRequest = {
                 search: query,
                 'select: "*",
+                queryType: queryType,
+                semanticConfiguration: self.semanticConfigurationName is string ? self.semanticConfigurationName : (),
                 vectorQueries: vectorQuery ?: [],
                 top: maxLimit == -1 ? () : <int:Signed32>maxLimit
             };
