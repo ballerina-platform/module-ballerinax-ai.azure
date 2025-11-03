@@ -74,12 +74,6 @@ type IndexSchemaInfo record {
     map<search:SearchField> allFields;
 };
 
-# Details for semantic configuration in Azure AI Search.
-public type SemanticConfigurationDetails record {|
-    # Name of the semantic configuration
-    string name;
-|};
-
 # Represents the Azure Search Knowledge Base implementation.
 public distinct isolated class AiSearchKnowledgeBase {
     *ai:KnowledgeBase;
@@ -96,7 +90,7 @@ public distinct isolated class AiSearchKnowledgeBase {
     private final string keyFieldName;
     private final string[] vectorFieldNames;
     private final map<search:SearchField> allFields;
-    private final SemanticConfigurationDetails? semanticConfigurationDetails;
+    private final string? semanticConfigurationName;
 
     # Initializes a new `AiSearchKnowledgeBase` instance.
     # 
@@ -114,7 +108,7 @@ public distinct isolated class AiSearchKnowledgeBase {
     #                                  This configuration is only required when the `index` parameter is 
     #                                  provided as an `search:SearchIndex`
     # + indexClientConnectionConfig - Connection configuration for the Azure AI index client.
-    # + semanticConfigurationDetails - Optional semantic configuration details for semantic search.
+    # + semanticConfigurationName - The name of the semantic configuration to use for semantic search.
     # + return - An instance of `AiSearchKnowledgeBase` or an `ai:Error` if initialization fails
     public isolated function init(string serviceUrl, string apiKey, 
             string|search:SearchIndex index, ai:EmbeddingProvider? embeddingModel = (), 
@@ -122,12 +116,12 @@ public distinct isolated class AiSearchKnowledgeBase {
             string apiVersion = AI_AZURE_KNOWLEDGE_BASE_API_VERSION, string contentFieldName = CONTENT_FIELD_NAME, 
             search:ConnectionConfig searchClientConnectionConfig = {},
             index:ConnectionConfig indexClientConnectionConfig = {},
-            SemanticConfigurationDetails? semanticConfigurationDetails = ()) returns ai:Error? {
+            string? semanticConfigurationName = ()) returns ai:Error? {
         self.chunker = chunker;
         self.embeddingModel = embeddingModel;
         self.verbose = verbose;
         self.contentFieldName = contentFieldName;
-        self.semanticConfigurationDetails = semanticConfigurationDetails.cloneReadOnly();
+        self.semanticConfigurationName = semanticConfigurationName;
         
         // Initialize service client for management operations
         self.apiKey = apiKey;
@@ -280,16 +274,13 @@ public distinct isolated class AiSearchKnowledgeBase {
                 ];
             }
 
-            SemanticConfigurationDetails? semanticConfig = self.semanticConfigurationDetails is SemanticConfigurationDetails
-                                                ? self.semanticConfigurationDetails : ();
-            index:QueryType queryType = semanticConfig is SemanticConfigurationDetails 
-                                            ? "semantic" : "simple";
+            index:QueryType queryType = self.semanticConfigurationName is string ? "semantic" : "simple";
 
             index:SearchRequest searchRequest = {
                 search: query,
                 'select: "*",
                 queryType: queryType,
-                semanticConfiguration: semanticConfig is SemanticConfigurationDetails ? semanticConfig.name : (),
+                semanticConfiguration: self.semanticConfigurationName is string ? self.semanticConfigurationName : (),
                 vectorQueries: vectorQuery ?: [],
                 top: maxLimit == -1 ? () : <int:Signed32>maxLimit
             };
