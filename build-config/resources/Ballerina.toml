@@ -1,7 +1,7 @@
 [package]
 authors = ["Ballerina"]
 distribution = "2201.12.0"
-keywords = ["AI", "Agent", "Azure", "Model", "Provider"]
+keywords = ["Agent", "Azure", "Model", "Provider", "Vendor/Microsoft", "Area/AI", "Type/Connector"]
 license = ["Apache-2.0"]
 icon="icon.png"
 name = "ai.azure"
