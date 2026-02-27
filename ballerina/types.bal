@@ -78,6 +78,12 @@ public type ConnectionConfig record {|
     boolean validation = true;
 |};
 
+# Defines which API endpoint to use for model interactions.
+public enum ApiType {
+    CHAT_COMPLETIONS = "chat_completions",
+    RESPONSES = "responses"
+}
+
 type AzureChatUserMessage record {|
     *ai:ChatUserMessage;
     string content;
@@ -87,3 +93,88 @@ type AzureChatSystemMessage record {|
     *ai:ChatSystemMessage;
     string content;
 |};
+
+type CodeInterpreterTool record {|
+    *ai:InbuiltModelTool;
+    "code_interpreter" name;
+    record {|
+        anydata container;
+    |} configurations;
+|};
+
+type WebsearchTool record {|
+    *ai:InbuiltModelTool;
+    "web_search"|"web_search_2025_08_26" name;
+    record {|
+        anydata filters?;
+        anydata user_location?;
+        "low"|"medium"|"high" search_context_size = "medium";
+    |} configurations;
+|};
+
+type LocalShellTool record {|
+    *ai:InbuiltModelTool;
+    "local_shell" name;
+    never configurations;
+|};
+
+type FileSearchTool record {|
+    *ai:InbuiltModelTool;
+    "file_search" name;
+    record {|
+        string[] vector_store_ids;
+        int max_num_results?;
+        anydata ranking_options?;
+        anydata filters?;
+    |} configurations;
+|};
+
+type ComputerUsePreviewTool record {|
+    *ai:InbuiltModelTool;
+    "computer_use_preview" name;
+    record {|
+        "windows"|"mac"|"linux"|"ubuntu"|"browser" environment;
+        int display_width;
+        int display_height;
+    |} configurations;
+|};
+
+type McpTool record {|
+    *ai:InbuiltModelTool;
+    "mcp" name;
+    record {|
+        string server_label;
+        string server_url?;
+        string server_description?;
+        string authorization?;
+        anydata headers?;
+        anydata allowed_tools?;
+        anydata require_approval?;
+    |} configurations;
+|};
+
+type ImageGenTool record {|
+    *ai:InbuiltModelTool;
+    "image_generation" name;
+    record {|
+        string model?;
+        "low"|"medium"|"high"|"auto" quality?;
+        "1024x1024"|"1024x1536"|"1536x1024"|"auto" size?;
+        "png"|"webp"|"jpeg" output_format?;
+        int output_compression?;
+        "auto"|"low" moderation?;
+        "transparent"|"opaque"|"auto" background?;
+        anydata input_image_mask?;
+        int partial_images?;
+    |} configurations;
+|};
+
+type FunctionShellTool record {|
+    *ai:InbuiltModelTool;
+    "shell" name;
+    record {|
+        anydata environment?;
+    |} configurations;
+|};
+
+type AzureInbuiltModelTool CodeInterpreterTool|WebsearchTool|LocalShellTool|FileSearchTool|ComputerUsePreviewTool|McpTool|ImageGenTool|FunctionShellTool;

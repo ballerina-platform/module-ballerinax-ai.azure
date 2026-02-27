@@ -21,6 +21,7 @@ import io.ballerina.runtime.api.Environment;
 import io.ballerina.runtime.api.Module;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.values.BObject;
+import io.ballerina.runtime.api.values.BString;
 import io.ballerina.runtime.api.values.BTypedesc;
 
 /**
@@ -29,14 +30,29 @@ import io.ballerina.runtime.api.values.BTypedesc;
  * @since 1.0.0
  */
 public class Generator {
+    private static final Module MODULE = new Module("ballerinax", "ai.azure", "1");
+
     public static Object generate(Environment env, BObject modelProvider,
                                   BObject prompt, BTypedesc expectedResponseTypedesc) {
+        BString apiType = (BString) modelProvider.get(StringUtils.fromString("apiType"));
+
+        if ("responses".equals(apiType.getValue())) {
+            return env.getRuntime().callFunction(
+                    MODULE, "generateLlmResponseViaResponses", null,
+                    modelProvider.get(StringUtils.fromString("responsesClient")),
+                    modelProvider.get(StringUtils.fromString("deploymentId")),
+                    modelProvider.get(StringUtils.fromString("apiVersion")),
+                    prompt, expectedResponseTypedesc,
+                    modelProvider.get(StringUtils.fromString("reasoning")));
+        }
+
+        // Default: Chat Completions (existing behavior)
         return env.getRuntime().callFunction(
-                new Module("ballerinax", "ai.azure", "1"), "generateLlmResponse", null,
-                modelProvider.get(StringUtils.fromString("llmClient")), 
-                modelProvider.get(StringUtils.fromString("deploymentId")), 
+                MODULE, "generateLlmResponse", null,
+                modelProvider.get(StringUtils.fromString("llmClient")),
+                modelProvider.get(StringUtils.fromString("deploymentId")),
                 modelProvider.get(StringUtils.fromString("apiVersion")),
-                modelProvider.get(StringUtils.fromString("temperature")), 
+                modelProvider.get(StringUtils.fromString("temperature")),
                 modelProvider.get(StringUtils.fromString("maxTokens")),
                 prompt, expectedResponseTypedesc);
     }

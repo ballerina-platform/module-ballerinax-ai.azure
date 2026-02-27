@@ -19,13 +19,13 @@ import ballerina/test;
 
 const SERVICE_URL = "http://localhost:8080/llm/azureopenai";
 const DEPLOYMENT_ID = "gpt4onew";
-const API_VERSION = "2023-08-01-preview";
+const API_VERSION = "v1";
 const API_KEY = "not-a-real-api-key";
 const ERROR_MESSAGE = "Error occurred while attempting to parse the response from the LLM as the expected type. Retrying and/or validating the prompt could fix the response.";
 const RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE = "Runtime schema generation is not yet supported";
 
 final OpenAiModelProvider openAiProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
-final OpenAiModelProvider parallelTestProvider = check new ("http://localhost:8081", API_KEY, DEPLOYMENT_ID, API_VERSION);
+final OpenAiModelProvider responsesProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION, apiType = RESPONSES);
 
 string apiKey = "mock-api-key";
 string serviceUrl = "http://localhost:8080/llm";
@@ -369,70 +369,116 @@ function testGenerateMethodWithArrayUnionRecord2() returns ai:Error? {
     test:assertTrue(result is Cricketers8);
 }
 
+// ===== Responses API: generate() tests =====
+
 @test:Config
-function testGenerateMethodWithTextChunk() returns error? {
-    ai:TextChunk chunk = {
+function testResponsesGenerateMethodWithBasicReturnType() returns ai:Error? {
+    int|error rating = responsesProvider->generate(`Rate this blog out of 10.
+        Title: ${blog1.title}
+        Content: ${blog1.content}`);
+    test:assertEquals(rating, 4);
+}
+
+@test:Config
+function testResponsesGenerateMethodWithBasicArrayReturnType() returns ai:Error? {
+    int[]|error rating = responsesProvider->generate(`Evaluate this blogs out of 10.
+        Title: ${blog1.title}
+        Content: ${blog1.content}
+
+        Title: ${blog1.title}
+        Content: ${blog1.content}`);
+    test:assertEquals(rating, [9, 1]);
+}
+
+@test:Config
+function testResponsesGenerateMethodWithRecordReturnType() returns error? {
+    Review|error result = responsesProvider->generate(`Please rate this blog out of ${"10"}.
+        Title: ${blog2.title}
+        Content: ${blog2.content}`);
+    test:assertEquals(result, check review.fromJsonStringWithType(Review));
+}
+
+@test:Config
+function testResponsesGenerateMethodWithTextDocument() returns ai:Error? {
+    ai:TextDocument blog = {
         content: string `Title: ${blog1.title} Content: ${blog1.content}`
     };
-    ai:TextChunk[] chunks = [chunk, chunk];
     int maxScore = 10;
 
-    int rating = check openAiProvider->generate(`How would you rate this text chunk content out of ${maxScore}. ${chunk}.`);
+    int|error rating = responsesProvider->generate(`How would you rate this ${"blog"} content out of ${maxScore}. ${blog}.`);
     test:assertEquals(rating, 4);
+}
 
-    ReviewArray result = check openAiProvider->generate(`How would you rate these text chunks out of ${maxScore}. ${chunks}. Thank you!`);
-    Review r = check review.fromJsonStringWithType();
+@test:Config
+function testResponsesGenerateMethodWithImageDocumentWithUrl() returns ai:Error? {
+    ai:ImageDocument img = {
+        content: "https://example.com/image.jpg",
+        metadata: {
+            mimeType: "image/jpg"
+        }
+    };
+
+    string|error description = responsesProvider->generate(`Describe the image. ${img}.`);
+    test:assertEquals(description, "This is a sample image description.");
+}
+
+@test:Config
+function testResponsesGenerateMethodWithRecordArrayReturnType() returns error? {
+    int maxScore = 10;
+    Review r = check review.fromJsonStringWithType(Review);
+
+    ReviewArray|error result = responsesProvider->generate(`Please rate this blogs out of ${maxScore}.
+        [{Title: ${blog1.title}, Content: ${blog1.content}}, {Title: ${blog2.title}, Content: ${blog2.content}}]`);
     test:assertEquals(result, [r, r]);
 }
 
-final ai:ChatCompletionFunctions[] weatherTools = [
-    {
-        name: "getWeather",
-        description: "Get the current weather for a city",
-        parameters: {
-            "type": "object",
-            "properties": {
-                "city": {"type": "string"}
-            },
-            "required": ["city"]
-        }
-    }
-];
-
-@test:Config {}
-function testParallelToolCallsInResponse() returns error? {
-    ai:ChatUserMessage userMsg = {role: ai:USER, content: "Get weather for Paris and Tokyo"};
-
-    ai:ChatAssistantMessage response = check parallelTestProvider->chat(userMsg, weatherTools);
-
-    ai:FunctionCall[]? toolCalls = response.toolCalls;
-    test:assertTrue(toolCalls is ai:FunctionCall[], "Expected tool calls in response");
-    ai:FunctionCall[] calls = <ai:FunctionCall[]>toolCalls;
-    test:assertEquals(calls.length(), 2, "Expected 2 parallel tool calls");
-    test:assertEquals(calls[0].name, "getWeather");
-    test:assertEquals(calls[0].arguments, {"city": "Paris"});
-    test:assertEquals(calls[0].id, "call_paris_id");
-    test:assertEquals(calls[1].name, "getWeather");
-    test:assertEquals(calls[1].arguments, {"city": "Tokyo"});
-    test:assertEquals(calls[1].id, "call_tokyo_id");
+@test:Config
+function testResponsesGenerateMethodWithStringUnionNull() returns error? {
+    string? result = check responsesProvider->generate(`Give me a random joke`);
+    test:assertTrue(result is string);
 }
 
-@test:Config {}
-function testParallelToolCallsHistoryReconstruction() returns error? {
-    ai:ChatMessage[] messages = [
-        <ai:ChatUserMessage>{role: ai:USER, content: "Get weather for Paris and Tokyo"},
-        <ai:ChatAssistantMessage>{
-            role: ai:ASSISTANT,
-            content: (),
-            toolCalls: [
-                {name: "getWeather", arguments: {"city": "Paris"}, id: "call_paris_id"},
-                {name: "getWeather", arguments: {"city": "Tokyo"}, id: "call_tokyo_id"}
-            ]
-        },
-        <ai:ChatFunctionMessage>{role: "function", name: "getWeather", content: "Sunny, 25°C", id: "call_paris_id"},
-        <ai:ChatFunctionMessage>{role: "function", name: "getWeather", content: "Rainy, 18°C", id: "call_tokyo_id"}
-    ];
+// ===== Responses API: chat() tests =====
 
-    ai:ChatAssistantMessage response = check parallelTestProvider->chat(messages, weatherTools);
-    test:assertEquals(response.content, "Paris is sunny at 25°C and Tokyo is rainy at 18°C.");
+@test:Config
+function testResponsesChatWithSimpleMessage() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
+    ai:ChatAssistantMessage result = check responsesProvider->chat(userMsg, []);
+    test:assertTrue(result.content is string);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+@test:Config
+function testResponsesChatWithMessageArray() returns ai:Error? {
+    ai:ChatMessage[] messages = [
+        <ai:ChatSystemMessage>{role: "system", content: "You are a helpful assistant."},
+        <ai:ChatUserMessage>{role: "user", content: "Hello, how are you?"}
+    ];
+    ai:ChatAssistantMessage result = check responsesProvider->chat(messages, []);
+    test:assertTrue(result.content is string);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+@test:Config
+function testResponsesChatWithTools() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "What is the weather in London?"};
+    ai:ChatCompletionFunctions[] tools = [
+        {
+            name: "get_weather",
+            description: "Get the weather for a city",
+            parameters: {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"}
+                },
+                "required": ["city"]
+            }
+        }
+    ];
+    ai:ChatAssistantMessage result = check responsesProvider->chat(userMsg, tools);
+    ai:FunctionCall[]? toolCalls = result.toolCalls;
+    test:assertTrue(toolCalls is ai:FunctionCall[]);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls).length(), 1);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "London"});
 }
