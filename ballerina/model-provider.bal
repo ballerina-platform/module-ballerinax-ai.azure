@@ -18,7 +18,8 @@ import ballerina/ai;
 import ballerina/ai.observe;
 import ballerina/jballerina.java;
 import ballerina/log;
-import ballerinax/azure.openai as chat;
+import ballerinax/azure.openai.chat as chat;
+import ballerinax/azure.openai.responses as responses;
 
 const DEFAULT_MAX_TOKEN_COUNT = 512;
 const DEFAULT_TEMPERATURE = 0.7d;
@@ -28,13 +29,13 @@ const DEFAULT_TEMPERATURE = 0.7d;
 public isolated client class OpenAiModelProvider {
     *ai:ModelProvider;
     private final chat:Client? llmClient;
-    private final chat:Client? responsesClient;
+    private final responses:Client? responsesClient;
     private final string deploymentId;
     private final chat:AzureAIFoundryModelsApiVersion? apiVersion;
     private final ApiType apiType;
     private final decimal? temperature;
     private final int maxTokens;
-    private final (chat:OpenAI\.Reasoning & readonly)? reasoning;
+    private final (responses:OpenAI\.Reasoning & readonly)? reasoning;
 
     # Initializes the Azure OpenAI model with the given connection configuration and model configuration.
     #
@@ -55,7 +56,7 @@ public isolated client class OpenAiModelProvider {
             @display {label: "Maximum Tokens"} int maxTokens = DEFAULT_MAX_TOKEN_COUNT,
             @display {label: "Temperature"} decimal? temperature = DEFAULT_TEMPERATURE,
             @display {label: "API Type"} ApiType apiType = RESPONSES,
-            @display {label: "Reasoning Effort"} chat:OpenAI\.Reasoning? reasoningEffort = (),
+            @display {label: "Reasoning Effort"} responses:OpenAI\.Reasoning? reasoningEffort = (),
             @display {label: "Connection Configuration"} *ConnectionConfig connectionConfig) returns ai:Error? {
 
         self.deploymentId = deploymentId;
@@ -91,7 +92,7 @@ public isolated client class OpenAiModelProvider {
             self.llmClient = llmClient;
             self.responsesClient = ();
         } else {
-            chat:Client|error responsesApiClient = new (azureAiConfig, serviceUrl);
+            responses:Client|error responsesApiClient = new (azureAiConfig, serviceUrl);
             if responsesApiClient is error {
                 return error ai:Error("Failed to initialize chat:Client for Responses API", responsesApiClient);
             }
@@ -224,7 +225,7 @@ public isolated client class OpenAiModelProvider {
         if chatAssistantMessage.toolCalls is ai:FunctionCall[] {
             return chatAssistantMessage;
         }
-        log:printInfo("Converted Chat Completions response to ChatAssistantMessage", message = chatAssistantMessage.toJsonString());
+        
         span.addOutputMessages(chatAssistantMessage);
         span.addOutputType(observe:TEXT);
         span.close();
@@ -236,7 +237,7 @@ public isolated client class OpenAiModelProvider {
     private isolated function chatViaResponses(ai:ChatMessage[]|ai:ChatUserMessage messages,
             (ai:ChatCompletionFunctions|ai:InbuiltModelTool)[] tools, string? stop) returns ai:ChatAssistantMessage|ai:Error {
         log:printInfo("Responses API has been called");
-        chat:Client responsesClient = <chat:Client>self.responsesClient;
+        responses:Client responsesClient = <responses:Client>self.responsesClient;
         observe:ChatSpan span = observe:createChatSpan(self.deploymentId);
         span.addProvider("azure.ai.openai");
         if stop is string {
@@ -263,9 +264,9 @@ public isolated client class OpenAiModelProvider {
         }
 
         // Convert messages to Responses API input format
-        [chat:OpenAI\.InputParam, string?] [inputItems, instructions] = check convertToResponsesInput(messages, functionToolDefs);
+        [responses:OpenAI\.InputParam, string?] [inputItems, instructions] = check convertToResponsesInput(messages, functionToolDefs);
 
-        chat:OpenAI\.CreateResponse request = {
+        responses:OpenAI\.CreateResponse request = {
             model: self.deploymentId,
             input: inputItems,
             max_output_tokens: self.maxTokens,
@@ -282,16 +283,16 @@ public isolated client class OpenAiModelProvider {
             log:printWarn("The 'stop' parameter is not supported by the Responses API and will be ignored.",
                 model = self.deploymentId);
         }
-        chat:OpenAI\.Tool[] allTools = [];
+        responses:OpenAI\.Tool[] allTools = [];
         if functionToolDefs.length() > 0 {
-            chat:OpenAI\.Tool[] functionTools = convertToResponsesTools(functionToolDefs);
-            foreach chat:OpenAI\.Tool ft in functionTools {
+            responses:OpenAI\.Tool[] functionTools = convertToResponsesTools(functionToolDefs);
+            foreach responses:OpenAI\.Tool ft in functionTools {
                 allTools.push(ft);
             }
         }
         if inbuiltToolDefs.length() > 0 {
-            chat:OpenAI\.Tool[] convertedInbuiltTools = check convertInbuiltToolsToResponsesFormat(inbuiltToolDefs);
-            foreach chat:OpenAI\.Tool t in convertedInbuiltTools {
+            responses:OpenAI\.Tool[] convertedInbuiltTools = check convertInbuiltToolsToResponsesFormat(inbuiltToolDefs);
+            foreach responses:OpenAI\.Tool t in convertedInbuiltTools {
                 allTools.push(t);
             }
         }
@@ -309,7 +310,7 @@ public isolated client class OpenAiModelProvider {
         if allTools.length() > 0 {
             request.tools = allTools;
         }
-        if self.reasoning is chat:OpenAI\.Reasoning {
+        if self.reasoning is responses:OpenAI\.Reasoning {
             request.reasoning = self.reasoning;
         }
 
@@ -326,7 +327,7 @@ public isolated client class OpenAiModelProvider {
 
         // chat:inline_response_200_5 response = <chat:inline_response_200_5>response2;
 
-        chat:inline_response_200_5|error response = responsesClient->/responses.post(request,
+        responses:inline_response_200_5|error response = responsesClient->/responses.post(request,
             queries = {api\-version: self.apiVersion});
         if response is error {
             ai:Error err = error ai:LlmConnectionError("Error while connecting to the model", response);
@@ -372,8 +373,8 @@ public isolated client class OpenAiModelProvider {
 
         // Record observability
         span.addResponseId(response.id);
-        chat:OpenAI\.ResponseUsage? usage = response.usage;
-        if usage is chat:OpenAI\.ResponseUsage {
+        responses:OpenAI\.ResponseUsage? usage = response.usage;
+        if usage is responses:OpenAI\.ResponseUsage {
             span.addInputTokenCount(usage.input_tokens);
             span.addOutputTokenCount(usage.output_tokens);
         }
@@ -385,7 +386,7 @@ public isolated client class OpenAiModelProvider {
             span.close(message);
             return message;
         }
-        log:printInfo("Converted Responses API response to ChatAssistantMessage", message = message.toJsonString());
+
         span.addOutputMessages(message);
         span.addOutputType(observe:TEXT);
         span.close();
