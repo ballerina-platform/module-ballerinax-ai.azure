@@ -115,13 +115,13 @@ isolated function convertToResponsesTools(ai:ChatCompletionFunctions[] tools) re
     return result;
 }
 
-# Converts ai:InbuiltModelTool array to Responses API tool format.
+# Converts ai:BuiltInTool array to Responses API tool format.
 #
-# + tools - The inbuilt tool definitions to convert
+# + tools - The built-in tool definitions to convert
 # + return - Array of responses:OpenAI\.Tool objects or an error
-isolated function convertInbuiltToolsToResponsesFormat(ai:InbuiltModelTool[] tools) returns responses:OpenAI\.Tool[]|ai:Error {
+isolated function convertBuiltInToolsToResponsesFormat(ai:BuiltInTool[] tools) returns responses:OpenAI\.Tool[]|ai:Error {
     responses:OpenAI\.Tool[] result = [];
-    foreach ai:InbuiltModelTool tool in tools {
+    foreach ai:BuiltInTool tool in tools {
         map<anydata> toolMap = {'type: tool.name};
         map<anydata>? configs = tool.configurations;
         if configs is map<anydata> {
@@ -132,7 +132,7 @@ isolated function convertInbuiltToolsToResponsesFormat(ai:InbuiltModelTool[] too
         }
         responses:OpenAI\.Tool|error converted = toolMap.cloneWithType();
         if converted is error {
-            return error ai:Error("Failed to convert inbuilt tool '" + tool.name + "' to Responses API format." + "Found " + toolMap.toJsonString(), converted);
+            return error ai:Error("Failed to convert built-in tool '" + tool.name + "' to Responses API format." + "Found " + toolMap.toJsonString(), converted);
         }
         result.push(converted);
     }
@@ -148,10 +148,11 @@ isolated function convertResponsesOutputToAssistantMessage(responses:inline_resp
     ai:ChatAssistantMessage result = {role: ai:ASSISTANT};
     ai:FunctionCall[] functionCalls = [];
 
-    anydata outputText = response?.output_text;
-    if outputText is string && outputText.length() > 0 {
-        result.content = outputText;
-    }
+    // Commented out the old output_text extraction logic since we're now scanning output items for content parts
+    // anydata outputText = response?.output_text;
+    // if outputText is string && outputText.length() > 0 {
+    //     result.content = outputText;
+    // }
 
     // Scan output items for message and function_call items
     foreach responses:OpenAI\.OutputItem item in response.output {
@@ -242,7 +243,6 @@ isolated function generateLlmResponseViaResponses(responses:Client responsesClie
         responses:AzureAIFoundryModelsApiVersion? apiVersion, ai:Prompt prompt, typedesc<json> expectedResponseTypedesc,
         responses:OpenAI\.Reasoning? reasoning = ())
         returns anydata|ai:Error {
-    log:printInfo("Generating LLM response via Responses API for deployment: " + deploymentId);
     observe:GenerateContentSpan span = observe:createGenerateContentSpan(deploymentId);
     span.addProvider("azure.ai.openai");
 
@@ -285,25 +285,19 @@ isolated function generateLlmResponseViaResponses(responses:Client responsesClie
     json[] responsesContent = convertContentPartsForResponses(content);
 
     // Build input
-    json inputMessage = {
-        role: ai:USER,
-        content: responsesContent,
+    responses:OpenAI\.InputParam inputMessage = [{
+        "role": ai:USER,
+        "content": responsesContent,
         'type: "message"
-    };
-
-    responses:OpenAI\.InputParam|error inputParam = [inputMessage].cloneWithType(responses:OpenAI\.InputParam);
-    if inputParam is error {
-        log:printInfo("Input parameter given:- \n\n" + inputMessage.toJson().toString() + "\n\n");
-        ai:Error err = error("Failed to convert input items to InputParam: " + inputParam.message());
-        span.close(err);
-        return err;
-    }
+    }];
+    
     responses:OpenAI\.CreateResponse request = {
         model: deploymentId,
-        input: inputParam,
+        input: inputMessage,
         tools: [getResultsTool],
         tool_choice: toolChoice
     };
+
     if reasoning is responses:OpenAI\.Reasoning {
         request.reasoning = reasoning;
     }
@@ -328,7 +322,6 @@ isolated function generateLlmResponseViaResponses(responses:Client responsesClie
         span.close(err);
         return err;
     }
-    log:printInfo("Raw Responses API response received (generate)", response = response.toJson());
 
     // Record observability
     span.addResponseId(response.id);

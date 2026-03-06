@@ -241,7 +241,6 @@ isolated function handleParseResponseError(error chatResponseError) returns erro
 isolated function generateLlmResponse(chat:Client llmClient, string deploymentId,
         chat:AzureAIFoundryModelsApiVersion? apiVersion, decimal? temperature, int maxTokens, ai:Prompt prompt,
         typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
-    log:printInfo("Generating LLM response for Chat Completion API: ");
     observe:GenerateContentSpan span = observe:createGenerateContentSpan(deploymentId);
     decimal? temp = temperature;
     if temp is decimal {
@@ -283,7 +282,6 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
         span.close(err);
         return err;
     }
-    log:printInfo("Raw Chat Completions response received (generate)", response = response.toJsonString());
 
     string? responseId = response is record {|string id; anydata...;|} ? response.id : ();
     if responseId is string {
@@ -301,7 +299,6 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
         span.close(result);
         return result;
     }
-    log:printInfo("Converted response to expected Ballerina type (generate/ChatCompletions)", result = result.toJsonString());
     span.addOutputMessages(result.toJson());
     span.addOutputType(observe:JSON);
     span.close();
