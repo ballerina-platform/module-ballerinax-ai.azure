@@ -78,12 +78,6 @@ public type ConnectionConfig record {|
     boolean validation = true;
 |};
 
-# Defines which API endpoint to use for model interactions.
-public enum ApiType {
-    CHAT_COMPLETIONS = "chat_completions",
-    RESPONSES = "responses"
-}
-
 type AzureChatUserMessage record {|
     *ai:ChatUserMessage;
     string content;
@@ -94,33 +88,37 @@ type AzureChatSystemMessage record {|
     string content;
 |};
 
-type CodeInterpreterTool record {|
-    *ai:InbuiltModelTool;
+# Code interpreter tool for Azure OpenAI models.
+# Allows the model to execute code in a sandboxed environment during a conversation.
+# Ref: https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/code-interpreter
+public type CodeInterpreterTool record {|
+    *ai:BuiltInTool;
+    # Tool identifier. Always `"code_interpreter"`.
     "code_interpreter" name;
+    # Code interpreter configurations
     record {|
+        # The container to run the code in. Either a string container ID or an auto-provisioned container configuration.
         anydata container;
     |} configurations;
 |};
 
-type WebsearchTool record {|
-    *ai:InbuiltModelTool;
+# Web search tool for Azure OpenAI models.
+# Enables the model to search the web for real-time information during a conversation.
+public type WebsearchTool record {|
+    *ai:BuiltInTool;
+    # Tool identifier. Use `"web_search"` (default) or `"web_search_2025_08_26"` for an older version.
     "web_search"|"web_search_2025_08_26" name;
+    # Web search configurations
     record {|
+        # Domain filters for narrowing search results
         anydata filters?;
+        # Approximate user location for localizing search results
         anydata user_location?;
+        # High level guidance for the amount of context window space to use for the search.
+        # One of `low`, `medium`, or `high`. Defaults to `medium`.
         "low"|"medium"|"high" search_context_size = "medium";
     |} configurations;
 |};
 
-type FileSearchTool record {|
-    *ai:InbuiltModelTool;
-    "file_search" name;
-    record {|
-        string[] vector_store_ids;
-        int max_num_results?;
-        anydata ranking_options?;
-        anydata filters?;
-    |} configurations;
-|};
-
-type AzureInbuiltModelTool CodeInterpreterTool|WebsearchTool|FileSearchTool;
+# Union type representing all built-in tools supported by the Azure OpenAI provider.
+type AzureBuiltInTool CodeInterpreterTool|WebsearchTool;

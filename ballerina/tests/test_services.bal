@@ -20,7 +20,7 @@ import ballerinax/azure.openai.embeddings;
 
 service /llm on new http:Listener(8080) {
     // Chat Completions API mock endpoint
-    resource function post azureopenai/chat/completions(
+    resource function post azureopenai/v1/chat/completions(
             string api\-version, @http:Payload json payload)
                 returns json|error {
         test:assertEquals(api\-version, "2023-08-01-preview");
@@ -54,7 +54,7 @@ service /llm on new http:Listener(8080) {
     }
 
     // Responses API mock endpoint
-    resource function post azureopenai/responses(string api\-version, @http:Payload json payload)
+    resource function post azureopenai/v1/responses(string api\-version, @http:Payload json payload)
             returns json|error {
         // Extract the initial text content from the input items
         json[] inputItems = check (check payload.input).ensureType();

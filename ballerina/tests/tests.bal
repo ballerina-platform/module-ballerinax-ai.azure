@@ -25,7 +25,7 @@ const ERROR_MESSAGE = "Error occurred while attempting to parse the response fro
 const RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE = "Runtime schema generation is not yet supported";
 
 final OpenAiModelProvider openAiProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
-final OpenAiModelProvider responsesProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION, apiType = RESPONSES);
+final OpenAiModelProvider responsesProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
 
 string apiKey = "mock-api-key";
 string serviceUrl = "http://localhost:8080/llm";
