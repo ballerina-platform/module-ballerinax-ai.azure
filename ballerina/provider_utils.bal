@@ -18,7 +18,6 @@ import ballerina/ai;
 import ballerina/ai.observe;
 import ballerina/constraint;
 import ballerina/lang.array;
-import ballerina/log;
 import ballerinax/azure.openai.chat as chat;
 
 type ResponseSchema record {|
@@ -335,7 +334,6 @@ isolated function ensureAnydataResult(chat:inline_response_200 response,
     if arguments is error {
         return error(NO_RELEVANT_RESPONSE_FROM_THE_LLM);
     }
-    log:printInfo("Parsed tool call arguments (generate)", arguments = arguments.toJsonString());
 
     anydata|error res = parseResponseAsType(arguments.toJsonString(), expectedResponseTypedesc, isOriginallyJsonObject);
     if res is error {

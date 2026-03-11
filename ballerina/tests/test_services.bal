@@ -23,7 +23,7 @@ service /llm on new http:Listener(8080) {
     resource function post azureopenai/v1/chat/completions(
             string api\-version, @http:Payload json payload)
                 returns json|error {
-        test:assertEquals(api\-version, "2023-08-01-preview");
+        test:assertEquals(api\-version, ());
         json[] messages = check (check payload.messages).ensureType();
         json message = messages[0];
 
@@ -83,28 +83,43 @@ service /llm on new http:Listener(8080) {
             }
         }
 
-        // Check if tools are provided (generate() path uses getResults tool)
+        // Check if tools are provided and classify them
         json|error toolsJson = payload.tools;
         boolean hasGetResultsTool = false;
+        boolean hasBuiltInTool = false;
+        boolean hasFunctionTool = false;
         if toolsJson is json[] && toolsJson.length() > 0 {
-            json firstTool = toolsJson[0];
-            string? toolName = check firstTool.name.ensureType();
-            if toolName == GET_RESULTS_TOOL {
-                hasGetResultsTool = true;
-
-                // Validate the parameter schema matches expectations
-                map<json>? parameters = check (check firstTool.parameters).cloneWithType();
-                if parameters is () {
-                    test:assertFail("No parameters in the expected tool");
+            foreach json tool in toolsJson {
+                string? toolType = check tool.'type.ensureType();
+                if toolType == "web_search" || toolType == "web_search_2025_08_26" || toolType == "code_interpreter" {
+                    hasBuiltInTool = true;
+                } else if toolType == "function" {
+                    hasFunctionTool = true;
+                    string? toolName = check tool.name.ensureType();
+                    if toolName == GET_RESULTS_TOOL {
+                        hasGetResultsTool = true;
+                    }
                 }
-                test:assertEquals(parameters, getExpectedParameterSchema(initialText),
-                        string `Responses API: Test failed for prompt with initial content, ${initialText}`);
             }
         }
 
         if hasGetResultsTool {
+            // Validate the parameter schema for generate() path
+            json[] toolsArr = check toolsJson.ensureType();
+            json firstTool = toolsArr[0];
+            map<json>? parameters = check (check firstTool.parameters).cloneWithType();
+            if parameters is () {
+                test:assertFail("No parameters in the expected tool");
+            }
+            test:assertEquals(parameters, getExpectedParameterSchema(initialText),
+                    string `Responses API: Test failed for prompt with initial content, ${initialText}`);
             // Return response with function_call output item (for generate() path)
             return getTestResponsesApiResponseWithToolCall(initialText);
+        }
+
+        // If only built-in tools (no function tools), return text response
+        if hasBuiltInTool && !hasFunctionTool {
+            return getTestResponsesApiChatResponse(initialText);
         }
 
         // If non-getResults tools are provided (chat with tools path), return tool call response
@@ -115,6 +130,7 @@ service /llm on new http:Listener(8080) {
         // Return a simple text message response (for chat() path)
         return getTestResponsesApiChatResponse(initialText);
     }
+
 
     resource function post deployments/[string deploymentId]/embeddings(string api\-version, embeddings:Deploymentid_embeddings_body payload)
         returns embeddings:Inline_response_200|error {

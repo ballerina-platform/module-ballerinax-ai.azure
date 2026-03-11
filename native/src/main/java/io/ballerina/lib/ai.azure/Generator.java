@@ -46,8 +46,7 @@ public class Generator {
                     modelProvider.get(StringUtils.fromString("responsesClient")),
                     modelProvider.get(StringUtils.fromString("deploymentId")),
                     modelProvider.get(StringUtils.fromString("apiVersion")),
-                    prompt, expectedResponseTypedesc,
-                    modelProvider.get(StringUtils.fromString("reasoning")));
+                    prompt, expectedResponseTypedesc);
 
             if (result instanceof BError) {
                 BError error = (BError) result;
@@ -79,8 +78,8 @@ public class Generator {
             return true;
         }
         Throwable cause = error.getCause();
-        if (cause != null) {
-            String causeMsg = ((BError) cause).getMessage().toLowerCase(Locale.ROOT);
+        if (cause != null && cause instanceof BError causeErr) {
+            String causeMsg = causeErr.getMessage().toLowerCase(Locale.ROOT);
             return causeMsg.contains("model_not_found") || causeMsg.contains("not supported");
         }
         return false;
