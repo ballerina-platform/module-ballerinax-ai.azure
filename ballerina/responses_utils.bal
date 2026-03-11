@@ -16,7 +16,6 @@
 
 import ballerina/ai;
 import ballerina/ai.observe;
-import ballerina/log;
 import ballerinax/azure.openai.responses as responses;
 
 # Converts ai:ChatMessage array to Responses API input items and instructions.
@@ -98,7 +97,7 @@ isolated function convertToResponsesInput(ai:ChatMessage[]|ai:ChatUserMessage me
 #
 # + tools - The tool definitions to convert
 # + return - Array of function tool objects in Responses API flat format
-isolated function convertToResponsesTools(ai:ChatCompletionFunctions[] tools) returns responses:OpenAI\.Tool[] {
+isolated function convertToResponsesTools(ai:ChatCompletionFunctions[] tools) returns responses:OpenAI\.Tool[]|error {
     responses:OpenAI\.Tool[] result = [];
     foreach ai:ChatCompletionFunctions tool in tools {
         responses:OpenAI\.Tool|error converted = {
@@ -108,9 +107,12 @@ isolated function convertToResponsesTools(ai:ChatCompletionFunctions[] tools) re
             parameters: tool.parameters ?: {},
             strict: false
         }.cloneWithType();
+
         if converted is responses:OpenAI\.Tool {
             result.push(converted);
-        }
+        } else {
+            return converted;
+        } 
     }
     return result;
 }
@@ -132,7 +134,7 @@ isolated function convertBuiltInToolsToResponsesFormat(ai:BuiltInTool[] tools) r
         }
         responses:OpenAI\.Tool|error converted = toolMap.cloneWithType();
         if converted is error {
-            return error ai:Error("Failed to convert built-in tool '" + tool.name + "' to Responses API format." + "Found " + toolMap.toJsonString(), converted);
+            return error ai:Error("Failed to convert built-in tool '" + tool.name + "' to Responses API format. " + "Found " + toolMap.toJsonString(), converted);
         }
         result.push(converted);
     }
@@ -147,12 +149,6 @@ isolated function convertResponsesOutputToAssistantMessage(responses:inline_resp
         returns ai:ChatAssistantMessage|ai:Error {
     ai:ChatAssistantMessage result = {role: ai:ASSISTANT};
     ai:FunctionCall[] functionCalls = [];
-
-    // Commented out the old output_text extraction logic since we're now scanning output items for content parts
-    // anydata outputText = response?.output_text;
-    // if outputText is string && outputText.length() > 0 {
-    //     result.content = outputText;
-    // }
 
     // Scan output items for message and function_call items
     foreach responses:OpenAI\.OutputItem item in response.output {
@@ -237,11 +233,9 @@ isolated function convertContentPartsForResponses(DocumentContentPart[] parts) r
 # + apiVersion - The Azure API version
 # + prompt - The user prompt
 # + expectedResponseTypedesc - The expected response type descriptor
-# + reasoning - Optional reasoning configuration
 # + return - The parsed response or an error
 isolated function generateLlmResponseViaResponses(responses:Client responsesClient, string deploymentId,
-        responses:AzureAIFoundryModelsApiVersion? apiVersion, ai:Prompt prompt, typedesc<json> expectedResponseTypedesc,
-        responses:OpenAI\.Reasoning? reasoning = ())
+        responses:AzureAIFoundryModelsApiVersion? apiVersion, ai:Prompt prompt, typedesc<json> expectedResponseTypedesc)
         returns anydata|ai:Error {
     observe:GenerateContentSpan span = observe:createGenerateContentSpan(deploymentId);
     span.addProvider("azure.ai.openai");
@@ -298,22 +292,7 @@ isolated function generateLlmResponseViaResponses(responses:Client responsesClie
         tool_choice: toolChoice
     };
 
-    if reasoning is responses:OpenAI\.Reasoning {
-        request.reasoning = reasoning;
-    }
-
     span.addInputMessages([inputMessage].toJson());
-
-    // anydata|error response2 = responsesClient->/responses.post(request,
-    //     queries = {api\-version: apiVersion});
-    // if response2 is error {
-    //     ai:Error err = error("LLM call failed: " + response2.message(), detail = response2.detail(), cause = response2.cause());
-    //     span.close(err);
-    //     return err;
-    // }
-    // log:printInfo("Raw Responses API response received (generate)", response = response2.toJson());
-
-    // responses:inline_response_200_5 response = <responses:inline_response_200_5>response2;
 
     responses:inline_response_200_5|error response = responsesClient->/responses.post(request,
         queries = {api\-version: apiVersion});
@@ -355,7 +334,6 @@ isolated function generateLlmResponseViaResponses(responses:Client responsesClie
         span.close(err);
         return err;
     }
-    log:printInfo("Parsed tool call arguments (generate/Responses)", arguments = arguments.toJsonString());
 
     anydata|error res = parseResponseAsType(arguments.toJsonString(), expectedResponseTypedesc,
             responseSchema.isOriginallyJsonObject);
@@ -373,7 +351,6 @@ isolated function generateLlmResponseViaResponses(responses:Client responsesClie
         span.close(err);
         return err;
     }
-    log:printInfo("Converted response to expected Ballerina type (generate/Responses)", result = result.toJsonString());
 
     span.addOutputMessages(result.toJson());
     span.addOutputType(observe:JSON);

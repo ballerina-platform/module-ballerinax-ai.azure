@@ -135,7 +135,7 @@ public isolated client class OpenAiModelProvider {
                 lock {
                     self.responsesApiUnsupported = true;
                 }
-                log:printInfo("Model does not support Responses API, falling back to Chat Completions API");
+                log:printWarn("Model does not support Responses API, falling back to Chat Completions API");
             } else {
                 return result;
             }
@@ -174,7 +174,6 @@ public isolated client class OpenAiModelProvider {
 
     private isolated function chatViaChatCompletions(ai:ChatMessage[]|ai:ChatUserMessage messages,
             ai:ChatCompletionFunctions[] tools, string? stop) returns ai:ChatAssistantMessage|ai:Error {
-        log:printInfo("Chat Completion API has been called");
         chat:Client llmClient = self.llmClient;
         observe:ChatSpan span = observe:createChatSpan(self.deploymentId);
         span.addProvider("azure.ai.openai");
@@ -214,7 +213,6 @@ public isolated client class OpenAiModelProvider {
             span.close(err);
             return err;
         }
-        log:printInfo("Raw Chat Completions response received", response = response.toJsonString());
 
         record {|
             "stop"|"length"|"tool_calls"|"content_filter"|"function_call" finish_reason;
@@ -264,7 +262,6 @@ public isolated client class OpenAiModelProvider {
 
     private isolated function chatViaResponses(ai:ChatMessage[]|ai:ChatUserMessage messages,
             (ai:ChatCompletionFunctions|ai:BuiltInTool)[] tools, string? stop) returns ai:ChatAssistantMessage|ai:Error {
-        log:printInfo("Responses API has been called");
         responses:Client responsesClient = self.responsesClient;
         observe:ChatSpan span = observe:createChatSpan(self.deploymentId);
         span.addProvider("azure.ai.openai");
@@ -301,7 +298,7 @@ public isolated client class OpenAiModelProvider {
         if unsupportedBuiltInTools.length() > 0 {
             return error ai:Error(
                 string `Built-in tools [${string:'join(", ", ...unsupportedBuiltInTools)}] are not currently supported. ` +
-                "Only 'web_search', 'code_interpreter', and 'file_search' tools are supported.");
+                "Only 'web_search', 'code_interpreter' tools are supported.");
         }
 
         // Convert messages to Responses API input format
@@ -311,7 +308,7 @@ public isolated client class OpenAiModelProvider {
             model: self.deploymentId,
             input: inputItems,
             max_output_tokens: self.maxTokens,
-            store: true
+            store: false
         };
         if self.temperature is decimal {
             request.temperature = self.temperature;
@@ -326,7 +323,11 @@ public isolated client class OpenAiModelProvider {
         }
         responses:OpenAI\.Tool[] allTools = [];
         if functionToolDefs.length() > 0 {
-            responses:OpenAI\.Tool[] functionTools = convertToResponsesTools(functionToolDefs);
+            responses:OpenAI\.Tool[]|error functionTools = convertToResponsesTools(functionToolDefs);
+            if functionTools is error {
+                return error("Error while adding tools into Responses API", cause = functionTools);
+            }
+
             foreach responses:OpenAI\.Tool ft in functionTools {
                 allTools.push(ft);
             }
@@ -354,19 +355,6 @@ public isolated client class OpenAiModelProvider {
         if self.reasoning is responses:OpenAI\.Reasoning {
             request.reasoning = self.reasoning;
         }
-
-        // POST to /responses
-        // anydata|error response2 = responsesClient->/responses.post(request,
-        //     queries = {api\-version: self.apiVersion});
-        // if response2 is error {
-        //     ai:Error err = error ai:LlmConnectionError("Error while connecting to the model", response2);
-        //     span.close(err);
-        //     return err;
-        // }
-        // log:printInfo("Raw Responses API response received", response = response2.toJson());
-
-
-        // chat:inline_response_200_5 response = <chat:inline_response_200_5>response2;
 
         responses:inline_response_200_5|error response = responsesClient->/responses.post(request,
             queries = {api\-version: self.apiVersion});
@@ -433,7 +421,6 @@ public isolated client class OpenAiModelProvider {
         return message;
     }
 
-    # Checks whether an error indicates the model doesn't support the Responses API.
     private isolated function isModelNotSupportedError(ai:Error err) returns boolean {
         string message = err.message().toLowerAscii();
         if message.includes("model_not_found") || message.includes("not supported") {
