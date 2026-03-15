@@ -110,7 +110,7 @@ service /llm on new http:Listener(8080) {
         if toolsJson is json[] && toolsJson.length() > 0 {
             foreach json tool in toolsJson {
                 string? toolType = check tool.'type.ensureType();
-                if toolType == "web_search" || toolType == "web_search_2025_08_26" || toolType == "code_interpreter" {
+                if toolType == "web_search_preview" || toolType == "code_interpreter" {
                     hasBuiltInTool = true;
                 } else if toolType == "function" {
                     hasFunctionTool = true;

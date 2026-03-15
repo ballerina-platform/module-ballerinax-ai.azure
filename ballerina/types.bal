@@ -106,7 +106,7 @@ public type CodeInterpreterTool record {|
 # Enables the model to search the web for real-time information during a conversation.
 public type WebsearchTool record {|
     *ai:BuiltInTool;
-    # Tool identifier. Use `"web_search"` (default) or `"web_search_2025_08_26"` for an older version.
+    # Tool identifier. Use `web_search_preview`.
     "web_search_preview" name;
     # Web search configurations
     record {|
