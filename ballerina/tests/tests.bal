@@ -59,6 +59,64 @@ function testBatchEmbeddings() returns error? {
     }
 }
 
+// ===== Responses → Chat Completions fallback tests =====
+
+@test:Config {}
+function testResponsesFallbackToChatCompletionsOnModelNotSupported() returns ai:Error? {
+    // Create a fresh provider so responsesApiUnsupported starts as false
+    OpenAiModelProvider fallbackProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
+
+    ai:ChatUserMessage userMsg = {role: "user", content: "Fallback test: What is the weather in Paris?"};
+    ai:ChatCompletionFunctions[] tools = [
+        {
+            name: "get_weather",
+            description: "Get the weather for a city",
+            parameters: {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"}
+                },
+                "required": ["city"]
+            }
+        }
+    ];
+
+    // First call: should try Responses API, get model_not_found error, then fall back to Chat Completions
+    ai:ChatAssistantMessage result = check fallbackProvider->chat(userMsg, tools);
+    ai:FunctionCall[]? toolCalls = result.toolCalls;
+    test:assertTrue(toolCalls is ai:FunctionCall[]);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls).length(), 1);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "Paris"});
+
+    // Second call: responsesApiUnsupported should now be true, so it should go directly to Chat Completions
+    // without hitting the Responses API at all
+    ai:ChatUserMessage userMsg2 = {role: "user", content: "Fallback test: What is the weather in London?"};
+    ai:ChatAssistantMessage result2 = check fallbackProvider->chat(userMsg2, tools);
+    ai:FunctionCall[]? toolCalls2 = result2.toolCalls;
+    test:assertTrue(toolCalls2 is ai:FunctionCall[]);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls2)[0].name, "get_weather");
+}
+
+@test:Config {}
+function testResponsesFallbackWithBuiltInToolsReturnsError() returns ai:Error? {
+    // Create a fresh provider so responsesApiUnsupported starts as false
+    OpenAiModelProvider fallbackProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
+
+    ai:ChatUserMessage userMsg = {role: "user", content: "Fallback test: Search the web"};
+    WebsearchTool webSearchTool = {
+        name: "web_search",
+        configurations: {search_context_size: "medium"}
+    };
+
+    // Built-in tools should fail when falling back to Chat Completions since they are not supported
+    ai:ChatAssistantMessage|ai:Error result = fallbackProvider->chat(userMsg, [webSearchTool]);
+    test:assertTrue(result is ai:Error);
+    string errorMsg = (<ai:Error>result).message();
+    test:assertTrue(errorMsg.includes("Built-in tools [web_search] are not supported"),
+            string `expected built-in tool fallback error, found: ${errorMsg}`);
+}
+
 @test:Config
 function testGenerateMethodWithBasicReturnType() returns ai:Error? {
     int|error rating = openAiProvider->generate(`Rate this blog out of 10.

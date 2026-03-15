@@ -46,6 +46,8 @@ public class Generator {
                     modelProvider.get(StringUtils.fromString("responsesClient")),
                     modelProvider.get(StringUtils.fromString("deploymentId")),
                     modelProvider.get(StringUtils.fromString("apiVersion")),
+                modelProvider.get(StringUtils.fromString("temperature")),
+                modelProvider.get(StringUtils.fromString("maxTokens")),
                     prompt, expectedResponseTypedesc);
 
             if (result instanceof BError) {
@@ -74,13 +76,13 @@ public class Generator {
 
     private static boolean isModelNotSupportedError(BError error) {
         String message = error.getMessage().toLowerCase(Locale.ROOT);
-        if (message.contains("model_not_found") || message.contains("not supported")) {
+        if (message.contains("model_not_found")) {
             return true;
         }
-        Throwable cause = error.getCause();
-        if (cause != null && cause instanceof BError causeErr) {
-            String causeMsg = causeErr.getMessage().toLowerCase(Locale.ROOT);
-            return causeMsg.contains("model_not_found") || causeMsg.contains("not supported");
+        BError cause = error.getCause();
+        if (cause != null) {
+            String causeMsg = cause.getMessage().toLowerCase(Locale.ROOT);
+            return causeMsg.contains("model_not_found");
         }
         return false;
     }

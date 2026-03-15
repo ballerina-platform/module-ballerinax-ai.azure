@@ -21,13 +21,20 @@ import ballerinax/azure.openai.embeddings;
 service /llm on new http:Listener(8080) {
     // Chat Completions API mock endpoint
     resource function post azureopenai/v1/chat/completions(
-            string api\-version, @http:Payload json payload)
+            string? api\-version, @http:Payload json payload)
                 returns json|error {
         test:assertEquals(api\-version, ());
         json[] messages = check (check payload.messages).ensureType();
         json message = messages[0];
 
-        json[]? content = check (check message.content).ensureType();
+        json contentJson = check message.content;
+
+        // Handle string content (used in chat() → Chat Completions fallback path)
+        if contentJson is string {
+            return getChatCompletionsFallbackToolCallResponse(contentJson);
+        }
+
+        json[]? content = check contentJson.ensureType();
         if content is () {
             test:assertFail("Expected content in the payload");
         }
@@ -55,7 +62,7 @@ service /llm on new http:Listener(8080) {
 
     // Responses API mock endpoint
     resource function post azureopenai/v1/responses(string api\-version, @http:Payload json payload)
-            returns json|error {
+            returns json|http:NotFound|error {
         // Extract the initial text content from the input items
         json[] inputItems = check (check payload.input).ensureType();
         if inputItems.length() == 0 {
@@ -81,6 +88,18 @@ service /llm on new http:Listener(8080) {
                     }
                 }
             }
+        }
+
+        // Simulate model_not_found error for fallback tests
+        if initialText.startsWith("Fallback test") {
+            return <http:NotFound>{
+                body: {
+                    "error": {
+                        "code": "model_not_found",
+                        "message": "The model gpt4onew does not support the Responses API"
+                    }
+                }
+            };
         }
 
         // Check if tools are provided and classify them
@@ -221,6 +240,35 @@ isolated function getTestResponsesApiChatResponse(string content) returns json {
             input_tokens_details: {cached_tokens: 0},
             output_tokens_details: {reasoning_tokens: 0}
         }
+    };
+}
+
+// Builds a Chat Completions response for the Responses→Chat Completions fallback path
+isolated function getChatCompletionsFallbackToolCallResponse(string content) returns json {
+    return {
+        id: "fallback-test-id",
+        'object: "chat.completion",
+        created: 1234567890,
+        model: "gpt-4o",
+        choices: [
+            {
+                finish_reason: "tool_calls",
+                index: 0,
+                message: {
+                    role: "assistant",
+                    tool_calls: [
+                        {
+                            id: "call_fallback_weather",
+                            'type: "function",
+                            'function: {
+                                name: "get_weather",
+                                arguments: "{\"city\": \"Paris\"}"
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
     };
 }
 
