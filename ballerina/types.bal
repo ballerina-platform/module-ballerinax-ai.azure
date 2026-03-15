@@ -107,7 +107,7 @@ public type CodeInterpreterTool record {|
 public type WebsearchTool record {|
     *ai:BuiltInTool;
     # Tool identifier. Use `"web_search"` (default) or `"web_search_2025_08_26"` for an older version.
-    "web_search"|"web_search_2025_08_26" name;
+    "web_search_preview" name;
     # Web search configurations
     record {|
         # Domain filters for narrowing search results

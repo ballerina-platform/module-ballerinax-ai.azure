@@ -26,8 +26,7 @@ import ballerinax/azure.openai.responses as responses;
 # + messages - List of chat messages or a single user message
 # + tools - Tool definitions (used for ReAct prompt construction on unsupported models)
 # + return - A tuple of [input items, optional instructions] or an error
-isolated function convertToResponsesInput(ai:ChatMessage[]|ai:ChatUserMessage messages,
-        ai:ChatCompletionFunctions[] tools)
+isolated function convertToResponsesInput(ai:ChatMessage[]|ai:ChatUserMessage messages)
         returns [responses:OpenAI\.InputParam, string?]|ai:Error {
     if messages is ai:ChatUserMessage {
         responses:OpenAI\.InputItem item = {
@@ -134,7 +133,7 @@ isolated function convertBuiltInToolsToResponsesFormat(ai:BuiltInTool[] tools) r
         }
         responses:OpenAI\.Tool|error converted = toolMap.cloneWithType();
         if converted is error {
-            return error ai:Error("Failed to convert built-in tool '" + tool.name + "' to Responses API format. " + "Found " + toolMap.toJsonString(), converted);
+            return error ai:Error("Failed to convert built-in tool '" + tool.name + "' to Responses API format. " + "Found " + toolMap.toString(), converted);
         }
         result.push(converted);
     }
@@ -276,6 +275,15 @@ isolated function generateLlmResponseViaResponses(responses:Client responsesClie
         ai:Error err = error("Failed to create tool choice: " + toolChoice.message());
         span.close(err);
         return err;
+    }
+
+    // Audio input is not supported in the Responses API
+    foreach DocumentContentPart part in content {
+        if part is AudioContentPart {
+            ai:Error err = error("Audio input is not supported in the Responses API.");
+            span.close(err);
+            return err;
+        }
     }
 
     // Convert content parts to Responses API format

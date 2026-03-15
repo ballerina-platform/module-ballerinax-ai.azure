@@ -193,9 +193,17 @@ public isolated client class OpenAiModelProvider {
         }
         span.addInputMessages(jsonMsg);
 
+        chat:OpenAI\.ChatCompletionRequestMessage[]|ai:Error completionMessages 
+                = self.prepareCompletionRequestMessages(messages);
+         if completionMessages is ai:Error {
+             ai:Error err = error("Error while preparing completion request messages", completionMessages);
+             span.close(err);
+             return err;
+         }
+
         chat:chat_completions_body request = {
             stop,
-            messages: check self.prepareCompletionRequestMessages(messages),
+            messages: completionMessages,
             model: self.deploymentId,
             temperature: self.temperature,
             max_completion_tokens: self.maxTokens
@@ -306,7 +314,7 @@ public isolated client class OpenAiModelProvider {
 
         // Convert messages to Responses API input format
         [responses:OpenAI\.InputParam, string?]|ai:Error responseInput 
-            = convertToResponsesInput(messages, functionToolDefs);
+            = convertToResponsesInput(messages);
         if responseInput is ai:Error {
             ai:Error err = error("Error while transforming input for Responses API", responseInput);
             span.close(err);
@@ -335,7 +343,9 @@ public isolated client class OpenAiModelProvider {
         if functionToolDefs.length() > 0 {
             responses:OpenAI\.Tool[]|error functionTools = convertToResponsesTools(functionToolDefs);
             if functionTools is error {
-                return error("Error while adding tools into Responses API", cause = functionTools);
+                ai:Error err = error("Error while adding tools into Responses API", functionTools);
+                 span.close(err);
+                 return err;
             }
 
             foreach responses:OpenAI\.Tool ft in functionTools {
@@ -343,7 +353,12 @@ public isolated client class OpenAiModelProvider {
             }
         }
         if builtInToolDefs.length() > 0 {
-            responses:OpenAI\.Tool[] convertedBuiltInTools = check convertBuiltInToolsToResponsesFormat(builtInToolDefs);
+            responses:OpenAI\.Tool[]|ai:Error convertedBuiltInTools = convertBuiltInToolsToResponsesFormat(builtInToolDefs);
+            if convertedBuiltInTools is ai:Error {
+                span.close(convertedBuiltInTools);
+                return error("Error while adding built-in tools into Responses API", cause = convertedBuiltInTools);
+            }
+
             foreach responses:OpenAI\.Tool t in convertedBuiltInTools {
                 allTools.push(t);
             }
