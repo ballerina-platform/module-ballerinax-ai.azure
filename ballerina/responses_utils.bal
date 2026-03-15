@@ -231,11 +231,14 @@ isolated function convertContentPartsForResponses(DocumentContentPart[] parts) r
 # + responsesClient - The chat client for the Responses API
 # + deploymentId - The Azure deployment ID (used as model name)
 # + apiVersion - The Azure API version
+# + temperature - The sampling temperature for the response 
+# + maxTokens - The maximum number of tokens to generate in the response
 # + prompt - The user prompt
 # + expectedResponseTypedesc - The expected response type descriptor
 # + return - The parsed response or an error
 isolated function generateLlmResponseViaResponses(responses:Client responsesClient, string deploymentId,
-        responses:AzureAIFoundryModelsApiVersion? apiVersion, ai:Prompt prompt, typedesc<json> expectedResponseTypedesc)
+        responses:AzureAIFoundryModelsApiVersion? apiVersion, decimal? temperature, int maxTokens, 
+        ai:Prompt prompt, typedesc<json> expectedResponseTypedesc)
         returns anydata|ai:Error {
     observe:GenerateContentSpan span = observe:createGenerateContentSpan(deploymentId);
     span.addProvider("azure.ai.openai");
@@ -289,7 +292,9 @@ isolated function generateLlmResponseViaResponses(responses:Client responsesClie
         model: deploymentId,
         input: inputMessage,
         tools: [getResultsTool],
-        tool_choice: toolChoice
+        tool_choice: toolChoice,
+        temperature: temperature,
+        max_output_tokens: maxTokens
     };
 
     span.addInputMessages([inputMessage].toJson());

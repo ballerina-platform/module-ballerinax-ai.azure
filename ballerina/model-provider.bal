@@ -195,7 +195,7 @@ public isolated client class OpenAiModelProvider {
 
         chat:chat_completions_body request = {
             stop,
-            messages: check self.prepareCompletionRequestMessages(messages, tools),
+            messages: check self.prepareCompletionRequestMessages(messages),
             model: self.deploymentId,
             temperature: self.temperature,
             max_completion_tokens: self.maxTokens
@@ -249,6 +249,7 @@ public isolated client class OpenAiModelProvider {
             return error ai:LlmInvalidResponseError("Error while parsing the model response", chatAssistantMessage);
         }
         if chatAssistantMessage.toolCalls is ai:FunctionCall[] {
+            span.close();
             return chatAssistantMessage;
         }
         
@@ -296,14 +297,23 @@ public isolated client class OpenAiModelProvider {
             }
         }
         if unsupportedBuiltInTools.length() > 0 {
-            return error ai:Error(
+            ai:Error unsupportedToolsError = error(
                 string `Built-in tools [${string:'join(", ", ...unsupportedBuiltInTools)}] are not currently supported. ` +
                 "Only 'web_search', 'code_interpreter' tools are supported.");
+            span.close(unsupportedToolsError);
+            return unsupportedToolsError;
         }
 
         // Convert messages to Responses API input format
-        [responses:OpenAI\.InputParam, string?] [inputItems, instructions] = check convertToResponsesInput(messages, functionToolDefs);
+        [responses:OpenAI\.InputParam, string?]|ai:Error responseInput 
+            = convertToResponsesInput(messages, functionToolDefs);
+        if responseInput is ai:Error {
+            ai:Error err = error("Error while transforming input for Responses API", responseInput);
+            span.close(err);
+            return err;
+        }
 
+        [responses:OpenAI\.InputParam, string?] [inputItems, instructions] = responseInput;
         responses:OpenAI\.CreateResponse request = {
             model: self.deploymentId,
             input: inputItems,
@@ -423,21 +433,21 @@ public isolated client class OpenAiModelProvider {
 
     private isolated function isModelNotSupportedError(ai:Error err) returns boolean {
         string message = err.message().toLowerAscii();
-        if message.includes("model_not_found") || message.includes("not supported") {
+        if message.includes("model_not_found") {
             return true;
         }
         error? cause = err.cause();
         if cause is error {
             string causeMsg = cause.message().toLowerAscii();
-            return causeMsg.includes("model_not_found") || causeMsg.includes("not supported");
+            return causeMsg.includes("model_not_found");
         }
         return false;
     }
 
     // ===== Chat Completions helper methods =====
 
-    private isolated function prepareCompletionRequestMessages(ai:ChatMessage[]|ai:ChatUserMessage messages,
-            ai:ChatCompletionFunctions[] tools) returns chat:OpenAI\.ChatCompletionRequestMessage[]|ai:Error {
+    private isolated function prepareCompletionRequestMessages(ai:ChatMessage[]|ai:ChatUserMessage messages) 
+            returns chat:OpenAI\.ChatCompletionRequestMessage[]|ai:Error {
         chat:OpenAI\.ChatCompletionRequestMessage[] chatCompletionRequestMessages = [];
         if messages is ai:ChatUserMessage {
             chatCompletionRequestMessages.push(check self.mapToAzureChatMessage(messages));
