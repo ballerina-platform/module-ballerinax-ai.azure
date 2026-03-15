@@ -20,24 +20,70 @@ package io.ballerina.lib.ai.azure;
 import io.ballerina.runtime.api.Environment;
 import io.ballerina.runtime.api.Module;
 import io.ballerina.runtime.api.utils.StringUtils;
+import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BObject;
 import io.ballerina.runtime.api.values.BTypedesc;
 
+import java.util.Locale;
+
 /**
  * This class provides the native function to generate a response from an Azure AI model.
+ * Tries the Responses API first; falls back to Chat Completions if the model is not supported.
  *
  * @since 1.0.0
  */
 public class Generator {
+    private static final Module MODULE = new Module("ballerinax", "ai.azure", "1");
+
     public static Object generate(Environment env, BObject modelProvider,
                                   BObject prompt, BTypedesc expectedResponseTypedesc) {
+        boolean responsesUnsupported = modelProvider.getBooleanValue(
+                StringUtils.fromString("responsesApiUnsupported"));
+
+        if (!responsesUnsupported) {
+            Object result = env.getRuntime().callFunction(
+                    MODULE, "generateLlmResponseViaResponses", null,
+                    modelProvider.get(StringUtils.fromString("responsesClient")),
+                    modelProvider.get(StringUtils.fromString("deploymentId")),
+                    modelProvider.get(StringUtils.fromString("apiVersion")),
+                modelProvider.get(StringUtils.fromString("temperature")),
+                modelProvider.get(StringUtils.fromString("maxTokens")),
+                    prompt, expectedResponseTypedesc);
+
+            if (result instanceof BError) {
+                BError error = (BError) result;
+                if (isModelNotSupportedError(error)) {
+                    modelProvider.set(StringUtils.fromString("responsesApiUnsupported"), true);
+                    // Fall through to Chat Completions
+                } else {
+                    return result;
+                }
+            } else {
+                return result;
+            }
+        }
+
+        // Fallback: Chat Completions
         return env.getRuntime().callFunction(
-                new Module("ballerinax", "ai.azure", "1"), "generateLlmResponse", null,
-                modelProvider.get(StringUtils.fromString("llmClient")), 
-                modelProvider.get(StringUtils.fromString("deploymentId")), 
+                MODULE, "generateLlmResponse", null,
+                modelProvider.get(StringUtils.fromString("llmClient")),
+                modelProvider.get(StringUtils.fromString("deploymentId")),
                 modelProvider.get(StringUtils.fromString("apiVersion")),
-                modelProvider.get(StringUtils.fromString("temperature")), 
+                modelProvider.get(StringUtils.fromString("temperature")),
                 modelProvider.get(StringUtils.fromString("maxTokens")),
                 prompt, expectedResponseTypedesc);
+    }
+
+    private static boolean isModelNotSupportedError(BError error) {
+        String message = error.getMessage().toString().toLowerCase(Locale.ROOT);
+        if (message.contains("model_not_found")) {
+            return true;
+        }
+        BError cause = error.getCause();
+        if (cause != null) {
+            String causeMsg = cause.getMessage().toString().toLowerCase(Locale.ROOT);
+            return causeMsg.contains("model_not_found");
+        }
+        return false;
     }
 }

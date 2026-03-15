@@ -19,12 +19,13 @@ import ballerina/test;
 
 const SERVICE_URL = "http://localhost:8080/llm/azureopenai";
 const DEPLOYMENT_ID = "gpt4onew";
-const API_VERSION = "2023-08-01-preview";
+const API_VERSION = "v1";
 const API_KEY = "not-a-real-api-key";
 const ERROR_MESSAGE = "Error occurred while attempting to parse the response from the LLM as the expected type. Retrying and/or validating the prompt could fix the response.";
 const RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE = "Runtime schema generation is not yet supported";
 
 final OpenAiModelProvider openAiProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
+final OpenAiModelProvider responsesProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
 
 string apiKey = "mock-api-key";
 string serviceUrl = "http://localhost:8080/llm";
@@ -56,6 +57,64 @@ function testBatchEmbeddings() returns error? {
         float[] vectors = check result.cloneWithType();
         test:assertEquals(vectors.length(), 1536);
     }
+}
+
+// ===== Responses → Chat Completions fallback tests =====
+
+@test:Config {}
+function testResponsesFallbackToChatCompletionsOnModelNotSupported() returns ai:Error? {
+    // Create a fresh provider so responsesApiUnsupported starts as false
+    OpenAiModelProvider fallbackProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
+
+    ai:ChatUserMessage userMsg = {role: "user", content: "Fallback test: What is the weather in Paris?"};
+    ai:ChatCompletionFunctions[] tools = [
+        {
+            name: "get_weather",
+            description: "Get the weather for a city",
+            parameters: {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"}
+                },
+                "required": ["city"]
+            }
+        }
+    ];
+
+    // First call: should try Responses API, get model_not_found error, then fall back to Chat Completions
+    ai:ChatAssistantMessage result = check fallbackProvider->chat(userMsg, tools);
+    ai:FunctionCall[]? toolCalls = result.toolCalls;
+    test:assertTrue(toolCalls is ai:FunctionCall[]);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls).length(), 1);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "Paris"});
+
+    // Second call: responsesApiUnsupported should now be true, so it should go directly to Chat Completions
+    // without hitting the Responses API at all
+    ai:ChatUserMessage userMsg2 = {role: "user", content: "Fallback test: What is the weather in London?"};
+    ai:ChatAssistantMessage result2 = check fallbackProvider->chat(userMsg2, tools);
+    ai:FunctionCall[]? toolCalls2 = result2.toolCalls;
+    test:assertTrue(toolCalls2 is ai:FunctionCall[]);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls2)[0].name, "get_weather");
+}
+
+@test:Config {}
+function testResponsesFallbackWithBuiltInToolsReturnsError() returns ai:Error? {
+    // Create a fresh provider so responsesApiUnsupported starts as false
+    OpenAiModelProvider fallbackProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
+
+    ai:ChatUserMessage userMsg = {role: "user", content: "Fallback test: Search the web"};
+    WebsearchTool webSearchTool = {
+        name: "web_search_preview",
+        configurations: {search_context_size: "medium"}
+    };
+
+    // Built-in tools should fail when falling back to Chat Completions since they are not supported
+    ai:ChatAssistantMessage|ai:Error result = fallbackProvider->chat(userMsg, [webSearchTool]);
+    test:assertTrue(result is ai:Error);
+    string errorMsg = (<ai:Error>result).message();
+    test:assertTrue(errorMsg.includes("Built-in tools [web_search] are not supported"),
+            string `expected built-in tool fallback error, found: ${errorMsg}`);
 }
 
 @test:Config
@@ -367,3 +426,168 @@ function testGenerateMethodWithArrayUnionRecord2() returns ai:Error? {
    Cricketers7[]|Cricketers8|error result = openAiProvider->generate(`Name a random world class cricketer`);
     test:assertTrue(result is Cricketers8);
 }
+
+// ===== Responses API: generate() tests =====
+
+@test:Config
+function testResponsesGenerateMethodWithBasicReturnType() returns ai:Error? {
+    int|error rating = responsesProvider->generate(`Rate this blog out of 10.
+        Title: ${blog1.title}
+        Content: ${blog1.content}`);
+    test:assertEquals(rating, 4);
+}
+
+@test:Config
+function testResponsesGenerateMethodWithBasicArrayReturnType() returns ai:Error? {
+    int[]|error rating = responsesProvider->generate(`Evaluate this blogs out of 10.
+        Title: ${blog1.title}
+        Content: ${blog1.content}
+
+        Title: ${blog1.title}
+        Content: ${blog1.content}`);
+    test:assertEquals(rating, [9, 1]);
+}
+
+@test:Config
+function testResponsesGenerateMethodWithRecordReturnType() returns error? {
+    Review|error result = responsesProvider->generate(`Please rate this blog out of ${"10"}.
+        Title: ${blog2.title}
+        Content: ${blog2.content}`);
+    test:assertEquals(result, check review.fromJsonStringWithType(Review));
+}
+
+@test:Config
+function testResponsesGenerateMethodWithTextDocument() returns ai:Error? {
+    ai:TextDocument blog = {
+        content: string `Title: ${blog1.title} Content: ${blog1.content}`
+    };
+    int maxScore = 10;
+
+    int|error rating = responsesProvider->generate(`How would you rate this ${"blog"} content out of ${maxScore}. ${blog}.`);
+    test:assertEquals(rating, 4);
+}
+
+@test:Config
+function testResponsesGenerateMethodWithImageDocumentWithUrl() returns ai:Error? {
+    ai:ImageDocument img = {
+        content: "https://example.com/image.jpg",
+        metadata: {
+            mimeType: "image/jpg"
+        }
+    };
+
+    string|error description = responsesProvider->generate(`Describe the image. ${img}.`);
+    test:assertEquals(description, "This is a sample image description.");
+}
+
+@test:Config
+function testResponsesGenerateMethodWithRecordArrayReturnType() returns error? {
+    int maxScore = 10;
+    Review r = check review.fromJsonStringWithType(Review);
+
+    ReviewArray|error result = responsesProvider->generate(`Please rate this blogs out of ${maxScore}.
+        [{Title: ${blog1.title}, Content: ${blog1.content}}, {Title: ${blog2.title}, Content: ${blog2.content}}]`);
+    test:assertEquals(result, [r, r]);
+}
+
+@test:Config
+function testResponsesGenerateMethodWithStringUnionNull() returns error? {
+    string? result = check responsesProvider->generate(`Give me a random joke`);
+    test:assertTrue(result is string);
+}
+
+// ===== Responses API: chat() tests =====
+
+@test:Config
+function testResponsesChatWithSimpleMessage() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
+    ai:ChatAssistantMessage result = check responsesProvider->chat(userMsg, []);
+    test:assertTrue(result.content is string);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+@test:Config
+function testResponsesChatWithMessageArray() returns ai:Error? {
+    ai:ChatMessage[] messages = [
+        <ai:ChatSystemMessage>{role: "system", content: "You are a helpful assistant."},
+        <ai:ChatUserMessage>{role: "user", content: "Hello, how are you?"}
+    ];
+    ai:ChatAssistantMessage result = check responsesProvider->chat(messages, []);
+    test:assertTrue(result.content is string);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+@test:Config
+function testResponsesChatWithTools() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "What is the weather in London?"};
+    ai:ChatCompletionFunctions[] tools = [
+        {
+            name: "get_weather",
+            description: "Get the weather for a city",
+            parameters: {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"}
+                },
+                "required": ["city"]
+            }
+        }
+    ];
+    ai:ChatAssistantMessage result = check responsesProvider->chat(userMsg, tools);
+    ai:FunctionCall[]? toolCalls = result.toolCalls;
+    test:assertTrue(toolCalls is ai:FunctionCall[]);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls).length(), 1);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "London"});
+}
+
+// ===== Built-in tool tests =====
+
+@test:Config
+function testResponsesChatWithBuiltInTools() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "Search the web for latest news"};
+    WebsearchTool webSearchTool = {
+        name: "web_search_preview",
+        configurations: {search_context_size: "medium"}
+    };
+    ai:ChatAssistantMessage result = check responsesProvider->chat(userMsg, [webSearchTool]);
+    test:assertTrue(result.content is string);
+}
+
+@test:Config
+function testResponsesChatWithBuiltInAndFunctionTools() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "What is the weather?"};
+    WebsearchTool webSearchTool = {
+        name: "web_search_preview",
+        configurations: {search_context_size: "medium"}
+    };
+    ai:ChatCompletionFunctions functionTool = {
+        name: "get_weather",
+        description: "Get the weather for a city",
+        parameters: {
+            "type": "object",
+            "properties": {
+                "city": {"type": "string"}
+            },
+            "required": ["city"]
+        }
+    };
+    ai:ChatAssistantMessage result = check responsesProvider->chat(userMsg, [webSearchTool, functionTool]);
+    // When both built-in and function tools are present, the mock returns a tool call response
+    ai:FunctionCall[]? toolCalls = result.toolCalls;
+    test:assertTrue(toolCalls is ai:FunctionCall[]);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls).length(), 1);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
+}
+
+@test:Config
+function testResponsesChatWithUnsupportedBuiltInTool() returns error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "Use an unsupported tool"};
+    ai:BuiltInTool unsupportedTool = {name: "unsupported_tool"};
+    ai:ChatAssistantMessage|ai:Error result = responsesProvider->chat(userMsg, [unsupportedTool]);
+    test:assertTrue(result is ai:Error);
+    string errorMsg = (<ai:Error>result).message();
+    test:assertTrue(errorMsg.includes("Built-in tools [unsupported_tool] are not currently supported"),
+            string `expected unsupported built-in tool error, found: ${errorMsg}`);
+}
+

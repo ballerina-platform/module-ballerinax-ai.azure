@@ -18,7 +18,7 @@ import ballerina/ai;
 import ballerina/ai.observe;
 import ballerina/constraint;
 import ballerina/lang.array;
-import ballerinax/azure.openai.chat;
+import ballerinax/azure.openai.chat as chat;
 
 type ResponseSchema record {|
     map<json> schema;
@@ -99,20 +99,20 @@ isolated function getExpectedResponseSchema(typedesc<anydata> expectedResponseTy
     return generateJsonObjectSchema(check generateJsonSchemaForTypedescAsJson(td));
 }
 
-isolated function getGetResultsToolChoice() returns chat:ChatCompletionNamedToolChoice => {
+isolated function getGetResultsToolChoice() returns chat:OpenAI\.ChatCompletionNamedToolChoice => {
     'type: FUNCTION,
     'function: {
         name: GET_RESULTS_TOOL
     }
 };
 
-isolated function getGetResultsTool(map<json> parameters) returns chat:ChatCompletionTool[]|ai:Error {
-    chat:ChatCompletionFunctionParameters|error toolParam = parameters.ensureType();
+isolated function getGetResultsTool(map<json> parameters) returns chat:OpenAI\.ChatCompletionTool[]|ai:Error {
+    map<json>|error toolParam = parameters.ensureType();
     if toolParam is error {
         return error("Error in generated schema: " + toolParam.message());
     }
     return [
-        {
+        <chat:OpenAI\.ChatCompletionTool>{
             'type: FUNCTION,
             'function: {
                 name: GET_RESULTS_TOOL,
@@ -238,15 +238,18 @@ isolated function handleParseResponseError(error chatResponseError) returns erro
 }
 
 isolated function generateLlmResponse(chat:Client llmClient, string deploymentId,
-        string apiVersion, decimal temperature, int maxTokens, ai:Prompt prompt,
+        chat:AzureAIFoundryModelsApiVersion? apiVersion, decimal? temperature, int maxTokens, ai:Prompt prompt,
         typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
     observe:GenerateContentSpan span = observe:createGenerateContentSpan(deploymentId);
-    span.addTemperature(temperature);
+    decimal? temp = temperature;
+    if temp is decimal {
+        span.addTemperature(temp);
+    }
     span.addProvider("azure.ai.openai");
-    
+
     DocumentContentPart[] content;
     ResponseSchema responseSchema;
-    chat:ChatCompletionTool[] tools;
+    chat:OpenAI\.ChatCompletionTool[] tools;
     do {
         content = check generateChatCreationContent(prompt);
         responseSchema = check getExpectedResponseSchema(expectedResponseTypedesc);
@@ -256,39 +259,37 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
         return err;
     }
 
-    chat:CreateChatCompletionRequest request = {
+    chat:chat_completions_body request = {
         messages: [
-            {
+            <chat:OpenAI\.ChatCompletionRequestMessage>{
                 role: ai:USER,
                 "content": content
             }
         ],
+        model: deploymentId,
         tools,
         temperature,
-        max_tokens: maxTokens,
+        max_completion_tokens: maxTokens,
         tool_choice: getGetResultsToolChoice()
     };
     span.addInputMessages(request.messages.toJson());
 
-    chat:CreateChatCompletionResponse|error response =
-        llmClient->/deployments/[deploymentId]/chat/completions.post(apiVersion, request);
+    chat:inline_response_200|error response =
+        llmClient->/chat/completions.post(request, queries = {api\-version: apiVersion});
     if response is error {
         ai:Error err = error("LLM call failed: " + response.message(), cause = response.cause(), detail = response.detail());
         span.close(err);
         return err;
     }
 
-    string? responseId = response.id;
+    string? responseId = response is record {|string id; anydata...;|} ? response.id : ();
     if responseId is string {
         span.addResponseId(responseId);
     }
-    int? inputTokens = response.usage?.prompt_tokens;
-    if inputTokens is int {
-        span.addInputTokenCount(inputTokens);
-    }
-    int? outputTokens = response.usage?.completion_tokens;
-    if outputTokens is int {
-        span.addOutputTokenCount(outputTokens);
+    anydata usage = response is record {|anydata usage; anydata...;|} ? response.usage : ();
+    if usage is record {|int prompt_tokens; int completion_tokens; anydata...;|} {
+        span.addInputTokenCount(usage.prompt_tokens);
+        span.addOutputTokenCount(usage.completion_tokens);
     }
 
     anydata|ai:Error result = ensureAnydataResult(response, expectedResponseTypedesc,
@@ -303,22 +304,19 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
     return result;
 }
 
-isolated function ensureAnydataResult(chat:CreateChatCompletionResponse response,
+isolated function ensureAnydataResult(chat:inline_response_200 response,
         typedesc<json> expectedResponseTypedesc, boolean isOriginallyJsonObject,
         observe:GenerateContentSpan span) returns anydata|ai:Error {
-    record {
-        chat:ChatCompletionResponseMessage message?;
-        chat:ContentFilterChoiceResults content_filter_results?;
-        int index?;
-        string finish_reason?;
-    }[]? choices = response.choices;
 
-    if choices is () || choices.length() == 0 {
+    chat:OpenAI\.CreateChatCompletionResponseChoices[] choices =
+        let var r = response in r is record {|chat:OpenAI\.CreateChatCompletionResponseChoices[] choices; anydata...;|} ? r.choices : [];
+
+    if choices.length() == 0 {
         return error("No completion choices");
     }
 
-    chat:ChatCompletionResponseMessage? message = choices[0].message;
-    chat:ChatCompletionMessageToolCall[]? toolCalls = message?.tool_calls;
+    chat:OpenAI\.ChatCompletionResponseMessage? message = choices[0].message;
+    chat:OpenAI\.ChatCompletionMessageToolCallsItem? toolCalls = message?.tool_calls;
     if toolCalls is () || toolCalls.length() == 0 {
         return error(NO_RELEVANT_RESPONSE_FROM_THE_LLM);
     }
@@ -327,8 +325,12 @@ isolated function ensureAnydataResult(chat:CreateChatCompletionResponse response
         span.addFinishReason(finishReason);
     }
 
-    chat:ChatCompletionMessageToolCall tool = toolCalls[0];
-    map<json>|error arguments = tool.'function.arguments.fromJsonStringWithType();
+    chat:OpenAI\.ChatCompletionMessageToolCall|chat:OpenAI\.ChatCompletionMessageCustomToolCall tool = toolCalls[0];
+    if tool is chat:OpenAI\.ChatCompletionMessageCustomToolCall {
+        return error("Custom tools are not supported yet, Found tool call: " + tool.toJsonString());
+    }
+
+    map<json>|error arguments = (<chat:OpenAI\.ChatCompletionMessageToolCall>tool).'function.arguments.fromJsonStringWithType();
     if arguments is error {
         return error(NO_RELEVANT_RESPONSE_FROM_THE_LLM);
     }

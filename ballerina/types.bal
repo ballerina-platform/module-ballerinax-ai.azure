@@ -87,3 +87,38 @@ type AzureChatSystemMessage record {|
     *ai:ChatSystemMessage;
     string content;
 |};
+
+# Code interpreter tool for Azure OpenAI models.
+# Allows the model to execute code in a sandboxed environment during a conversation.
+# Ref: https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/code-interpreter
+public type CodeInterpreterTool record {|
+    *ai:BuiltInTool;
+    # Tool identifier. Always `"code_interpreter"`.
+    "code_interpreter" name;
+    # Code interpreter configurations
+    record {|
+        # The container to run the code in. Either a string container ID or an auto-provisioned container configuration.
+        anydata container;
+    |} configurations;
+|};
+
+# Web search tool for Azure OpenAI models.
+# Enables the model to search the web for real-time information during a conversation.
+public type WebsearchTool record {|
+    *ai:BuiltInTool;
+    # Tool identifier. Use `web_search_preview`.
+    "web_search_preview" name;
+    # Web search configurations
+    record {|
+        # Domain filters for narrowing search results
+        anydata filters?;
+        # Approximate user location for localizing search results
+        anydata user_location?;
+        # High level guidance for the amount of context window space to use for the search.
+        # One of `low`, `medium`, or `high`. Defaults to `medium`.
+        "low"|"medium"|"high" search_context_size = "medium";
+    |} configurations;
+|};
+
+# Union type representing all built-in tools supported by the Azure OpenAI provider.
+type AzureBuiltInTool CodeInterpreterTool|WebsearchTool;

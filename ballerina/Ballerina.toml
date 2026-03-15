@@ -1,13 +1,13 @@
 [package]
 authors = ["Ballerina"]
-distribution = "2201.12.0"
+distribution = "2201.13.0"
 keywords = ["Agent", "Azure", "Model", "Provider", "Vendor/Microsoft", "Area/AI", "Type/Connector"]
 license = ["Apache-2.0"]
 icon="icon.png"
 name = "ai.azure"
 org = "ballerinax"
 repository = "https://github.com/ballerina-platform/module-ballerinax-ai.azure"
-version = "1.4.1"
+version = "1.5.0"
 
 [platform.java21]
 graalvmCompatible = true

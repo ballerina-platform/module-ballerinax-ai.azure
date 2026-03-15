@@ -14,8 +14,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import ballerinax/azure.openai.chat;
-
 isolated function getExpectedParameterSchema(string message) returns map<json> {
     if message.startsWith("Evaluate this") {
         return expectedParameterSchemaStringForRateBlog6;
@@ -257,7 +255,7 @@ isolated function getTheMockLLMResult(string message) returns string {
     return "INVALID";
 }
 
-isolated function getTestServiceResponse(string content) returns chat:CreateChatCompletionResponse =>
+isolated function getTestServiceResponse(string content) returns json =>
     {
     id: "test-id",
     'object: "chat.completion",
@@ -265,7 +263,10 @@ isolated function getTestServiceResponse(string content) returns chat:CreateChat
     model: "gpt-4o",
     choices: [
         {
+            finish_reason: "tool_calls",
+            index: 0,
             message: {
+                role: "assistant",
                 tool_calls: [
                     {
                         id: "tool-call-id",
