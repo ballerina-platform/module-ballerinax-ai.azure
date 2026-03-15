@@ -105,7 +105,7 @@ function testResponsesFallbackWithBuiltInToolsReturnsError() returns ai:Error? {
 
     ai:ChatUserMessage userMsg = {role: "user", content: "Fallback test: Search the web"};
     WebsearchTool webSearchTool = {
-        name: "web_search",
+        name: "web_search_preview",
         configurations: {search_context_size: "medium"}
     };
 
@@ -547,7 +547,7 @@ function testResponsesChatWithTools() returns ai:Error? {
 function testResponsesChatWithBuiltInTools() returns ai:Error? {
     ai:ChatUserMessage userMsg = {role: "user", content: "Search the web for latest news"};
     WebsearchTool webSearchTool = {
-        name: "web_search",
+        name: "web_search_preview",
         configurations: {search_context_size: "medium"}
     };
     ai:ChatAssistantMessage result = check responsesProvider->chat(userMsg, [webSearchTool]);
@@ -558,7 +558,7 @@ function testResponsesChatWithBuiltInTools() returns ai:Error? {
 function testResponsesChatWithBuiltInAndFunctionTools() returns ai:Error? {
     ai:ChatUserMessage userMsg = {role: "user", content: "What is the weather?"};
     WebsearchTool webSearchTool = {
-        name: "web_search",
+        name: "web_search_preview",
         configurations: {search_context_size: "medium"}
     };
     ai:ChatCompletionFunctions functionTool = {
