@@ -75,13 +75,13 @@ public class Generator {
     }
 
     private static boolean isModelNotSupportedError(BError error) {
-        String message = error.getMessage().toLowerCase(Locale.ROOT);
+        String message = error.getMessage().toString().toLowerCase(Locale.ROOT);
         if (message.contains("model_not_found")) {
             return true;
         }
         BError cause = error.getCause();
         if (cause != null) {
-            String causeMsg = cause.getMessage().toLowerCase(Locale.ROOT);
+            String causeMsg = cause.getMessage().toString().toLowerCase(Locale.ROOT);
             return causeMsg.contains("model_not_found");
         }
         return false;
