@@ -162,7 +162,7 @@ public isolated client class OpenAiModelProvider {
             span.close();
             return chatAssistantMessage;
         }
-        ai:FunctionCall|ai:Error toolCall = check self.mapToFunctionCall(functionCall);
+        ai:FunctionCall|ai:Error toolCall = self.mapToFunctionCall(functionCall);
         if toolCall is ai:Error {
             span.close(toolCall);
             return toolCall;
