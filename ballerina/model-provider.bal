@@ -168,6 +168,8 @@ public isolated client class OpenAiModelProvider {
             return toolCall;
         }
         chatAssistantMessage.toolCalls = [toolCall];
+        span.addOutputMessages(chatAssistantMessage);
+        span.close();
         return chatAssistantMessage;
     }
 
