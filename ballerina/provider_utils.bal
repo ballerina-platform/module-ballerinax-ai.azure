@@ -137,14 +137,14 @@ isolated function generateChatCreationContent(ai:Prompt prompt) returns Document
         anydata insertion = insertions[i];
         string str = strings[i + 1];
 
-        if insertion is ai:Document {
+        if insertion is ai:Document|ai:Chunk {
             addTextContentPart(buildTextContentPart(accumulatedTextContent), contentParts);
             accumulatedTextContent = "";
             check addDocumentContentPart(insertion, contentParts);
-        } else if insertion is ai:Document[] {
+        } else if insertion is (ai:Document|ai:Chunk)[] {
             addTextContentPart(buildTextContentPart(accumulatedTextContent), contentParts);
             accumulatedTextContent = "";
-            foreach ai:Document doc in insertion {
+            foreach ai:Document|ai:Chunk doc in insertion {
                 check addDocumentContentPart(doc, contentParts);
             }
         } else {
@@ -157,15 +157,15 @@ isolated function generateChatCreationContent(ai:Prompt prompt) returns Document
     return contentParts;
 }
 
-isolated function addDocumentContentPart(ai:Document doc, DocumentContentPart[] contentParts) returns ai:Error? {
-    if doc is ai:TextDocument {
+isolated function addDocumentContentPart(ai:Document|ai:Chunk doc, DocumentContentPart[] contentParts) returns ai:Error? {
+    if doc is ai:TextDocument|ai:TextChunk {
         return addTextContentPart(buildTextContentPart(doc.content), contentParts);
     } else if doc is ai:ImageDocument {
         return contentParts.push(check buildImageContentPart(doc));
     } else if doc is ai:AudioDocument {
         return contentParts.push(check buildAudioContentPart(doc));
     }
-    return error ai:Error("Only text, image and audio documents are supported.");
+    return error("Only text, image and audio documents are supported.");
 }
 
 isolated function addTextContentPart(TextContentPart? contentPart, DocumentContentPart[] contentParts) {

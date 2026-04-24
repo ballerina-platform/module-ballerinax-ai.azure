@@ -19,6 +19,7 @@ import ballerina/ai.observe;
 import ballerinax/azure.openai.embeddings;
 
 # EmbeddingProvider provides an interface for interacting with Azure OpenAI Embedding Models.
+@display {label: "Azure OpenAI Embedding Provider"}
 public distinct isolated client class EmbeddingProvider {
     *ai:EmbeddingProvider;
     private final embeddings:Client embeddingsClient;

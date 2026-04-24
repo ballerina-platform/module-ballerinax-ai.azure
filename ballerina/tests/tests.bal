@@ -367,3 +367,29 @@ function testGenerateMethodWithArrayUnionRecord2() returns ai:Error? {
    Cricketers7[]|Cricketers8|error result = openAiProvider->generate(`Name a random world class cricketer`);
     test:assertTrue(result is Cricketers8);
 }
+
+@test:Config
+function testGenerateMethodWithTextChunk() returns ai:Error? {
+    ai:TextChunk chunk = {'type: "text-chunk", content: string `Title: ${blog1.title} Content: ${blog1.content}`};
+
+    int|error rating = openAiProvider->generate(`Rate this text chunk out of 10. ${chunk}.`);
+    test:assertEquals(rating, 4);
+}
+
+@test:Config
+function testGenerateMethodWithTextChunkArray() returns ai:Error? {
+    ai:TextChunk chunk1 = {'type: "text-chunk", content: string `Title: ${blog1.title} Content: ${blog1.content}`};
+    ai:TextChunk chunk2 = {'type: "text-chunk", content: string `Title: ${blog1.title} Content: ${blog1.content}`};
+
+    int[]|error ratings = openAiProvider->generate(`Rate these text chunks out of 10. ${<ai:Chunk[]>[chunk1, chunk2]}. Thank you!`);
+    test:assertEquals(ratings, [9, 1]);
+}
+
+@test:Config
+function testGenerateMethodWithMixedDocumentAndChunkArray() returns ai:Error? {
+    ai:TextDocument doc = {content: string `Title: ${blog1.title} Content: ${blog1.content}`};
+    ai:TextChunk chunk = {'type: "text-chunk", content: string `Title: ${blog1.title} Content: ${blog1.content}`};
+
+    int[]|error ratings = openAiProvider->generate(`Rate these mixed documents out of 10. ${<(ai:Document|ai:Chunk)[]>[doc, chunk]}. Thank you!`);
+    test:assertEquals(ratings, [9, 1]);
+}
