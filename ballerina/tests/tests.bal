@@ -46,7 +46,8 @@ function testBatchEmbeddings() returns error? {
     ai:TextChunk[] chunks = [
         {
             content: "Hello, world!"
-        }, {
+        },
+        {
             content: "Hello, world!!!"
         }
     ];
@@ -349,7 +350,6 @@ function testGenerateMethodWithArrayUnionBasicType() returns error? {
     test:assertTrue(result is Cricketers3[]);
 }
 
-
 @test:Config
 function testGenerateMethodWithArrayUnionNull() returns error? {
     Cricketers4[]? result = check openAiProvider->generate(`Name 10 world class cricketers`);
@@ -364,6 +364,22 @@ function testGenerateMethodWithArrayUnionRecord() returns ai:Error? {
 
 @test:Config
 function testGenerateMethodWithArrayUnionRecord2() returns ai:Error? {
-   Cricketers7[]|Cricketers8|error result = openAiProvider->generate(`Name a random world class cricketer`);
+    Cricketers7[]|Cricketers8|error result = openAiProvider->generate(`Name a random world class cricketer`);
     test:assertTrue(result is Cricketers8);
+}
+
+@test:Config
+function testGenerateMethodWithTextChunk() returns error? {
+    ai:TextChunk chunk = {
+        content: string `Title: ${blog1.title} Content: ${blog1.content}`
+    };
+    ai:TextChunk[] chunks = [chunk, chunk];
+    int maxScore = 10;
+
+    int rating = check openAiProvider->generate(`How would you rate this text chunk content out of ${maxScore}. ${chunk}.`);
+    test:assertEquals(rating, 4);
+
+    ReviewArray result = check openAiProvider->generate(`How would you rate these text chunks out of ${maxScore}. ${chunks}. Thank you!`);
+    Review r = check review.fromJsonStringWithType();
+    test:assertEquals(result, [r, r]);
 }
