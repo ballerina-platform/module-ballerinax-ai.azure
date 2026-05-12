@@ -6,7 +6,11 @@
 
 ## Overview
 
-This module provides a generic API for connecting with Azure OpenAI LLM chat completion models.
+This module provides a generic API for connecting with Azure OpenAI LLM chat completion models. It offers two
+chat-model providers — `OpenAiModelProvider` (legacy, deployment-scoped routes with a date-based `api-version`) and
+`OpenAiModelProviderV2` (the Azure OpenAI v1 / GA API surface) — both of which transparently try the Responses API
+first and fall back to the Chat Completions API. An `EmbeddingProvider` is also provided for Azure OpenAI embedding
+models.
 
 ## Issues and projects
 

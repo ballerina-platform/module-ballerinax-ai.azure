@@ -60,96 +60,42 @@ service /llm on new http:Listener(8080) {
         return getTestServiceResponse(initialText);
     }
 
-    // Responses API mock endpoint
+    // Responses API mock endpoint (v1 / GA surface — used by `OpenAiModelProviderV2`)
     resource function post azureopenai/v1/responses(string api\-version, @http:Payload json payload)
             returns json|http:NotFound|error {
-        // Extract the initial text content from the input items
-        json[] inputItems = check (check payload.input).ensureType();
-        if inputItems.length() == 0 {
-            test:assertFail("Expected input items in the payload");
-        }
-
-        // Find the first user message's content to determine the test case
-        string initialText = "";
-        json firstItem = inputItems[0];
-        string? role = check firstItem.role.ensureType();
-        if role == "user" {
-            json itemContent = check firstItem.content;
-            if itemContent is string {
-                initialText = itemContent;
-            } else {
-                // Content is an array of content parts (for generate() path)
-                json[] contentParts = check itemContent.ensureType();
-                if contentParts.length() > 0 {
-                    json firstPart = contentParts[0];
-                    string? partType = check firstPart.'type.ensureType();
-                    if partType == "input_text" {
-                        initialText = check firstPart.text.ensureType();
-                    }
-                }
-            }
-        }
-
-        // Simulate model_not_found error for fallback tests
-        if initialText.startsWith("Fallback test") {
-            return <http:NotFound>{
-                body: {
-                    "error": {
-                        "code": "model_not_found",
-                        "message": "The model gpt4onew does not support the Responses API"
-                    }
-                }
-            };
-        }
-
-        // Check if tools are provided and classify them
-        json|error toolsJson = payload.tools;
-        boolean hasGetResultsTool = false;
-        boolean hasBuiltInTool = false;
-        boolean hasFunctionTool = false;
-        if toolsJson is json[] && toolsJson.length() > 0 {
-            foreach json tool in toolsJson {
-                string? toolType = check tool.'type.ensureType();
-                if toolType == "web_search_preview" || toolType == "code_interpreter" {
-                    hasBuiltInTool = true;
-                } else if toolType == "function" {
-                    hasFunctionTool = true;
-                    string? toolName = check tool.name.ensureType();
-                    if toolName == GET_RESULTS_TOOL {
-                        hasGetResultsTool = true;
-                    }
-                }
-            }
-        }
-
-        if hasGetResultsTool {
-            // Validate the parameter schema for generate() path
-            json[] toolsArr = check toolsJson.ensureType();
-            json firstTool = toolsArr[0];
-            map<json>? parameters = check (check firstTool.parameters).cloneWithType();
-            if parameters is () {
-                test:assertFail("No parameters in the expected tool");
-            }
-            test:assertEquals(parameters, getExpectedParameterSchema(initialText),
-                    string `Responses API: Test failed for prompt with initial content, ${initialText}`);
-            // Return response with function_call output item (for generate() path)
-            return getTestResponsesApiResponseWithToolCall(initialText);
-        }
-
-        // If only built-in tools (no function tools), return text response
-        if hasBuiltInTool && !hasFunctionTool {
-            return getTestResponsesApiChatResponse(initialText);
-        }
-
-        // If non-getResults tools are provided (chat with tools path), return tool call response
-        if toolsJson is json[] && toolsJson.length() > 0 {
-            return getTestResponsesApiToolCallChatResponse();
-        }
-
-        // Return a simple text message response (for chat() path)
-        return getTestResponsesApiChatResponse(initialText);
+        return handleResponsesApiRequest(payload);
     }
 
+    // Responses API mock endpoint (legacy deployment-scoped surface — used by `OpenAiModelProvider`)
+    resource function post azureopenai/openai/responses(string api\-version, @http:Payload json payload)
+            returns json|http:NotFound|error {
+        return handleResponsesApiRequest(payload);
+    }
+
+    // Chat Completions mock endpoint (legacy deployment-scoped surface — used by `OpenAiModelProvider`)
+    resource function post azureopenai/openai/deployments/[string deploymentId]/chat/completions(
+            string api\-version, @http:Payload json payload) returns json|error {
+        json|error functionsJson = payload.functions;
+        if functionsJson is json[] && functionsJson.length() > 0 {
+            json firstFn = functionsJson[0];
+            string? fnName = check firstFn.name.ensureType();
+            if fnName == GET_RESULTS_TOOL {
+                // generate() path: validate the schema and return the structured result as a function_call.
+                map<json>? parameters = check (check firstFn.parameters).cloneWithType();
+                if parameters is () {
+                    test:assertFail("No parameters in the expected getResults tool");
+                }
+                json[] messages = check (check payload.messages).ensureType();
+                json[] contentParts = check (check messages[0].content).ensureType();
+                string initialText = check contentParts[0].text.ensureType();
+                test:assertEquals(parameters, getExpectedParameterSchema(initialText),
+                        string `Legacy Chat Completions: schema mismatch for prompt, ${initialText}`);
+                return getLegacyChatCompletionFunctionCallResponse(GET_RESULTS_TOOL, getTheMockLLMResult(initialText));
+            }
+        }
+        // chat() fallback path: return a get_weather tool call.
+        return getLegacyChatCompletionFunctionCallResponse("get_weather", "{\"city\": \"Paris\"}");
+    }
 
     resource function post deployments/[string deploymentId]/embeddings(string api\-version, embeddings:Deploymentid_embeddings_body payload)
         returns embeddings:Inline_response_200|error {
@@ -171,6 +117,115 @@ service /llm on new http:Listener(8080) {
         };
     }
 }
+
+// Shared handler for the Azure OpenAI Responses API mock (used by both the v1 and the legacy endpoints).
+function handleResponsesApiRequest(json payload) returns json|http:NotFound|error {
+    json[] inputItems = check (check payload.input).ensureType();
+    if inputItems.length() == 0 {
+        test:assertFail("Expected input items in the payload");
+    }
+
+    // Find the first user message's content to determine the test case.
+    string initialText = "";
+    json firstItem = inputItems[0];
+    string? role = check firstItem.role.ensureType();
+    if role == "user" {
+        json itemContent = check firstItem.content;
+        if itemContent is string {
+            initialText = itemContent;
+        } else {
+            json[] contentParts = check itemContent.ensureType();
+            if contentParts.length() > 0 {
+                json firstPart = contentParts[0];
+                string? partType = check firstPart.'type.ensureType();
+                if partType == "input_text" {
+                    initialText = check firstPart.text.ensureType();
+                }
+            }
+        }
+    }
+
+    // Simulate a model_not_found error for fallback tests.
+    if initialText.startsWith("Fallback test") {
+        return <http:NotFound>{
+            body: {
+                "error": {
+                    "code": "model_not_found",
+                    "message": "The model gpt4onew does not support the Responses API"
+                }
+            }
+        };
+    }
+
+    // Classify the provided tools.
+    json|error toolsJson = payload.tools;
+    boolean hasGetResultsTool = false;
+    boolean hasBuiltInTool = false;
+    boolean hasFunctionTool = false;
+    if toolsJson is json[] && toolsJson.length() > 0 {
+        foreach json tool in toolsJson {
+            string? toolType = check tool.'type.ensureType();
+            if toolType == "web_search_preview" || toolType == "code_interpreter" {
+                hasBuiltInTool = true;
+            } else if toolType == "function" {
+                hasFunctionTool = true;
+                string? toolName = check tool.name.ensureType();
+                if toolName == GET_RESULTS_TOOL {
+                    hasGetResultsTool = true;
+                }
+            }
+        }
+    }
+
+    if hasGetResultsTool {
+        json[] toolsArr = check toolsJson.ensureType();
+        json firstTool = toolsArr[0];
+        map<json>? parameters = check (check firstTool.parameters).cloneWithType();
+        if parameters is () {
+            test:assertFail("No parameters in the expected tool");
+        }
+        test:assertEquals(parameters, getExpectedParameterSchema(initialText),
+                string `Responses API: Test failed for prompt with initial content, ${initialText}`);
+        return getTestResponsesApiResponseWithToolCall(initialText);
+    }
+
+    if hasBuiltInTool && !hasFunctionTool {
+        return getTestResponsesApiChatResponse(initialText);
+    }
+
+    if toolsJson is json[] && toolsJson.length() > 0 {
+        return getTestResponsesApiToolCallChatResponse();
+    }
+
+    return getTestResponsesApiChatResponse(initialText);
+}
+
+// Builds a legacy Chat Completions response carrying a single `function_call` (deprecated function-calling flow).
+isolated function getLegacyChatCompletionFunctionCallResponse(string name, string arguments) returns json => {
+    id: "legacy-chat-test-id",
+    'object: "chat.completion",
+    created: 1234567890,
+    model: "gpt-4o",
+    choices: [
+        {
+            finish_reason: "function_call",
+            index: 0,
+            message: {
+                role: "assistant",
+                content: (),
+                function_call: {
+                    name: name,
+                    arguments: arguments
+                }
+            }
+        }
+    ],
+    usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        total_tokens: 30
+    }
+};
 
 // Builds a Responses API response with a function_call output item (for generate() tests)
 isolated function getTestResponsesApiResponseWithToolCall(string content) returns json {
