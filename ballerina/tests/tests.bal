@@ -19,13 +19,20 @@ import ballerina/test;
 
 const SERVICE_URL = "http://localhost:8080/llm/azureopenai";
 const DEPLOYMENT_ID = "gpt4onew";
+// API version accepted by the v1 (GA) provider (`OpenAiModelProviderV2`).
 const API_VERSION = "v1";
+// Date-based API version used by the legacy provider (`OpenAiModelProvider`).
+const LEGACY_API_VERSION = "2024-08-01-preview";
 const API_KEY = "not-a-real-api-key";
 const ERROR_MESSAGE = "Error occurred while attempting to parse the response from the LLM as the expected type. Retrying and/or validating the prompt could fix the response.";
 const RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE = "Runtime schema generation is not yet supported";
 
-final OpenAiModelProvider openAiProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
-final OpenAiModelProvider responsesProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
+// `OpenAiModelProviderV2` — Azure OpenAI v1 (GA) API surface.
+final OpenAiModelProviderV2 openAiProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
+final OpenAiModelProviderV2 responsesProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
+
+// `OpenAiModelProvider` — legacy Azure OpenAI API surface (deployment-scoped, date-based api-version).
+final OpenAiModelProvider legacyProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, LEGACY_API_VERSION);
 
 string apiKey = "mock-api-key";
 string serviceUrl = "http://localhost:8080/llm";
@@ -64,7 +71,7 @@ function testBatchEmbeddings() returns error? {
 @test:Config {}
 function testResponsesFallbackToChatCompletionsOnModelNotSupported() returns ai:Error? {
     // Create a fresh provider so responsesApiUnsupported starts as false
-    OpenAiModelProvider fallbackProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
+    OpenAiModelProviderV2 fallbackProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
 
     ai:ChatUserMessage userMsg = {role: "user", content: "Fallback test: What is the weather in Paris?"};
     ai:ChatCompletionFunctions[] tools = [
@@ -101,7 +108,7 @@ function testResponsesFallbackToChatCompletionsOnModelNotSupported() returns ai:
 @test:Config {}
 function testResponsesFallbackWithBuiltInToolsReturnsError() returns ai:Error? {
     // Create a fresh provider so responsesApiUnsupported starts as false
-    OpenAiModelProvider fallbackProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
+    OpenAiModelProviderV2 fallbackProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
 
     ai:ChatUserMessage userMsg = {role: "user", content: "Fallback test: Search the web"};
     WebsearchTool webSearchTool = {
@@ -589,5 +596,95 @@ function testResponsesChatWithUnsupportedBuiltInTool() returns error? {
     string errorMsg = (<ai:Error>result).message();
     test:assertTrue(errorMsg.includes("Built-in tools [unsupported_tool] are not currently supported"),
             string `expected unsupported built-in tool error, found: ${errorMsg}`);
+}
+
+// ===== Legacy provider (`OpenAiModelProvider`) tests =====
+// These hit the deployment-scoped Azure OpenAI endpoints:
+//   /openai/responses?api-version=...               (Responses API, tried first)
+//   /openai/deployments/{deploymentId}/chat/completions?api-version=...   (Chat Completions, fallback)
+
+@test:Config
+function testLegacyChatWithSimpleMessage() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
+    ai:ChatAssistantMessage result = check legacyProvider->chat(userMsg, []);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+@test:Config
+function testLegacyChatWithTools() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "What is the weather in London?"};
+    ai:ChatCompletionFunctions[] tools = [
+        {
+            name: "get_weather",
+            description: "Get the weather for a city",
+            parameters: {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"}
+                },
+                "required": ["city"]
+            }
+        }
+    ];
+    ai:ChatAssistantMessage result = check legacyProvider->chat(userMsg, tools);
+    ai:FunctionCall[]? toolCalls = result.toolCalls;
+    test:assertTrue(toolCalls is ai:FunctionCall[]);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "London"});
+}
+
+@test:Config
+function testLegacyChatFallbackToChatCompletions() returns ai:Error? {
+    // Fresh provider so `responsesApiUnsupported` starts as false.
+    OpenAiModelProvider fallbackProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, LEGACY_API_VERSION);
+
+    ai:ChatUserMessage userMsg = {role: "user", content: "Fallback test: What is the weather in Paris?"};
+    ai:ChatCompletionFunctions[] tools = [
+        {
+            name: "get_weather",
+            description: "Get the weather for a city",
+            parameters: {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"}
+                },
+                "required": ["city"]
+            }
+        }
+    ];
+
+    // Responses API returns model_not_found; provider must fall back to the legacy Chat Completions endpoint.
+    ai:ChatAssistantMessage result = check fallbackProvider->chat(userMsg, tools);
+    ai:FunctionCall[]? toolCalls = result.toolCalls;
+    test:assertTrue(toolCalls is ai:FunctionCall[]);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "Paris"});
+}
+
+@test:Config
+function testLegacyChatFallbackWithBuiltInToolsReturnsError() returns ai:Error? {
+    OpenAiModelProvider fallbackProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, LEGACY_API_VERSION);
+
+    ai:ChatUserMessage userMsg = {role: "user", content: "Fallback test: Search the web"};
+    WebsearchTool webSearchTool = {
+        name: "web_search_preview",
+        configurations: {search_context_size: "medium"}
+    };
+
+    ai:ChatAssistantMessage|ai:Error result = fallbackProvider->chat(userMsg, [webSearchTool]);
+    test:assertTrue(result is ai:Error);
+    string errorMsg = (<ai:Error>result).message();
+    test:assertTrue(errorMsg.includes("web_search") && errorMsg.includes("not supported"),
+            string `expected built-in tool fallback error, found: ${errorMsg}`);
+}
+
+// Note: legacy `generate()` exercises the updated native `Generator` (legacy branch), so it requires the
+// native JAR (`ai.azure-native`) to be rebuilt from `native/` before running.
+@test:Config
+function testLegacyGenerateMethodWithBasicReturnType() returns ai:Error? {
+    int|error rating = legacyProvider->generate(`Rate this blog out of 10.
+        Title: ${blog1.title}
+        Content: ${blog1.content}`);
+    test:assertEquals(rating, 4);
 }
 
