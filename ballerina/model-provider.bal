@@ -112,7 +112,14 @@ public isolated client class OpenAiModelProvider {
             max_tokens: self.maxTokens
         };
         if tools.length() > 0 {
-            request.functions = tools;
+            request.tools = tools.map(t => <chat:ChatCompletionTool>{
+                'type: "function",
+                'function: {
+                    name: t.name,
+                    description: t.description,
+                    parameters: t.parameters ?: {}
+                }
+            });
             span.addTools(tools);
         }
         chat:CreateChatCompletionResponse|error response =
@@ -156,18 +163,22 @@ public isolated client class OpenAiModelProvider {
 
         chat:ChatCompletionResponseMessage? message = choices[0].message;
         ai:ChatAssistantMessage chatAssistantMessage = {role: ai:ASSISTANT, content: message?.content};
-        chat:ChatCompletionFunctionCall? functionCall = message?.function_call;
-        if functionCall is () {
+        chat:ChatCompletionMessageToolCall[]? toolCalls = message?.tool_calls;
+        if toolCalls is () || toolCalls.length() == 0 {
             span.addOutputMessages(chatAssistantMessage);
             span.close();
             return chatAssistantMessage;
         }
-        ai:FunctionCall|ai:Error toolCall = self.mapToFunctionCall(functionCall);
-        if toolCall is ai:Error {
-            span.close(toolCall);
-            return toolCall;
+        ai:FunctionCall[] functionCalls = [];
+        foreach chat:ChatCompletionMessageToolCall tc in toolCalls {
+            ai:FunctionCall|ai:Error fc = self.mapToolCallToFunctionCall(tc);
+            if fc is ai:Error {
+                span.close(fc);
+                return fc;
+            }
+            functionCalls.push(fc);
         }
-        chatAssistantMessage.toolCalls = [toolCall];
+        chatAssistantMessage.toolCalls = functionCalls;
         span.addOutputMessages(chatAssistantMessage);
         span.close();
         return chatAssistantMessage;
@@ -197,33 +208,42 @@ public isolated client class OpenAiModelProvider {
             } else if message is ai:ChatAssistantMessage {
                 chat:ChatCompletionRequestMessage assistantMessage = {role: ai:ASSISTANT};
                 ai:FunctionCall[]? toolCalls = message.toolCalls;
-                if toolCalls is ai:FunctionCall[] {
-                    assistantMessage["function_call"] = {
-                        name: toolCalls[0].name,
-                        arguments: toolCalls[0].arguments.toJsonString()
-                    };
+                if toolCalls is ai:FunctionCall[] && toolCalls.length() > 0 {
+                    assistantMessage["tool_calls"] = toolCalls.map(tc => <chat:ChatCompletionMessageToolCall>{
+                        id: tc.id ?: "",
+                        'type: "function",
+                        'function: {
+                            name: tc.name,
+                            arguments: (tc.arguments ?: {}).toJsonString()
+                        }
+                    });
                 }
                 if message?.content is string {
                     assistantMessage["content"] = message?.content;
                 }
                 chatCompletionRequestMessages.push(assistantMessage);
             } else {
-                chatCompletionRequestMessages.push(message);
+                chatCompletionRequestMessages.push({
+                    "role": "tool",
+                    "tool_call_id": message.id ?: "",
+                    "content": message.content
+                });
             }
         }
         return chatCompletionRequestMessages;
     }
 
-    private isolated function mapToFunctionCall(chat:ChatCompletionFunctionCall functionCall)
+    private isolated function mapToolCallToFunctionCall(chat:ChatCompletionMessageToolCall toolCall)
     returns ai:FunctionCall|ai:LlmError {
         do {
-            json jsonArgs = check functionCall.arguments.fromJsonString();
+            json jsonArgs = check toolCall.'function.arguments.fromJsonString();
             map<json>? arguments = check jsonArgs.cloneWithType();
-            return {name: functionCall.name, arguments};
+            return {name: toolCall.'function.name, arguments, id: toolCall.id};
         } on fail error e {
-            return error ai:LlmError("Invalid or malformed arguments received in function call response.", e);
+            return error ai:LlmError("Invalid or malformed arguments received in tool call response.", e);
         }
     }
+
 
     private isolated function mapToAzureChatMessage(ai:ChatUserMessage|ai:ChatSystemMessage message)
     returns AzureChatUserMessage|AzureChatSystemMessage|ai:Error {
