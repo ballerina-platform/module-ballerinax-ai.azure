@@ -160,15 +160,10 @@ function handleResponsesApiRequest(json payload) returns json|http:NotFound|erro
     // Classify the provided tools.
     json|error toolsJson = payload.tools;
     boolean hasGetResultsTool = false;
-    boolean hasBuiltInTool = false;
-    boolean hasFunctionTool = false;
     if toolsJson is json[] && toolsJson.length() > 0 {
         foreach json tool in toolsJson {
             string? toolType = check tool.'type.ensureType();
-            if toolType == "web_search_preview" || toolType == "code_interpreter" {
-                hasBuiltInTool = true;
-            } else if toolType == "function" {
-                hasFunctionTool = true;
+            if toolType == "function" {
                 string? toolName = check tool.name.ensureType();
                 if toolName == GET_RESULTS_TOOL {
                     hasGetResultsTool = true;
@@ -187,10 +182,6 @@ function handleResponsesApiRequest(json payload) returns json|http:NotFound|erro
         test:assertEquals(parameters, getExpectedParameterSchema(initialText),
                 string `Responses API: Test failed for prompt with initial content, ${initialText}`);
         return getTestResponsesApiResponseWithToolCall(initialText);
-    }
-
-    if hasBuiltInTool && !hasFunctionTool {
-        return getTestResponsesApiChatResponse(initialText);
     }
 
     if toolsJson is json[] && toolsJson.length() > 0 {

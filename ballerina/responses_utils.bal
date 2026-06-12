@@ -116,30 +116,6 @@ isolated function convertToResponsesTools(ai:ChatCompletionFunctions[] tools) re
     return result;
 }
 
-# Converts ai:BuiltInTool array to Responses API tool format.
-#
-# + tools - The built-in tool definitions to convert
-# + return - Array of responses:OpenAI\.Tool objects or an error
-isolated function convertBuiltInToolsToResponsesFormat(ai:BuiltInTool[] tools) returns responses:OpenAI\.Tool[]|ai:Error {
-    responses:OpenAI\.Tool[] result = [];
-    foreach ai:BuiltInTool tool in tools {
-        map<anydata> toolMap = {'type: tool.name};
-        map<anydata>? configs = tool.configurations;
-        if configs is map<anydata> {
-            foreach string key in configs.keys() {
-                anydata value = configs[key];
-                toolMap[key] = value;
-            }
-        }
-        responses:OpenAI\.Tool|error converted = toolMap.cloneWithType();
-        if converted is error {
-            return error ai:Error("Failed to convert built-in tool '" + tool.name + "' to Responses API format. " + "Found " + toolMap.toString(), converted);
-        }
-        result.push(converted);
-    }
-    return result;
-}
-
 # Converts a Responses API response to an ai:ChatAssistantMessage.
 #
 # + response - The Responses API response
