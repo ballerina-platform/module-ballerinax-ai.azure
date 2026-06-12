@@ -123,7 +123,7 @@ public isolated client class OpenAiModelProviderV2 {
     # + stop - Stop sequence to stop the completion
     # + return - Function to be called, chat response or an error in-case of failures
     isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
-            (ai:ChatCompletionFunctions|ai:BuiltInTool)[] tools,
+            ai:ChatCompletionFunctions[] tools = [],
             string? stop = ()) returns ai:ChatAssistantMessage|ai:Error {
 
         boolean tryResponses;
@@ -144,21 +144,7 @@ public isolated client class OpenAiModelProviderV2 {
         }
 
         // Chat Completions fallback path
-        string[] unsupportedTools = [];
-        ai:ChatCompletionFunctions[] functionTools = [];
-        foreach var tool in tools {
-            if tool is ai:BuiltInTool {
-                unsupportedTools.push(tool.name);
-            } else {
-                functionTools.push(tool);
-            }
-        }
-        if unsupportedTools.length() > 0 {
-            return error ai:Error(string `Built-in tools [${string:'join(", ", ...unsupportedTools)}] are not supported `
-                + "for the Chat Completions API. This model does not support the Responses API.");
-        }
-
-        return self.chatViaChatCompletions(messages, functionTools, stop);
+        return self.chatViaChatCompletions(messages, tools, stop);
     }
 
     # Sends a chat request to the model and generates a value that belongs to the type
@@ -272,7 +258,7 @@ public isolated client class OpenAiModelProviderV2 {
     // ===== Responses API path =====
 
     private isolated function chatViaResponses(ai:ChatMessage[]|ai:ChatUserMessage messages,
-            (ai:ChatCompletionFunctions|ai:BuiltInTool)[] tools, string? stop) returns ai:ChatAssistantMessage|ai:Error {
+            ai:ChatCompletionFunctions[] tools, string? stop) returns ai:ChatAssistantMessage|ai:Error {
         responses:Client responsesClient = self.responsesClient;
         observe:ChatSpan span = observe:createChatSpan(self.deploymentId);
         span.addProvider("azure.ai.openai");
@@ -286,32 +272,6 @@ public isolated client class OpenAiModelProviderV2 {
         json|ai:Error inputMessage = convertMessageToJson(messages);
         if inputMessage is json {
             span.addInputMessages(inputMessage);
-        }
-
-        // Separate function tools and built-in tools
-        ai:ChatCompletionFunctions[] functionToolDefs = [];
-        ai:BuiltInTool[] builtInToolDefs = [];
-        foreach var tool in tools {
-            if tool is ai:ChatCompletionFunctions {
-                functionToolDefs.push(tool);
-            } else {
-                builtInToolDefs.push(tool);
-            }
-        }
-
-        // Validate that only supported built-in tools are used
-        string[] unsupportedBuiltInTools = [];
-        foreach ai:BuiltInTool tool in builtInToolDefs {
-            if tool !is CodeInterpreterTool && tool !is WebsearchTool {
-                unsupportedBuiltInTools.push(tool.name);
-            }
-        }
-        if unsupportedBuiltInTools.length() > 0 {
-            ai:Error unsupportedToolsError = error(
-                string `Built-in tools [${string:'join(", ", ...unsupportedBuiltInTools)}] are not currently supported. ` +
-                "Only 'web_search', 'code_interpreter' tools are supported.");
-            span.close(unsupportedToolsError);
-            return unsupportedToolsError;
         }
 
         // Convert messages to Responses API input format
@@ -342,8 +302,8 @@ public isolated client class OpenAiModelProviderV2 {
                 model = self.deploymentId);
         }
         responses:OpenAI\.Tool[] allTools = [];
-        if functionToolDefs.length() > 0 {
-            responses:OpenAI\.Tool[]|error functionTools = convertToResponsesTools(functionToolDefs);
+        if tools.length() > 0 {
+            responses:OpenAI\.Tool[]|error functionTools = convertToResponsesTools(tools);
             if functionTools is error {
                 ai:Error err = error("Error while adding tools into Responses API", functionTools);
                  span.close(err);
@@ -353,28 +313,7 @@ public isolated client class OpenAiModelProviderV2 {
             foreach responses:OpenAI\.Tool ft in functionTools {
                 allTools.push(ft);
             }
-        }
-        if builtInToolDefs.length() > 0 {
-            responses:OpenAI\.Tool[]|ai:Error convertedBuiltInTools = convertBuiltInToolsToResponsesFormat(builtInToolDefs);
-            if convertedBuiltInTools is ai:Error {
-                span.close(convertedBuiltInTools);
-                return error("Error while adding built-in tools into Responses API", cause = convertedBuiltInTools);
-            }
-
-            foreach responses:OpenAI\.Tool t in convertedBuiltInTools {
-                allTools.push(t);
-            }
-        }
-        if tools.length() > 0 {
-            json[] toolsArr = [];
-            foreach ai:ChatCompletionFunctions|ai:BuiltInTool tool in tools {
-                if tool is ai:ChatCompletionFunctions {
-                    toolsArr.push(tool);
-                } else {
-                    toolsArr.push(tool.toJson());
-                }
-            }
-            span.addTools(toolsArr);
+            span.addTools(tools);
         }
         if allTools.length() > 0 {
             request.tools = allTools;

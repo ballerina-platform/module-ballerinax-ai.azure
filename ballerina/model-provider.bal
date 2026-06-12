@@ -104,25 +104,15 @@ public isolated client class OpenAiModelProvider {
     # + stop - Stop sequence to stop the completion
     # + return - Function to be called, chat response or an error in-case of failures
     isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
-            (ai:ChatCompletionFunctions|ai:BuiltInTool)[] tools = [], string? stop = ())
+            ai:ChatCompletionFunctions[] tools = [], string? stop = ())
             returns ai:ChatAssistantMessage|ai:Error {
-        ai:ChatCompletionFunctions[] functionTools = [];
-        ai:BuiltInTool[] builtInTools = [];
-        foreach var tool in tools {
-            if tool is ai:BuiltInTool {
-                builtInTools.push(tool);
-            } else {
-                functionTools.push(tool);
-            }
-        }
-
         boolean tryResponses;
         lock {
             tryResponses = !self.responsesApiUnsupported;
         }
 
         if tryResponses {
-            ai:ChatAssistantMessage|ai:Error result = self.chatViaResponses(messages, functionTools, builtInTools, stop);
+            ai:ChatAssistantMessage|ai:Error result = self.chatViaResponses(messages, tools, stop);
             if result is ai:Error && isResponsesApiUnsupportedError(result) {
                 lock {
                     self.responsesApiUnsupported = true;
@@ -133,13 +123,7 @@ public isolated client class OpenAiModelProvider {
             }
         }
 
-        if builtInTools.length() > 0 {
-            string[] names = from ai:BuiltInTool t in builtInTools
-                select t.name;
-            return error ai:Error(string `Built-in tools [${string:'join(", ", ...names)}] are not supported `
-                + "for the Chat Completions API. This model does not support the Responses API.");
-        }
-        return self.chatViaChatCompletions(messages, functionTools, stop);
+        return self.chatViaChatCompletions(messages, tools, stop);
     }
 
     # Sends a chat request to the model and generates a value that belongs to the type
@@ -259,7 +243,7 @@ public isolated client class OpenAiModelProvider {
     // ===== Responses API path =====
 
     private isolated function chatViaResponses(ai:ChatMessage[]|ai:ChatUserMessage messages,
-            ai:ChatCompletionFunctions[] functionToolDefs, ai:BuiltInTool[] builtInToolDefs, string? stop)
+            ai:ChatCompletionFunctions[] functionToolDefs, string? stop)
             returns ai:ChatAssistantMessage|ai:Error {
         observe:ChatSpan span = observe:createChatSpan(self.deploymentId);
         span.addProvider("azure.ai.openai");
@@ -271,17 +255,6 @@ public isolated client class OpenAiModelProvider {
         json|ai:Error inputMessage = convertMessageToJson(messages);
         if inputMessage is json {
             span.addInputMessages(inputMessage);
-        }
-
-        // Validate that only supported built-in tools are used.
-        string[] unsupportedBuiltInTools = from ai:BuiltInTool tool in builtInToolDefs
-            where tool !is CodeInterpreterTool && tool !is WebsearchTool
-            select tool.name;
-        if unsupportedBuiltInTools.length() > 0 {
-            ai:Error err = error(string `Built-in tools [${string:'join(", ", ...unsupportedBuiltInTools)}] are not `
-                + "currently supported. Only 'web_search', 'code_interpreter' tools are supported.");
-            span.close(err);
-            return err;
         }
 
         [responses:OpenAI\.InputParam, string?]|ai:Error responseInput = convertToResponsesInput(messages);
@@ -316,24 +289,7 @@ public isolated client class OpenAiModelProvider {
                 return err;
             }
             allTools.push(...functionTools);
-        }
-        if builtInToolDefs.length() > 0 {
-            responses:OpenAI\.Tool[]|ai:Error convertedBuiltInTools = convertBuiltInToolsToResponsesFormat(builtInToolDefs);
-            if convertedBuiltInTools is ai:Error {
-                span.close(convertedBuiltInTools);
-                return error("Error while adding built-in tools into the Responses API request", cause = convertedBuiltInTools);
-            }
-            allTools.push(...convertedBuiltInTools);
-        }
-        if functionToolDefs.length() > 0 || builtInToolDefs.length() > 0 {
-            json[] toolsArr = [];
-            foreach ai:ChatCompletionFunctions ft in functionToolDefs {
-                toolsArr.push(ft);
-            }
-            foreach ai:BuiltInTool bt in builtInToolDefs {
-                toolsArr.push(bt.toJson());
-            }
-            span.addTools(toolsArr);
+            span.addTools(functionToolDefs);
         }
         if allTools.length() > 0 {
             request.tools = allTools;

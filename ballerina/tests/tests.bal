@@ -105,25 +105,6 @@ function testResponsesFallbackToChatCompletionsOnModelNotSupported() returns ai:
     test:assertEquals((<ai:FunctionCall[]>toolCalls2)[0].name, "get_weather");
 }
 
-@test:Config {}
-function testResponsesFallbackWithBuiltInToolsReturnsError() returns ai:Error? {
-    // Create a fresh provider so responsesApiUnsupported starts as false
-    OpenAiModelProviderV2 fallbackProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
-
-    ai:ChatUserMessage userMsg = {role: "user", content: "Fallback test: Search the web"};
-    WebsearchTool webSearchTool = {
-        name: "web_search_preview",
-        configurations: {search_context_size: "medium"}
-    };
-
-    // Built-in tools should fail when falling back to Chat Completions since they are not supported
-    ai:ChatAssistantMessage|ai:Error result = fallbackProvider->chat(userMsg, [webSearchTool]);
-    test:assertTrue(result is ai:Error);
-    string errorMsg = (<ai:Error>result).message();
-    test:assertTrue(errorMsg.includes("Built-in tools [web_search] are not supported"),
-            string `expected built-in tool fallback error, found: ${errorMsg}`);
-}
-
 @test:Config
 function testGenerateMethodWithBasicReturnType() returns ai:Error? {
     int|error rating = openAiProvider->generate(`Rate this blog out of 10.
@@ -548,56 +529,6 @@ function testResponsesChatWithTools() returns ai:Error? {
     test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "London"});
 }
 
-// ===== Built-in tool tests =====
-
-@test:Config
-function testResponsesChatWithBuiltInTools() returns ai:Error? {
-    ai:ChatUserMessage userMsg = {role: "user", content: "Search the web for latest news"};
-    WebsearchTool webSearchTool = {
-        name: "web_search_preview",
-        configurations: {search_context_size: "medium"}
-    };
-    ai:ChatAssistantMessage result = check responsesProvider->chat(userMsg, [webSearchTool]);
-    test:assertTrue(result.content is string);
-}
-
-@test:Config
-function testResponsesChatWithBuiltInAndFunctionTools() returns ai:Error? {
-    ai:ChatUserMessage userMsg = {role: "user", content: "What is the weather?"};
-    WebsearchTool webSearchTool = {
-        name: "web_search_preview",
-        configurations: {search_context_size: "medium"}
-    };
-    ai:ChatCompletionFunctions functionTool = {
-        name: "get_weather",
-        description: "Get the weather for a city",
-        parameters: {
-            "type": "object",
-            "properties": {
-                "city": {"type": "string"}
-            },
-            "required": ["city"]
-        }
-    };
-    ai:ChatAssistantMessage result = check responsesProvider->chat(userMsg, [webSearchTool, functionTool]);
-    // When both built-in and function tools are present, the mock returns a tool call response
-    ai:FunctionCall[]? toolCalls = result.toolCalls;
-    test:assertTrue(toolCalls is ai:FunctionCall[]);
-    test:assertEquals((<ai:FunctionCall[]>toolCalls).length(), 1);
-    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
-}
-
-@test:Config
-function testResponsesChatWithUnsupportedBuiltInTool() returns error? {
-    ai:ChatUserMessage userMsg = {role: "user", content: "Use an unsupported tool"};
-    ai:BuiltInTool unsupportedTool = {name: "unsupported_tool"};
-    ai:ChatAssistantMessage|ai:Error result = responsesProvider->chat(userMsg, [unsupportedTool]);
-    test:assertTrue(result is ai:Error);
-    string errorMsg = (<ai:Error>result).message();
-    test:assertTrue(errorMsg.includes("Built-in tools [unsupported_tool] are not currently supported"),
-            string `expected unsupported built-in tool error, found: ${errorMsg}`);
-}
-
 // ===== Legacy provider (`OpenAiModelProvider`) tests =====
 // These hit the deployment-scoped Azure OpenAI endpoints:
 //   /openai/responses?api-version=...               (Responses API, tried first)
@@ -659,23 +590,6 @@ function testLegacyChatFallbackToChatCompletions() returns ai:Error? {
     test:assertTrue(toolCalls is ai:FunctionCall[]);
     test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
     test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "Paris"});
-}
-
-@test:Config
-function testLegacyChatFallbackWithBuiltInToolsReturnsError() returns ai:Error? {
-    OpenAiModelProvider fallbackProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, LEGACY_API_VERSION);
-
-    ai:ChatUserMessage userMsg = {role: "user", content: "Fallback test: Search the web"};
-    WebsearchTool webSearchTool = {
-        name: "web_search_preview",
-        configurations: {search_context_size: "medium"}
-    };
-
-    ai:ChatAssistantMessage|ai:Error result = fallbackProvider->chat(userMsg, [webSearchTool]);
-    test:assertTrue(result is ai:Error);
-    string errorMsg = (<ai:Error>result).message();
-    test:assertTrue(errorMsg.includes("web_search") && errorMsg.includes("not supported"),
-            string `expected built-in tool fallback error, found: ${errorMsg}`);
 }
 
 // Note: legacy `generate()` exercises the updated native `Generator` (legacy branch), so it requires the
