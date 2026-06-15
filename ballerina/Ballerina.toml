@@ -15,5 +15,5 @@ graalvmCompatible = true
 [[platform.java21.dependency]]
 groupId = "io.ballerina.lib"
 artifactId = "ai.azure-native"
-version = "1.4.4"
-path = "../native/build/libs/ai.azure-native-1.4.4.jar"
+version = "1.5.0"
+path = "../native/build/libs/ai.azure-native-1.5.0-SNAPSHOT.jar"
