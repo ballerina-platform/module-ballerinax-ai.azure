@@ -2,18 +2,17 @@
 
 This module offers APIs for connecting with Azure OpenAI Large Language Models (LLM).
 
-It provides two chat-model provider classes, both of which implement `ai:ModelProvider` and automatically try the
-Azure OpenAI **Responses API** first, falling back to the **Chat Completions API** when the targeted model or
-API version does not support it:
+It provides a single chat-model provider class, `OpenAiModelProvider`, which implements `ai:ModelProvider`. The
+provider can target either the Azure OpenAI **Responses API** or the **Chat Completions API**. The API surface is
+selected at initialization time through the `apiType` parameter:
 
-| Provider | Azure OpenAI API surface | `apiVersion` |
-| --- | --- | --- |
-| `OpenAiModelProvider` | Legacy, deployment-scoped routes (`/openai/deployments/{deploymentId}/chat/completions`, `/openai/responses`) | Required date-based version, e.g. `"2024-08-01-preview"` |
-| `OpenAiModelProviderV2` | v1 (GA) routes (`/openai/v1/chat/completions`, `/openai/v1/responses`) | Optional; only `"v1"` / `"preview"` are honored |
+| `apiType` | Azure OpenAI API surface |
+| --- | --- |
+| `RESPONSES` (default) | `/openai/responses` (Responses API) |
+| `CHAT_COMPLETION` | `/openai/deployments/{deploymentId}/chat/completions` (Chat Completions API) |
 
-`OpenAiModelProvider` keeps the same public API as previous releases (with the addition of the optional
-`reasoningEffort` parameter), so existing code continues to work unchanged. New applications targeting the Azure
-OpenAI v1 (GA) API surface should prefer `OpenAiModelProviderV2`.
+When `apiType` is omitted, the provider defaults to `RESPONSES`. Both surfaces are backed by the
+`ballerinax/azure.openai.responses` and `ballerinax/azure.openai.chat` connectors respectively.
 
 This module also provides an `EmbeddingProvider` for Azure OpenAI embedding models.
 
@@ -39,7 +38,7 @@ import ballerinax/ai.azure;
 
 ### Step 2: Intialize the Model Provider
 
-Initialize the legacy provider (deployment-scoped routes, date-based `api-version`):
+Initialize the provider. By default it uses the Responses API:
 
 ```ballerina
 import ballerina/ai;
@@ -49,14 +48,15 @@ final ai:ModelProvider azureOpenAiModel = check new azure:OpenAiModelProvider(
     "https://<resource>.openai.azure.com", "api-key", "deployment-id", "2024-08-01-preview");
 ```
 
-Or initialize the v1 (GA) provider:
+To use the Chat Completions API instead, set `apiType` to `CHAT_COMPLETION`:
 
 ```ballerina
 import ballerina/ai;
 import ballerinax/ai.azure;
 
-final ai:ModelProvider azureOpenAiModelV2 = check new azure:OpenAiModelProviderV2(
-    "https://<resource>.openai.azure.com", "api-key", "deployment-id");
+final ai:ModelProvider azureOpenAiModel = check new azure:OpenAiModelProvider(
+    "https://<resource>.openai.azure.com", "api-key", "deployment-id", "2024-08-01-preview",
+    apiType = azure:CHAT_COMPLETION);
 ```
 
 ### Step 4: Invoke chat completion

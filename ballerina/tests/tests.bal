@@ -18,21 +18,25 @@ import ballerina/ai;
 import ballerina/test;
 
 const SERVICE_URL = "http://localhost:8080/llm/azureopenai";
+// A `/v1`-suffixed service URL selects the Azure OpenAI Responses v1 GA surface (`{serviceUrl}/responses`).
+const SERVICE_URL_V1 = "http://localhost:8080/llm/azureopenai/openai/v1";
 const DEPLOYMENT_ID = "gpt4onew";
-// API version accepted by the v1 (GA) provider (`OpenAiModelProviderV2`).
-const API_VERSION = "v1";
-// Date-based API version used by the legacy provider (`OpenAiModelProvider`).
-const LEGACY_API_VERSION = "2024-08-01-preview";
+const API_VERSION = "2024-08-01-preview";
 const API_KEY = "not-a-real-api-key";
 const ERROR_MESSAGE = "Error occurred while attempting to parse the response from the LLM as the expected type. Retrying and/or validating the prompt could fix the response.";
 const RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE = "Runtime schema generation is not yet supported";
 
-// `OpenAiModelProviderV2` — Azure OpenAI v1 (GA) API surface.
-final OpenAiModelProviderV2 openAiProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
-final OpenAiModelProviderV2 responsesProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
+// `OpenAiModelProvider` with the default `RESPONSES` API type — exercises the Azure OpenAI Responses API via the
+// legacy preview route (the service URL does not end with `/v1`), which appends `?api-version=...`.
+final OpenAiModelProvider openAiProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
+final OpenAiModelProvider responsesProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
 
-// `OpenAiModelProvider` — legacy Azure OpenAI API surface (deployment-scoped, date-based api-version).
-final OpenAiModelProvider legacyProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, LEGACY_API_VERSION);
+// `OpenAiModelProvider` targeting the Responses v1 GA surface (`/v1`-suffixed service URL, no `api-version`).
+final OpenAiModelProvider responsesV1Provider = check new (SERVICE_URL_V1, API_KEY, DEPLOYMENT_ID, API_VERSION);
+
+// `OpenAiModelProvider` with the `CHAT_COMPLETION` API type — exercises the Azure OpenAI Chat Completions API.
+final OpenAiModelProvider chatCompletionProvider =
+    check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION, apiType = CHAT_COMPLETION);
 
 string apiKey = "mock-api-key";
 string serviceUrl = "http://localhost:8080/llm";
@@ -64,45 +68,6 @@ function testBatchEmbeddings() returns error? {
         float[] vectors = check result.cloneWithType();
         test:assertEquals(vectors.length(), 1536);
     }
-}
-
-// ===== Responses → Chat Completions fallback tests =====
-
-@test:Config {}
-function testResponsesFallbackToChatCompletionsOnModelNotSupported() returns ai:Error? {
-    // Create a fresh provider so responsesApiUnsupported starts as false
-    OpenAiModelProviderV2 fallbackProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
-
-    ai:ChatUserMessage userMsg = {role: "user", content: "Fallback test: What is the weather in Paris?"};
-    ai:ChatCompletionFunctions[] tools = [
-        {
-            name: "get_weather",
-            description: "Get the weather for a city",
-            parameters: {
-                "type": "object",
-                "properties": {
-                    "city": {"type": "string"}
-                },
-                "required": ["city"]
-            }
-        }
-    ];
-
-    // First call: should try Responses API, get model_not_found error, then fall back to Chat Completions
-    ai:ChatAssistantMessage result = check fallbackProvider->chat(userMsg, tools);
-    ai:FunctionCall[]? toolCalls = result.toolCalls;
-    test:assertTrue(toolCalls is ai:FunctionCall[]);
-    test:assertEquals((<ai:FunctionCall[]>toolCalls).length(), 1);
-    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
-    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "Paris"});
-
-    // Second call: responsesApiUnsupported should now be true, so it should go directly to Chat Completions
-    // without hitting the Responses API at all
-    ai:ChatUserMessage userMsg2 = {role: "user", content: "Fallback test: What is the weather in London?"};
-    ai:ChatAssistantMessage result2 = check fallbackProvider->chat(userMsg2, tools);
-    ai:FunctionCall[]? toolCalls2 = result2.toolCalls;
-    test:assertTrue(toolCalls2 is ai:FunctionCall[]);
-    test:assertEquals((<ai:FunctionCall[]>toolCalls2)[0].name, "get_weather");
 }
 
 @test:Config
@@ -256,10 +221,11 @@ function testGenerateMethodWithAudioDocument() returns ai:Error? {
         }
     };
 
-    string|error description = openAiProvider->generate(`Please describe the audio content. ${aud}.`);
+    // Audio input is only supported on the Chat Completions API path.
+    string|error description = chatCompletionProvider->generate(`Please describe the audio content. ${aud}.`);
     test:assertEquals(description, "This is a sample audio description.");
 
-    string[]|error descriptions = openAiProvider->generate(
+    string[]|error descriptions = chatCompletionProvider->generate(
         `Please describe the following audio contents. ${<ai:AudioDocument[]>[aud, aud]}.`);
     test:assertEquals(descriptions, ["This is a sample audio description.", "This is a sample audio description."]);
 
@@ -267,7 +233,7 @@ function testGenerateMethodWithAudioDocument() returns ai:Error? {
         content: sampleBinaryData
     };
 
-    description = openAiProvider->generate(`Please describe the audio content. ${aud2}.`);
+    description = chatCompletionProvider->generate(`Please describe the audio content. ${aud2}.`);
     if description is string {
         test:assertFail();
     }
@@ -529,20 +495,38 @@ function testResponsesChatWithTools() returns ai:Error? {
     test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "London"});
 }
 
-// ===== Legacy provider (`OpenAiModelProvider`) tests =====
-// These hit the deployment-scoped Azure OpenAI endpoints:
-//   /openai/responses?api-version=...               (Responses API, tried first)
-//   /openai/deployments/{deploymentId}/chat/completions?api-version=...   (Chat Completions, fallback)
+// ===== Responses API: v1 GA surface tests =====
+// These use a `/v1`-suffixed service URL and hit `POST {serviceUrl}/responses` with NO `api-version`.
 
 @test:Config
-function testLegacyChatWithSimpleMessage() returns ai:Error? {
+function testResponsesV1GenerateMethod() returns ai:Error? {
+    int|error rating = responsesV1Provider->generate(`Rate this blog out of 10.
+        Title: ${blog1.title}
+        Content: ${blog1.content}`);
+    test:assertEquals(rating, 4);
+}
+
+@test:Config
+function testResponsesV1ChatWithSimpleMessage() returns ai:Error? {
     ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
-    ai:ChatAssistantMessage result = check legacyProvider->chat(userMsg, []);
+    ai:ChatAssistantMessage result = check responsesV1Provider->chat(userMsg, []);
+    test:assertTrue(result.content is string);
     test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
 }
 
 @test:Config
-function testLegacyChatWithTools() returns ai:Error? {
+function testResponsesV1ChatWithMessageArray() returns ai:Error? {
+    ai:ChatMessage[] messages = [
+        <ai:ChatSystemMessage>{role: "system", content: "You are a helpful assistant."},
+        <ai:ChatUserMessage>{role: "user", content: "Hello, how are you?"}
+    ];
+    ai:ChatAssistantMessage result = check responsesV1Provider->chat(messages, []);
+    test:assertTrue(result.content is string);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+@test:Config
+function testResponsesV1ChatWithTools() returns ai:Error? {
     ai:ChatUserMessage userMsg = {role: "user", content: "What is the weather in London?"};
     ai:ChatCompletionFunctions[] tools = [
         {
@@ -557,19 +541,38 @@ function testLegacyChatWithTools() returns ai:Error? {
             }
         }
     ];
-    ai:ChatAssistantMessage result = check legacyProvider->chat(userMsg, tools);
+    ai:ChatAssistantMessage result = check responsesV1Provider->chat(userMsg, tools);
     ai:FunctionCall[]? toolCalls = result.toolCalls;
     test:assertTrue(toolCalls is ai:FunctionCall[]);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls).length(), 1);
     test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
     test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "London"});
 }
 
-@test:Config
-function testLegacyChatFallbackToChatCompletions() returns ai:Error? {
-    // Fresh provider so `responsesApiUnsupported` starts as false.
-    OpenAiModelProvider fallbackProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, LEGACY_API_VERSION);
+// ===== Chat Completions API (`apiType = CHAT_COMPLETION`) tests =====
+// These hit the deployment-scoped Azure OpenAI Chat Completions endpoint:
+//   /openai/deployments/{deploymentId}/chat/completions?api-version=...
 
-    ai:ChatUserMessage userMsg = {role: "user", content: "Fallback test: What is the weather in Paris?"};
+@test:Config
+function testChatCompletionChatWithSimpleMessage() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
+    ai:ChatAssistantMessage result = check chatCompletionProvider->chat(userMsg, []);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+@test:Config
+function testChatCompletionChatWithMessageArray() returns ai:Error? {
+    ai:ChatMessage[] messages = [
+        <ai:ChatSystemMessage>{role: "system", content: "You are a helpful assistant."},
+        <ai:ChatUserMessage>{role: "user", content: "Hello, how are you?"}
+    ];
+    ai:ChatAssistantMessage result = check chatCompletionProvider->chat(messages, []);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+@test:Config
+function testChatCompletionChatWithTools() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "What is the weather in London?"};
     ai:ChatCompletionFunctions[] tools = [
         {
             name: "get_weather",
@@ -583,20 +586,18 @@ function testLegacyChatFallbackToChatCompletions() returns ai:Error? {
             }
         }
     ];
-
-    // Responses API returns model_not_found; provider must fall back to the legacy Chat Completions endpoint.
-    ai:ChatAssistantMessage result = check fallbackProvider->chat(userMsg, tools);
+    ai:ChatAssistantMessage result = check chatCompletionProvider->chat(userMsg, tools);
     ai:FunctionCall[]? toolCalls = result.toolCalls;
     test:assertTrue(toolCalls is ai:FunctionCall[]);
     test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
-    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "Paris"});
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "London"});
 }
 
-// Note: legacy `generate()` exercises the updated native `Generator` (legacy branch), so it requires the
+// Note: `generate()` via the Chat Completions API exercises the native `Generator`, so it requires the
 // native JAR (`ai.azure-native`) to be rebuilt from `native/` before running.
 @test:Config
-function testLegacyGenerateMethodWithBasicReturnType() returns ai:Error? {
-    int|error rating = legacyProvider->generate(`Rate this blog out of 10.
+function testChatCompletionGenerateMethodWithBasicReturnType() returns ai:Error? {
+    int|error rating = chatCompletionProvider->generate(`Rate this blog out of 10.
         Title: ${blog1.title}
         Content: ${blog1.content}`);
     test:assertEquals(rating, 4);
