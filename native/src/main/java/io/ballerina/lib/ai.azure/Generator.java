@@ -86,6 +86,7 @@ public class Generator {
                 modelProvider.get(StringUtils.fromString(API_VERSION)),
                 modelProvider.get(StringUtils.fromString(TEMPERATURE)),
                 modelProvider.get(StringUtils.fromString(MAX_TOKENS)),
+                modelProvider.get(StringUtils.fromString(REASONING)),
                 prompt, expectedResponseTypedesc);
     }
 }

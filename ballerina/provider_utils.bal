@@ -19,6 +19,7 @@ import ballerina/ai.observe;
 import ballerina/constraint;
 import ballerina/lang.array;
 import ballerinax/azure.openai.chat as chat;
+import ballerinax/azure.openai.responses as responses;
 
 type ResponseSchema record {|
     map<json> schema;
@@ -238,8 +239,8 @@ isolated function handleParseResponseError(error chatResponseError) returns erro
 }
 
 isolated function generateLlmResponse(chat:Client llmClient, string deploymentId,
-        string apiVersion, decimal? temperature, int maxTokens, ai:Prompt prompt,
-        typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
+        string apiVersion, decimal? temperature, int maxTokens, responses:ReasoningEffort? reasoning,
+        ai:Prompt prompt, typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
     observe:GenerateContentSpan span = observe:createGenerateContentSpan(deploymentId);
     decimal? temp = temperature;
     if temp is decimal {
@@ -273,6 +274,9 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
         max_tokens: maxTokens,
         tool_choice: getGetResultsToolChoice()
     };
+    if reasoning is "low"|"medium"|"high" {
+        request.reasoning_effort = reasoning;
+    }
     span.addInputMessages(request.messages.toJson());
 
     chat:inline_response_200|error response =

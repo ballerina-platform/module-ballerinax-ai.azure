@@ -78,8 +78,7 @@ public isolated client class OpenAiModelProvider {
     # + temperature - The temperature for controlling randomness in the model's output.
     #               Higher values (e.g., 0.8) make output more random, while lower values (e.g., 0.2) make it more
     #               focused and deterministic. Some models may not support this parameter, in which case set it to `()`.
-    # + reasoningEffort - Reasoning effort level for reasoning models. This is only applied on the Responses API path
-    #                   and is ignored when using the Chat Completions API.
+    # + reasoningEffort - Reasoning effort level for reasoning models.
     # + apiType - The Azure OpenAI API surface to use. Defaults to `RESPONSES`. Set to `CHAT_COMPLETION` to use the
     #           Chat Completions API instead.
     # + connectionConfig - Additional HTTP connection configuration
@@ -266,6 +265,10 @@ public isolated client class OpenAiModelProvider {
             temperature: self.temperature,
             max_tokens: self.maxTokens
         };
+        responses:ReasoningEffort? reasoningEffort = self.reasoning;
+        if reasoningEffort is "low"|"medium"|"high" {
+            request.reasoning_effort = reasoningEffort;
+        }
         if stop is string {
             request.stop = stop;
         }
