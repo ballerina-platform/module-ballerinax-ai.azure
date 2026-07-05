@@ -17,6 +17,8 @@
 import ballerina/ai;
 import ballerina/ai.observe;
 import ballerina/constraint;
+import ballerina/data.jsondata;
+import ballerina/http;
 import ballerina/lang.array;
 import ballerinax/azure.openai.chat as chat;
 import ballerinax/azure.openai.responses as responses;
@@ -238,7 +240,44 @@ isolated function handleParseResponseError(error chatResponseError) returns erro
     return chatResponseError;
 }
 
-isolated function generateLlmResponse(chat:Client llmClient, string deploymentId,
+// Azure introduced `max_completion_tokens` (and made reasoning models reject the legacy `max_tokens`) in
+// api-version 2024-08-01-preview. api-version values are date-prefixed (YYYY-MM-DD[-preview]) and therefore
+// sort lexicographically, so a prefix comparison is a reliable "is this version >= threshold" test.
+const string MAX_COMPLETION_TOKENS_MIN_API_VERSION = "2024-08-01";
+
+isolated function usesMaxCompletionTokens(string apiVersion) returns boolean {
+    string datePrefix = apiVersion.length() >= 10 ? apiVersion.substring(0, 10) : apiVersion;
+    return datePrefix >= MAX_COMPLETION_TOKENS_MIN_API_VERSION;
+}
+
+// Serializes a Chat Completions request to its wire form, choosing the correct fields for the target
+// api-version and model.
+//
+// - Token limit: for api-version >= 2024-08-01-preview the value is sent as `max_completion_tokens` (required
+//   by GPT-5/o-series, which reject `max_tokens`); for older versions it stays as `max_tokens` (those versions
+//   don't recognize `max_completion_tokens`). The generated record always serializes a `max_tokens` key, so on
+//   the newer path we relocate its value and drop the rejected key entirely.
+// - Reasoning effort: the generated `createChatCompletionRequest` defaults `reasoning_effort` to "medium", so
+//   `jsondata:toJson` always serializes it. Keep it only when the caller actually selected a
+//   Chat-Completions-supported effort (mirroring where `request.reasoning_effort` is set); otherwise drop it so
+//   non-reasoning deployments and older api-versions don't receive an unsupported/unintended `reasoning_effort`.
+isolated function buildChatCompletionBody(chat:createChatCompletionRequest request, string apiVersion,
+        responses:ReasoningEffort? reasoning) returns map<json>|ai:Error {
+    do {
+        map<json> body = check jsondata:toJson(request).ensureType();
+        if usesMaxCompletionTokens(apiVersion) && body.hasKey("max_tokens") {
+            body["max_completion_tokens"] = body.remove("max_tokens");
+        }
+        if !(reasoning is "low"|"medium"|"high") && body.hasKey("reasoning_effort") {
+            _ = body.remove("reasoning_effort");
+        }
+        return body;
+    } on fail error e {
+        return error ai:Error("Failed to build the Chat Completions request body", e);
+    }
+}
+
+isolated function generateLlmResponse(http:Client llmClient, string apiKey, string deploymentId,
         string apiVersion, decimal? temperature, int maxTokens, responses:ReasoningEffort? reasoning,
         ai:Prompt prompt, typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
     observe:GenerateContentSpan span = observe:createGenerateContentSpan(deploymentId);
@@ -279,16 +318,17 @@ isolated function generateLlmResponse(chat:Client llmClient, string deploymentId
     }
     span.addInputMessages(request.messages.toJson());
 
-    chat:inline_response_200|error response =
-        llmClient->/deployments/[deploymentId]/chat/completions.post(request, queries = {api\-version: apiVersion});
-    if response is error {
-        ai:Error err = error("LLM call failed: " + response.message(), cause = response.cause(), detail = response.detail());
-        span.close(err);
-        return err;
+    map<json>|ai:Error body = buildChatCompletionBody(request, apiVersion, reasoning);
+    if body is ai:Error {
+        span.close(body);
+        return body;
     }
 
-    if response !is chat:createChatCompletionResponse {
-        ai:Error err = error("Unexpected (streaming) response from the Chat Completions API");
+    chat:createChatCompletionResponse|error response = llmClient->post(
+        string `/deployments/${deploymentId}/chat/completions?api-version=${apiVersion}`,
+        body, {"api-key": apiKey});
+    if response is error {
+        ai:Error err = error("LLM call failed: " + response.message(), cause = response.cause(), detail = response.detail());
         span.close(err);
         return err;
     }
