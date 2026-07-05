@@ -14,7 +14,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import ballerina/ai;
 import ballerina/http;
 
 # Configurations for controlling the behaviours when communicating with a remote HTTP endpoint.
@@ -78,12 +77,26 @@ public type ConnectionConfig record {|
     boolean validation = true;
 |};
 
-type AzureChatUserMessage record {|
-    *ai:ChatUserMessage;
-    string content;
-|};
+# The Azure OpenAI API surface used by the `OpenAiModelProvider`.
+#
+# The concrete wire route is derived from both this value and the shape of the `serviceUrl`:
+#
+# | `apiType` | `serviceUrl` ends with `/v1` (v1 GA) | otherwise (legacy) |
+# | --- | --- | --- |
+# | `CHAT_COMPLETION` | `POST {serviceUrl}/chat/completions` via the `azure.openai.chat` connector | `POST {serviceUrl}/openai/deployments/{deploymentId}/chat/completions?api-version={apiVersion}` |
+# | `RESPONSES` | `POST {serviceUrl}/responses` via the `azure.openai.responses` connector | `POST {serviceUrl}/openai/responses?api-version={apiVersion}` |
+public enum ApiType {
+    # Use the Azure OpenAI **Chat Completions API**. This is the default and preserves the behaviour of
+    # earlier releases of this module.
+    CHAT_COMPLETION,
+    # Use the Azure OpenAI **Responses API**.
+    RESPONSES
+}
 
-type AzureChatSystemMessage record {|
-    *ai:ChatSystemMessage;
-    string content;
-|};
+# Reasoning effort level for reasoning models (`gpt-5`/`o`-series).
+#
+# The supported set follows the Azure OpenAI specification: `none`, `minimal`, `low`, `medium`, `high`, and
+# `xhigh`. Not every model supports every value (for example, `minimal` is only supported by the original
+# `gpt-5` reasoning models, `xhigh` only by `gpt-5.1-codex-max` and later, and `none` only by `gpt-5.1`+).
+# Passing an unsupported value for the target deployment results in an error from the service.
+public type ReasoningEffort "none"|"minimal"|"low"|"medium"|"high"|"xhigh";

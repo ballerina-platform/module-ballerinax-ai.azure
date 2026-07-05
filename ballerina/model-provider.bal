@@ -25,82 +25,80 @@ import ballerinax/azure.openai.responses as responses;
 const DEFAULT_MAX_TOKEN_COUNT = 512;
 const DEFAULT_TEMPERATURE = 0.7d;
 
-# The Azure OpenAI API surface used by the `OpenAiModelProvider`.
-public enum ApiType {
-    # Use the Azure OpenAI **Responses API**. This is the default. The exact route is derived from the
-    # `serviceUrl`: if the URL ends with `/v1` the v1 GA surface `POST {serviceUrl}/responses` is used
-    # (no `api-version`); otherwise the legacy preview route
-    # `POST {serviceUrl}/openai/responses?api-version={apiVersion}` is used.
-    RESPONSES,
-    # Use the Azure OpenAI **Chat Completions API**
-    # (`POST {serviceUrl}/openai/deployments/{deploymentId}/chat/completions?api-version={apiVersion}`).
-    CHAT_COMPLETION
-}
-
 # `OpenAiModelProvider` is a client class that provides an interface for interacting with Azure-hosted OpenAI
 # language models.
 #
-# The provider can target either the Azure OpenAI **Responses API** or the **Chat Completions API**. The API
-# surface is selected at initialization time through the `apiType` parameter and defaults to
-# `RESPONSES`. The Chat Completions surface is backed by the generated `ballerinax/azure.openai.chat`
-# connector. For the Responses surface the route depends on the `serviceUrl`: a URL ending with `/v1`
-# targets the v1 GA surface through the generated `ballerinax/azure.openai.responses` connector, while any
-# other URL targets the legacy preview route (`/openai/responses?api-version=...`) through a raw HTTP client.
-public isolated client class OpenAiModelProvider {
+# The provider can target either the Azure OpenAI **Chat Completions API** (the default) or the **Responses API**,
+# selected through the `apiType` parameter. The concrete wire route additionally depends on the shape of the
+# `serviceUrl`: a URL ending with `/v1` targets the Azure OpenAI **v1 GA** surface through the generated
+# `ballerinax/azure.openai.chat` / `ballerinax/azure.openai.responses` connectors, while any other URL targets the
+# **legacy** route (`?api-version=...`) through a raw HTTP client. See the `ApiType` documentation for the full
+# routing matrix.
+public isolated distinct client class OpenAiModelProvider {
     *ai:ModelProvider;
-    # Raw HTTP client for the Chat Completions route. Created only when `apiType` is `CHAT_COMPLETION`; `()` otherwise.
-    # A raw client (rather than the generated `chat:Client`) is used so the request body can be serialized in this
-    # module and the correct token-limit field (`max_tokens` vs `max_completion_tokens`) selected per api-version.
-    private final http:Client? llmClient;
-    # Generated Responses connector used for the v1 GA surface (`POST {serviceUrl}/responses`).
+    # Generated Chat Completions connector for the v1 GA surface (`POST {serviceUrl}/chat/completions`).
+    # Created only when `apiType` is `CHAT_COMPLETION` and the `serviceUrl` targets the v1 GA surface; `()` otherwise.
+    private final chat:Client? chatClient;
+    # Raw HTTP client for the legacy Chat Completions route
+    # (`POST {serviceUrl}/openai/deployments/{deploymentId}/chat/completions?api-version=...`). Created only when
+    # `apiType` is `CHAT_COMPLETION` and the `serviceUrl` targets the legacy surface; `()` otherwise. A raw client
+    # (rather than the connector) is used so the request body can be serialized here and the correct token-limit
+    # field (`max_tokens` vs `max_completion_tokens`) selected per api-version.
+    private final http:Client? legacyChatClient;
+    # Generated Responses connector for the v1 GA surface (`POST {serviceUrl}/responses`).
     # Created only when `apiType` is `RESPONSES` and the `serviceUrl` targets the v1 GA surface; `()` otherwise.
     private final responses:Client? responsesClient;
-    # Raw HTTP client used for the legacy preview route (`POST {serviceUrl}/openai/responses?api-version=...`).
-    # Created only when `apiType` is `RESPONSES` and the `serviceUrl` targets the legacy preview surface; `()` otherwise.
+    # Raw HTTP client for the legacy Responses route (`POST {serviceUrl}/openai/responses?api-version=...`).
+    # Created only when `apiType` is `RESPONSES` and the `serviceUrl` targets the legacy surface; `()` otherwise.
     private final http:Client? legacyResponsesClient;
-    # `true` when the Responses path targets the v1 GA surface; `false` for the legacy preview route.
-    private final boolean useV1Responses;
+    # `true` when the `serviceUrl` targets the v1 GA surface (ends with `/v1`); `false` for the legacy surface.
+    private final boolean useV1;
     private final string apiKey;
     private final string deploymentId;
-    private final string apiVersion;
+    # Date-based `api-version` used on the legacy routes; `()` on the v1 GA surface.
+    private final string? apiVersion;
+    # `preview`/`v1` api-version forwarded on the v1 GA surface, if the caller opted into one; `()` otherwise.
+    private final string? v1ApiVersion;
     private final decimal? temperature;
     private final int maxTokens;
-    private final responses:ReasoningEffort? reasoning;
+    private final ReasoningEffort? reasoning;
     private final ApiType apiType;
 
     # Initializes the Azure OpenAI model with the given connection configuration and model configuration.
     #
-    # + serviceUrl - The base URL of the Azure OpenAI API endpoint (e.g. `https://<resource>.openai.azure.com`)
+    # + serviceUrl - The base URL of the Azure OpenAI API endpoint. A URL ending with `/v1`
+    #              (e.g. `https://<resource>.openai.azure.com/openai/v1`) targets the v1 GA surface; any other URL
+    #              (e.g. `https://<resource>.openai.azure.com`) targets the legacy route.
     # + apiKey - The Azure OpenAI API key
     # + deploymentId - The deployment identifier for the specific model deployment in Azure
-    # + apiVersion - The Azure OpenAI API version (e.g. `"2025-04-01-preview"`). Used by the Chat Completions API
-    #              and by the legacy preview Responses route (`/openai/responses?api-version=...`). It is not sent
-    #              on the Responses v1 GA surface (a `serviceUrl` ending with `/v1`), which does not accept it.
-    #              On the Chat Completions surface, an api-version `>= 2024-08-01-preview` automatically sends the
-    #              token limit as `max_completion_tokens` (required by GPT-5/o-series models, which reject
-    #              `max_tokens`); older versions send `max_tokens` for backward compatibility.
+    # + apiVersion - The Azure OpenAI `api-version`. **Required** for legacy (non-`/v1`) service URLs
+    #              (e.g. `"2024-10-21"`); on such URLs an api-version `>= 2024-08-01-preview` sends the token limit
+    #              as `max_completion_tokens` (required by GPT-5/o-series models, which reject `max_tokens`) and
+    #              older versions send `max_tokens`. For v1 (`/v1`) service URLs the value is optional and normally
+    #              omitted; pass `"preview"` or `"v1"` to opt into a specific v1 surface (any other value is
+    #              ignored on v1 URLs).
     # + maxTokens - The upper limit for the number of tokens in the response generated by the model
-    # + temperature - The temperature for controlling randomness in the model's output.
-    #               Higher values (e.g., 0.8) make output more random, while lower values (e.g., 0.2) make it more
-    #               focused and deterministic. Some models may not support this parameter, in which case set it to `()`.
+    # + temperature - The temperature for controlling randomness in the model's output. Higher values (e.g., 0.8)
+    #               make output more random, while lower values (e.g., 0.2) make it more focused and deterministic.
+    #               Set it to `()` for models that do not support this parameter (e.g. GPT-5/o-series reasoning
+    #               models).
     # + reasoningEffort - Reasoning effort level for reasoning models.
-    # + apiType - The Azure OpenAI API surface to use. Defaults to `RESPONSES`. Set to `CHAT_COMPLETION` to use the
-    #           Chat Completions API instead.
+    # + apiType - The Azure OpenAI API surface to use. Defaults to `CHAT_COMPLETION`. Set to `RESPONSES` to use the
+    #           Responses API instead.
     # + connectionConfig - Additional HTTP connection configuration
     # + return - `nil` on successful initialization; otherwise, returns an `ai:Error`
     public isolated function init(@display {label: "Service URL"} string serviceUrl,
             @display {label: "API Key"} string apiKey,
             @display {label: "Deployment ID"} string deploymentId,
-            @display {label: "API Version"} string apiVersion,
+            @display {label: "API Version"} string? apiVersion = (),
             @display {label: "Maximum Tokens"} int maxTokens = DEFAULT_MAX_TOKEN_COUNT,
             @display {label: "Temperature"} decimal? temperature = DEFAULT_TEMPERATURE,
-            @display {label: "Reasoning Effort"} responses:ReasoningEffort? reasoningEffort = (),
-            @display {label: "API Type"} ApiType apiType = RESPONSES,
+            @display {label: "Reasoning Effort"} ReasoningEffort? reasoningEffort = (),
+            @display {label: "API Type"} ApiType apiType = CHAT_COMPLETION,
             @display {label: "Connection Configuration"} *ConnectionConfig connectionConfig) returns ai:Error? {
 
-        self.deploymentId = deploymentId;
         self.apiKey = apiKey;
-        self.apiVersion = apiVersion;
+        self.deploymentId = deploymentId;
         self.temperature = temperature;
         self.maxTokens = maxTokens;
         self.reasoning = reasoningEffort;
@@ -108,104 +106,78 @@ public isolated client class OpenAiModelProvider {
 
         // Drop a single trailing slash so the suffix checks below operate on a canonical form.
         string trimmedUrl = serviceUrl.endsWith("/") ? serviceUrl.substring(0, serviceUrl.length() - 1) : serviceUrl;
-
-        // A `serviceUrl` ending with `/v1` (e.g. `https://<resource>.openai.azure.com/openai/v1`) selects the
-        // Azure OpenAI Responses **v1 GA** surface, which is served at `{serviceUrl}/responses` with no
-        // `api-version`. Any other URL uses the legacy preview route `{...}/openai/responses?api-version=...`.
         boolean isV1 = trimmedUrl.endsWith("/v1");
-        self.useV1Responses = isV1;
+        self.useV1 = isV1;
 
-        // The Chat Completions API is always deployment-scoped under `/openai`. Strip a trailing `/v1` (the v1 GA
-        // Responses form) before appending `/openai` so the Chat Completions route stays valid regardless of which
-        // Responses surface the `serviceUrl` targets.
-        string chatBase = isV1 ? trimmedUrl.substring(0, trimmedUrl.length() - "/v1".length()) : trimmedUrl;
-        string normalizedUrl = chatBase.endsWith("/openai") ? chatBase : chatBase + "/openai";
-
-        // Create only the client required by the selected `apiType`; the unused client fields stay `()`.
-        if apiType == CHAT_COMPLETION {
-            // Raw HTTP client bound to the `.../openai` base. The `api-key` header is added per request (see
-            // `chatViaChatCompletions`/`generateLlmResponse`) rather than through connector auth, so the request
-            // body can be built here and the token-limit field chosen per api-version. `laxDataBinding` mirrors
-            // the generated connector so real Azure responses bind identically.
-            http:ClientConfiguration chatHttpConfig = {
-                httpVersion: connectionConfig.httpVersion,
-                http1Settings: connectionConfig.http1Settings ?: {},
-                http2Settings: connectionConfig.http2Settings ?: {},
-                timeout: connectionConfig.timeout,
-                forwarded: connectionConfig.forwarded,
-                poolConfig: connectionConfig.poolConfig,
-                cache: connectionConfig.cache ?: {},
-                compression: connectionConfig.compression,
-                circuitBreaker: connectionConfig.circuitBreaker,
-                retryConfig: connectionConfig.retryConfig,
-                responseLimits: connectionConfig.responseLimits ?: {},
-                secureSocket: connectionConfig.secureSocket,
-                proxy: connectionConfig.proxy,
-                validation: connectionConfig.validation,
-                laxDataBinding: true
-            };
-            http:Client|error llmClient = new (normalizedUrl, chatHttpConfig);
-            if llmClient is error {
-                return error ai:Error("Failed to initialize Chat Completions client", llmClient);
+        // Resolve the api-version for the selected surface.
+        string? resolvedApiVersion = ();
+        string? resolvedV1ApiVersion = ();
+        if isV1 {
+            // v1 GA does not require an api-version. Honor an explicit "preview"/"v1"; ignore date-based values.
+            if apiVersion is string {
+                string trimmedVersion = apiVersion.trim();
+                if trimmedVersion == "preview" || trimmedVersion == "v1" {
+                    resolvedV1ApiVersion = trimmedVersion;
+                } else if trimmedVersion.length() > 0 {
+                    log:printWarn("The 'apiVersion' argument is ignored for v1 ('/v1') Azure OpenAI service URLs; " +
+                            "date-based api-versions apply only to legacy service URLs. Pass \"preview\" or \"v1\" " +
+                            "to opt into a specific v1 surface.", apiVersion = apiVersion);
+                }
             }
-            self.llmClient = llmClient;
-            self.responsesClient = ();
-            self.legacyResponsesClient = ();
-        } else if isV1 {
-            // v1 GA surface: the generated connector posts `/responses` onto the `.../openai/v1` base URL.
-            responses:ConnectionConfig responsesConfig = {
-                auth: {api\-key: apiKey},
-                httpVersion: connectionConfig.httpVersion,
-                http1Settings: connectionConfig.http1Settings ?: {},
-                http2Settings: connectionConfig.http2Settings ?: {},
-                timeout: connectionConfig.timeout,
-                forwarded: connectionConfig.forwarded,
-                poolConfig: connectionConfig.poolConfig,
-                cache: connectionConfig.cache ?: {},
-                compression: connectionConfig.compression,
-                circuitBreaker: connectionConfig.circuitBreaker,
-                retryConfig: connectionConfig.retryConfig,
-                responseLimits: connectionConfig.responseLimits ?: {},
-                secureSocket: connectionConfig.secureSocket,
-                proxy: connectionConfig.proxy,
-                validation: connectionConfig.validation
-            };
-            responses:Client|error responsesApiClient = new (responsesConfig, trimmedUrl);
-            if responsesApiClient is error {
-                return error ai:Error("Failed to initialize Responses API client", responsesApiClient);
-            }
-            self.responsesClient = responsesApiClient;
-            self.legacyResponsesClient = ();
-            self.llmClient = ();
         } else {
-            // Legacy preview route: the generated connector cannot attach the required `api-version` query
-            // parameter, so use a raw HTTP client bound to the `.../openai` base and add `api-version` per request.
-            http:ClientConfiguration legacyHttpConfig = {
-                httpVersion: connectionConfig.httpVersion,
-                http1Settings: connectionConfig.http1Settings ?: {},
-                http2Settings: connectionConfig.http2Settings ?: {},
-                timeout: connectionConfig.timeout,
-                forwarded: connectionConfig.forwarded,
-                poolConfig: connectionConfig.poolConfig,
-                cache: connectionConfig.cache ?: {},
-                compression: connectionConfig.compression,
-                circuitBreaker: connectionConfig.circuitBreaker,
-                retryConfig: connectionConfig.retryConfig,
-                responseLimits: connectionConfig.responseLimits ?: {},
-                secureSocket: connectionConfig.secureSocket,
-                proxy: connectionConfig.proxy,
-                validation: connectionConfig.validation,
-                // Match the generated `responses` connector, which enables lax data binding by default, so the
-                // legacy route deserializes real Azure responses identically to the v1 GA surface.
-                laxDataBinding: true
-            };
-            http:Client|error legacyClient = new (normalizedUrl, legacyHttpConfig);
-            if legacyClient is error {
-                return error ai:Error("Failed to initialize Responses API client", legacyClient);
+            // The legacy route requires a date-based api-version query parameter.
+            if apiVersion is () || apiVersion.trim().length() == 0 {
+                return error ai:Error("The 'apiVersion' argument is required for legacy (non-'/v1') Azure OpenAI " +
+                        "service URLs. Provide a date-based api-version (e.g. \"2024-10-21\") or use a " +
+                        "'.../openai/v1' service URL.");
             }
-            self.legacyResponsesClient = legacyClient;
+            resolvedApiVersion = apiVersion;
+        }
+        self.apiVersion = resolvedApiVersion;
+        self.v1ApiVersion = resolvedV1ApiVersion;
+
+        // Base for the legacy raw-HTTP routes must end with `/openai` (the deployment/route segments are appended
+        // per request).
+        string legacyBase = trimmedUrl.endsWith("/openai") ? trimmedUrl : trimmedUrl + "/openai";
+
+        // Create only the client required by the selected (apiType, surface) combination; unused fields stay `()`.
+        if apiType == CHAT_COMPLETION {
+            if isV1 {
+                chat:Client|error chatClient = new (toChatConnectionConfig(apiKey, connectionConfig), trimmedUrl);
+                if chatClient is error {
+                    return error ai:Error("Failed to initialize Azure OpenAI Chat Completions (v1) client", chatClient);
+                }
+                self.chatClient = chatClient;
+                self.legacyChatClient = ();
+            } else {
+                http:Client|error legacyChatClient = new (legacyBase, toRawHttpConfig(connectionConfig));
+                if legacyChatClient is error {
+                    return error ai:Error("Failed to initialize Azure OpenAI Chat Completions client", legacyChatClient);
+                }
+                self.legacyChatClient = legacyChatClient;
+                self.chatClient = ();
+            }
             self.responsesClient = ();
-            self.llmClient = ();
+            self.legacyResponsesClient = ();
+        } else {
+            if isV1 {
+                responses:Client|error responsesClient =
+                        new (toResponsesConnectionConfig(apiKey, connectionConfig), trimmedUrl);
+                if responsesClient is error {
+                    return error ai:Error("Failed to initialize Azure OpenAI Responses (v1) client", responsesClient);
+                }
+                self.responsesClient = responsesClient;
+                self.legacyResponsesClient = ();
+            } else {
+                http:Client|error legacyResponsesClient = new (legacyBase, toRawHttpConfig(connectionConfig));
+                if legacyResponsesClient is error {
+                    return error ai:Error("Failed to initialize Azure OpenAI Responses client", legacyResponsesClient);
+                }
+                self.legacyResponsesClient = legacyResponsesClient;
+                self.responsesClient = ();
+            }
+            self.chatClient = ();
+            self.legacyChatClient = ();
         }
     }
 
@@ -239,10 +211,6 @@ public isolated client class OpenAiModelProvider {
 
     private isolated function chatViaChatCompletions(ai:ChatMessage[]|ai:ChatUserMessage messages,
             ai:ChatCompletionFunctions[] tools, string? stop) returns ai:ChatAssistantMessage|ai:Error {
-        http:Client? llmClient = self.llmClient;
-        if llmClient is () {
-            return error ai:LlmConnectionError("Chat Completions client is not initialized");
-        }
         observe:ChatSpan span = observe:createChatSpan(self.deploymentId);
         span.addProvider("azure.ai.openai");
         span.addOutputType(observe:TEXT);
@@ -253,15 +221,13 @@ public isolated client class OpenAiModelProvider {
         if temp is decimal {
             span.addTemperature(temp);
         }
+        // Best-effort span input logging; multimodal content that cannot be stringified is simply not logged.
         json|ai:Error jsonMsg = convertMessageToJson(messages);
-        if jsonMsg is ai:Error {
-            ai:Error err = error("Error while transforming input", jsonMsg);
-            span.close(err);
-            return err;
+        if jsonMsg is json {
+            span.addInputMessages(jsonMsg);
         }
-        span.addInputMessages(jsonMsg);
 
-        chat:chatCompletionRequestMessage[]|ai:Error completionMessages
+        chat:OpenAIChatCompletionRequestMessage[]|ai:Error completionMessages
                 = self.prepareCompletionRequestMessages(messages);
         if completionMessages is ai:Error {
             ai:Error err = error("Error while preparing completion request messages", completionMessages);
@@ -269,13 +235,16 @@ public isolated client class OpenAiModelProvider {
             return err;
         }
 
-        chat:createChatCompletionRequest request = {
-            messages: completionMessages,
-            temperature: self.temperature,
-            max_tokens: self.maxTokens
+        chat:ChatCompletionsBody request = {
+            model: self.deploymentId,
+            messages: completionMessages
         };
-        responses:ReasoningEffort? reasoningEffort = self.reasoning;
-        if reasoningEffort is "low"|"medium"|"high" {
+        decimal? temperature = self.temperature;
+        if temperature is decimal {
+            request.temperature = temperature;
+        }
+        ReasoningEffort? reasoningEffort = self.reasoning;
+        if reasoningEffort is ReasoningEffort {
             request.reasoning_effort = reasoningEffort;
         }
         if stop is string {
@@ -285,16 +254,10 @@ public isolated client class OpenAiModelProvider {
             request.tools = convertFunctionsToCompletionTools(tools);
             span.addTools(tools);
         }
+        applyMaxTokens(request, self.maxTokens, self.useV1 || usesMaxCompletionTokens(self.apiVersion ?: ""));
 
-        map<json>|ai:Error body = buildChatCompletionBody(request, self.apiVersion, self.reasoning);
-        if body is ai:Error {
-            span.close(body);
-            return body;
-        }
-
-        chat:createChatCompletionResponse|error response = llmClient->post(
-            string `/deployments/${self.deploymentId}/chat/completions?api-version=${self.apiVersion}`,
-            body, {"api-key": self.apiKey});
+        ChatCompletionResult|error response = postChatCompletion(self.chatClient, self.legacyChatClient, self.useV1,
+                self.apiKey, self.deploymentId, self.apiVersion, self.v1ApiVersion, request);
         if response is error {
             ai:Error err = error ai:LlmConnectionError("Error while connecting to the model", response);
             log:printError("Error response received from Chat Completions API", err);
@@ -302,22 +265,25 @@ public isolated client class OpenAiModelProvider {
             return err;
         }
 
-        chat:createChatCompletionResponse_choices[] choices = response.choices;
+        chat:OpenAICreateChatCompletionResponseChoices[] choices = response.choices;
         if choices.length() == 0 {
             ai:Error err = error ai:LlmInvalidResponseError("Empty response from the model when using function call API");
             span.close(err);
             return err;
         }
 
-        span.addResponseId(response.id);
-        chat:completionUsage? usage = response.usage;
-        if usage is chat:completionUsage {
+        string? responseId = response.id;
+        if responseId is string {
+            span.addResponseId(responseId);
+        }
+        chat:OpenAICompletionUsage? usage = response.usage;
+        if usage is chat:OpenAICompletionUsage {
             span.addInputTokenCount(usage.prompt_tokens);
             span.addOutputTokenCount(usage.completion_tokens);
         }
         span.addFinishReason(choices[0].finish_reason);
 
-        chat:chatCompletionResponseMessage message = choices[0].message;
+        chat:OpenAIChatCompletionResponseMessage message = choices[0].message;
         ai:ChatAssistantMessage|error chatAssistantMessage = self.convertChatCompletionsResponseToAssistantMessage(message);
         if chatAssistantMessage is error {
             span.close(chatAssistantMessage);
@@ -352,22 +318,23 @@ public isolated client class OpenAiModelProvider {
             span.addInputMessages(inputMessage);
         }
 
-        [responses:InputItem[], string?]|ai:Error responseInput = convertToResponsesInput(messages);
+        [responses:OpenAIInputItem[], string?]|ai:Error responseInput = convertToResponsesInput(messages);
         if responseInput is ai:Error {
             ai:Error err = error("Error while transforming input for Responses API", responseInput);
             span.close(err);
             return err;
         }
-        [responses:InputItem[], string?] [inputItems, instructions] = responseInput;
+        [responses:OpenAIInputItem[], string?] [inputItems, instructions] = responseInput;
 
-        responses:createResponse request = {
+        responses:OpenAICreateResponse request = {
             model: self.deploymentId,
             input: inputItems,
             max_output_tokens: self.maxTokens,
             store: false
         };
-        if self.temperature is decimal {
-            request.temperature = self.temperature;
+        decimal? temperature = self.temperature;
+        if temperature is decimal {
+            request.temperature = temperature;
         }
         if instructions is string {
             request.instructions = instructions;
@@ -376,23 +343,17 @@ public isolated client class OpenAiModelProvider {
             log:printWarn("The 'stop' parameter is not supported by the Responses API and will be ignored.",
                 model = self.deploymentId);
         }
-
         if tools.length() > 0 {
-            responses:Tool[]|error functionTools = convertToResponsesTools(tools);
-            if functionTools is error {
-                ai:Error err = error("Error while adding tools into Responses API", functionTools);
-                span.close(err);
-                return err;
-            }
-            request.tools = functionTools;
+            request.tools = convertToResponsesTools(tools);
             span.addTools(tools);
         }
-        responses:ReasoningEffort? reasoning = self.reasoning;
-        if reasoning != () {
-            request.reasoning = {effort: reasoning};
+        ReasoningEffort? reasoningEffort = self.reasoning;
+        if reasoningEffort is ReasoningEffort {
+            request.reasoning = {effort: reasoningEffort};
         }
 
-        responses:response|error response = self.postResponses(request);
+        responses:InlineResponse200|error response = postResponsesRequest(self.responsesClient,
+                self.legacyResponsesClient, self.useV1, self.apiKey, self.apiVersion, self.v1ApiVersion, request);
         if response is error {
             ai:Error err = error ai:LlmConnectionError("Error while connecting to the model", response);
             log:printError("Error response received from Responses API", err);
@@ -407,8 +368,8 @@ public isolated client class OpenAiModelProvider {
         }
 
         span.addResponseId(response.id);
-        responses:ResponseUsage? usage = response.usage;
-        if usage is responses:ResponseUsage {
+        responses:OpenAIResponseUsage? usage = response.usage;
+        if usage is responses:OpenAIResponseUsage {
             span.addInputTokenCount(usage.input_tokens);
             span.addOutputTokenCount(usage.output_tokens);
         }
@@ -426,32 +387,31 @@ public isolated client class OpenAiModelProvider {
         return message;
     }
 
-    // Dispatches the prepared Responses request to the configured surface. See `postResponsesRequest` for the
-    // v1-GA-vs-legacy-preview routing rules.
-    private isolated function postResponses(responses:createResponse request) returns responses:response|error =>
-        postResponsesRequest(self.responsesClient, self.legacyResponsesClient, self.useV1Responses,
-                self.apiKey, self.apiVersion, request);
-
     // ===== Chat Completions helper methods =====
 
     private isolated function prepareCompletionRequestMessages(ai:ChatMessage[]|ai:ChatUserMessage messages)
-            returns chat:chatCompletionRequestMessage[]|ai:Error {
-        chat:chatCompletionRequestMessage[] chatCompletionRequestMessages = [];
+            returns chat:OpenAIChatCompletionRequestMessage[]|ai:Error {
+        chat:OpenAIChatCompletionRequestMessage[] chatCompletionRequestMessages = [];
         if messages is ai:ChatUserMessage {
-            chatCompletionRequestMessages.push(check self.mapToAzureChatMessage(messages));
+            chatCompletionRequestMessages.push(check self.mapUserMessage(messages));
             return chatCompletionRequestMessages;
         }
         foreach ai:ChatMessage message in messages {
-            if message is ai:ChatUserMessage|ai:ChatSystemMessage {
-                chatCompletionRequestMessages.push(check self.mapToAzureChatMessage(message));
+            if message is ai:ChatUserMessage {
+                chatCompletionRequestMessages.push(check self.mapUserMessage(message));
+            } else if message is ai:ChatSystemMessage {
+                AzureChatSystemMessage systemMessage = {
+                    content: check getChatMessageStringContent(message.content),
+                    name: message?.name
+                };
+                chatCompletionRequestMessages.push(systemMessage);
             } else if message is ai:ChatAssistantMessage {
-                chat:chatCompletionRequestAssistantMessage assistantMessage = {role: ai:ASSISTANT};
+                AzureChatAssistantMessage assistantMessage = {};
                 ai:FunctionCall[]? toolCalls = message.toolCalls;
                 if toolCalls is ai:FunctionCall[] && toolCalls.length() > 0 {
                     assistantMessage.tool_calls = from ai:FunctionCall tc in toolCalls
                         select {
                             id: tc.id ?: string `call_${tc.name}`,
-                            'type: "function",
                             'function: {
                                 name: tc.name,
                                 arguments: (tc.arguments ?: {}).toJsonString()
@@ -464,8 +424,7 @@ public isolated client class OpenAiModelProvider {
                 }
                 chatCompletionRequestMessages.push(assistantMessage);
             } else if message is ai:ChatFunctionMessage {
-                chat:chatCompletionRequestToolMessage toolMessage = {
-                    role: "tool",
+                AzureChatToolMessage toolMessage = {
                     content: message?.content ?: "",
                     tool_call_id: message.id ?: string `call_${message.name}`
                 };
@@ -475,20 +434,34 @@ public isolated client class OpenAiModelProvider {
         return chatCompletionRequestMessages;
     }
 
-    private isolated function convertChatCompletionsResponseToAssistantMessage(
-            chat:chatCompletionResponseMessage message) returns ai:ChatAssistantMessage|error {
-        ai:ChatAssistantMessage chatAssistantMessage = {role: ai:ASSISTANT};
-        string? responseContent = message.content;
-        chatAssistantMessage.content = responseContent;
+    private isolated function mapUserMessage(ai:ChatUserMessage message)
+            returns AzureChatUserMessage|ai:Error {
+        string|ai:Prompt messageContent = message.content;
+        if messageContent is string {
+            return {content: messageContent, name: message?.name};
+        }
+        DocumentContentPart[] contentParts = check generateChatCreationContent(messageContent);
+        return {content: contentParts, name: message?.name};
+    }
 
-        chat:chatCompletionMessageToolCall[]? toolCalls = message.tool_calls;
-        if toolCalls is chat:chatCompletionMessageToolCall[] && toolCalls.length() > 0 {
+    private isolated function convertChatCompletionsResponseToAssistantMessage(
+            chat:OpenAIChatCompletionResponseMessage message) returns ai:ChatAssistantMessage|error {
+        ai:ChatAssistantMessage chatAssistantMessage = {role: ai:ASSISTANT};
+        chatAssistantMessage.content = message.content;
+
+        chat:OpenAIChatCompletionMessageToolCallsItem? toolCalls = message.tool_calls;
+        if toolCalls is chat:OpenAIChatCompletionMessageToolCallsItem && toolCalls.length() > 0 {
             ai:FunctionCall[] functionCalls = [];
-            foreach chat:chatCompletionMessageToolCall tc in toolCalls {
-                json arguments = check tc.'function.arguments.fromJsonString();
+            foreach chat:OpenAIChatCompletionMessageToolCall|chat:OpenAIChatCompletionMessageCustomToolCall tc
+                    in toolCalls {
+                if tc is chat:OpenAIChatCompletionMessageCustomToolCall {
+                    return error ai:LlmError("Custom tools are not supported, Found: " + tc.toJsonString());
+                }
+                chat:OpenAIChatCompletionMessageToolCall toolCall = <chat:OpenAIChatCompletionMessageToolCall>tc;
+                json arguments = check toolCall.'function.arguments.fromJsonString();
                 functionCalls.push({
-                    id: tc.id,
-                    name: tc.'function.name,
+                    id: toolCall.id,
+                    name: toolCall.'function.name,
                     arguments: check arguments.cloneWithType()
                 });
             }
@@ -499,8 +472,8 @@ public isolated client class OpenAiModelProvider {
         }
 
         // Fall back to the deprecated `function_call` field for backward compatibility.
-        chat:chatCompletionFunctionCall? functionCall = message.function_call;
-        if functionCall is chat:chatCompletionFunctionCall {
+        chat:OpenAIChatCompletionResponseMessageFunctionCall? functionCall = message.function_call;
+        if functionCall is chat:OpenAIChatCompletionResponseMessageFunctionCall {
             json arguments = check functionCall.arguments.fromJsonString();
             chatAssistantMessage.toolCalls = [
                 {
@@ -511,85 +484,6 @@ public isolated client class OpenAiModelProvider {
         }
         return chatAssistantMessage;
     }
-
-    private isolated function mapToAzureChatMessage(ai:ChatUserMessage|ai:ChatSystemMessage message)
-            returns chat:chatCompletionRequestUserMessage|chat:chatCompletionRequestSystemMessage|ai:Error {
-        if message is ai:ChatSystemMessage {
-            return {
-                role: ai:SYSTEM,
-                content: check getChatMessageStringContent(message.content),
-                name: message.name
-            };
-        }
-        return {
-            role: ai:USER,
-            content: check getChatMessageStringContent(message.content),
-            name: message.name
-        };
-    }
-}
-
-# Posts a prepared Responses request to the configured Azure OpenAI Responses surface.
-#
-# - **v1 GA** (`useV1Responses` is `true`, i.e. the `serviceUrl` ends with `/v1`): the generated `responses:Client`
-#   posts `/responses`, resolving to `POST {serviceUrl}/responses` with no `api-version`.
-# - **Legacy preview** (otherwise): the raw HTTP client posts
-#   `POST {serviceUrl}/openai/responses?api-version=${apiVersion}` with the `api-key` header. The request body is
-#   serialized exactly as the generated connector serializes it (`createResponse` carries no rename annotations),
-#   and the response is bound to `responses:response` with lax data binding, matching the v1 path.
-#
-# + responsesClient - The generated Responses connector used for the v1 GA surface (`()` on the legacy path)
-# + legacyResponsesClient - The raw HTTP client used for the legacy preview route (`()` on the v1 path)
-# + useV1Responses - `true` to target the v1 GA surface; `false` for the legacy preview route
-# + apiKey - The Azure OpenAI API key, sent as the `api-key` header on the legacy route
-# + apiVersion - The `api-version` query parameter value used on the legacy route
-# + request - The prepared Responses request payload
-# + return - The Responses API response, or an `error` on failure
-isolated function postResponsesRequest(responses:Client? responsesClient, http:Client? legacyResponsesClient,
-        boolean useV1Responses, string apiKey, string apiVersion, responses:createResponse request)
-        returns responses:response|error {
-    if useV1Responses {
-        if responsesClient is () {
-            return error("Responses v1 client is not initialized");
-        }
-        return responsesClient->/responses.post(request);
-    }
-
-    if legacyResponsesClient is () {
-        return error("Legacy Responses client is not initialized");
-    }
-    map<string|string[]> headers = {"api-key": apiKey};
-    return legacyResponsesClient->post(
-            string `/responses?api-version=${apiVersion}`, request.toJson(), headers);
-}
-
-# Validates the status of an Azure OpenAI Responses API response and returns an error for any non-completed state.
-#
-# + response - The Responses API response
-# + return - An `ai:Error` if the response did not complete successfully; otherwise `()`
-isolated function checkResponseStatus(responses:response response) returns ai:Error? {
-    string? status = response.status;
-    if status == "failed" {
-        string errorMsg = "Response generation failed";
-        responses:ResponseError? responseError = response.'error;
-        if responseError is responses:ResponseError {
-            errorMsg = responseError.message;
-        }
-        return error ai:LlmConnectionError(errorMsg);
-    }
-    if status == "incomplete" {
-        string errorMsg = "Response generation incomplete";
-        responses:response_incomplete_details? details = response.incomplete_details;
-        if details is responses:response_incomplete_details {
-            errorMsg = string `Response incomplete: ${details.toString()}`;
-        }
-        return error ai:LlmInvalidResponseError(errorMsg);
-    }
-    if status == "in_progress" {
-        return error ai:LlmConnectionError(
-            "Response is still in_progress; use background mode with polling to handle async responses");
-    }
-    return;
 }
 
 isolated function getChatMessageStringContent(ai:Prompt|string prompt) returns string|ai:Error {
@@ -652,7 +546,7 @@ isolated function convertMessageToJson(ai:ChatMessage[]|ai:ChatMessage messages)
 }
 
 isolated function convertFunctionsToCompletionTools(ai:ChatCompletionFunctions[] functions)
-        returns chat:chatCompletionTool[] {
+        returns chat:OpenAIChatCompletionTool[] {
     return from ai:ChatCompletionFunctions fn in functions
         select {
             'type: "function",

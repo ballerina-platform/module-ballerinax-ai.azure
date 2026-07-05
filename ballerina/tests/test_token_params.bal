@@ -18,19 +18,18 @@ import ballerina/test;
 import ballerinax/azure.openai.chat as chat;
 
 // Unit tests for the api-version-driven token-limit field selection used by the Chat Completions path.
-// These pin `usesMaxCompletionTokens` and `buildChatCompletionBody` directly (no HTTP), while the
-// integration guard in `test_services.bal` proves the selected body reaches the wire.
+// These pin `usesMaxCompletionTokens`, `applyMaxTokens` and `buildLegacyChatBody` directly (no HTTP), while the
+// integration guards in `test_services.bal` prove the selected body reaches the wire.
 
 const int TEST_MAX_TOKENS = 512;
 
-// Builds a minimal, valid Chat Completions request carrying `max_tokens` (the value the connector record
-// always serializes) so the helpers have something to relocate/preserve.
-isolated function newTestChatRequest(int maxTokens) returns chat:createChatCompletionRequest {
-    chat:chatCompletionRequestUserMessage userMessage = {role: "user", content: "hello"};
+// Builds a minimal, valid Chat Completions request for the helper unit tests.
+isolated function newTestChatRequest() returns chat:ChatCompletionsBody {
+    AzureChatUserMessage userMessage = {content: "hello"};
     return {
+        model: DEPLOYMENT_ID,
         messages: [userMessage],
-        temperature: 0.5d,
-        max_tokens: maxTokens
+        temperature: 0.5d
     };
 }
 
@@ -65,82 +64,85 @@ function testUsesMaxCompletionTokensDegenerateInputFallsBack() {
             "an empty api-version must fall back to max_tokens");
 }
 
-// ===== buildChatCompletionBody: correct field on the wire =====
+// ===== applyMaxTokens: correct token-limit field on the request =====
 
 @test:Config
-function testBuildChatCompletionBodyNewApiVersionUsesMaxCompletionTokens() returns error? {
-    map<json> body = check buildChatCompletionBody(newTestChatRequest(TEST_MAX_TOKENS), NEW_API_VERSION, ());
-    test:assertFalse(body.hasKey("max_tokens"),
-            "max_tokens must be removed from the wire body on new api-versions");
-    test:assertTrue(body.hasKey("max_completion_tokens"),
-            "max_completion_tokens must be present on new api-versions");
-    test:assertEquals(body["max_completion_tokens"], TEST_MAX_TOKENS,
-            "the token-limit value must be preserved when relocated to max_completion_tokens");
+function testApplyMaxTokensUsesMaxCompletionTokens() {
+    chat:ChatCompletionsBody request = newTestChatRequest();
+    applyMaxTokens(request, TEST_MAX_TOKENS, true);
+    test:assertEquals(request?.max_completion_tokens, TEST_MAX_TOKENS,
+            "max_completion_tokens must carry the token limit when selected");
+    test:assertTrue(request?.max_tokens is (),
+            "max_tokens must not be set when max_completion_tokens is selected");
 }
 
 @test:Config
-function testBuildChatCompletionBodyThresholdApiVersionUsesMaxCompletionTokens() returns error? {
-    map<json> body = check buildChatCompletionBody(newTestChatRequest(256), API_VERSION, ());
-    test:assertFalse(body.hasKey("max_tokens"),
-            "max_tokens must be absent at the 2024-08-01-preview threshold");
-    test:assertEquals(body["max_completion_tokens"], 256);
+function testApplyMaxTokensUsesMaxTokens() {
+    chat:ChatCompletionsBody request = newTestChatRequest();
+    applyMaxTokens(request, TEST_MAX_TOKENS, false);
+    test:assertEquals(request?.max_tokens, TEST_MAX_TOKENS,
+            "max_tokens must carry the token limit when selected");
+    test:assertTrue(request?.max_completion_tokens is (),
+            "max_completion_tokens must not be set on the legacy fallback path");
 }
 
+// ===== buildLegacyChatBody: correct wire body for the legacy route =====
+
 @test:Config
-function testBuildChatCompletionBodyOldApiVersionUsesMaxTokens() returns error? {
-    map<json> body = check buildChatCompletionBody(newTestChatRequest(TEST_MAX_TOKENS), OLD_API_VERSION, ());
-    test:assertTrue(body.hasKey("max_tokens"),
-            "max_tokens must remain on old api-versions for backward compatibility");
+function testBuildLegacyChatBodyDropsModelAndKeepsMaxTokens() returns error? {
+    chat:ChatCompletionsBody request = newTestChatRequest();
+    applyMaxTokens(request, TEST_MAX_TOKENS, false);
+    map<json> body = check buildLegacyChatBody(request);
+    test:assertFalse(body.hasKey("model"),
+            "the legacy route carries the deployment in the URL, so 'model' must be dropped from the body");
+    test:assertTrue(body.hasKey("max_tokens"), "max_tokens must be present on the legacy fallback path");
     test:assertEquals(body["max_tokens"], TEST_MAX_TOKENS);
     test:assertFalse(body.hasKey("max_completion_tokens"),
-            "max_completion_tokens must not be sent on old api-versions that do not support it");
+            "max_completion_tokens must not be sent on the legacy fallback path");
 }
 
 @test:Config
-function testBuildChatCompletionBodyNeverEmitsNullMaxTokens() returns error? {
-    // Reasoning models reject both a present `max_tokens` and a null value, so on the new path the key must be
-    // entirely absent — not present with a null value.
-    map<json> body = check buildChatCompletionBody(newTestChatRequest(TEST_MAX_TOKENS), NEW_API_VERSION, ());
+function testBuildLegacyChatBodyKeepsMaxCompletionTokens() returns error? {
+    chat:ChatCompletionsBody request = newTestChatRequest();
+    applyMaxTokens(request, 256, true);
+    map<json> body = check buildLegacyChatBody(request);
+    test:assertFalse(body.hasKey("model"), "'model' must be dropped from the legacy body");
+    test:assertEquals(body["max_completion_tokens"], 256);
     test:assertFalse(body.hasKey("max_tokens"),
-            "max_tokens must not be present at all (not even as null) on new api-versions");
+            "max_tokens must not be present when max_completion_tokens is selected");
 }
 
 @test:Config
-function testBuildChatCompletionBodyPreservesOtherFields() returns error? {
-    map<json> body = check buildChatCompletionBody(newTestChatRequest(TEST_MAX_TOKENS), NEW_API_VERSION, ());
+function testBuildLegacyChatBodyPreservesOtherFields() returns error? {
+    chat:ChatCompletionsBody request = newTestChatRequest();
+    applyMaxTokens(request, TEST_MAX_TOKENS, true);
+    map<json> body = check buildLegacyChatBody(request);
     test:assertTrue(body.hasKey("temperature"), "non-token fields must be carried through unchanged");
     test:assertTrue(body.hasKey("messages"), "messages must be carried through unchanged");
     json[] messages = check body["messages"].ensureType();
     test:assertEquals(messages.length(), 1);
 }
 
-// ===== buildChatCompletionBody: reasoning_effort handling =====
-// The generated `createChatCompletionRequest` defaults `reasoning_effort` to "medium" (it always serializes),
-// so the body builder must drop it unless the caller actually selected an effort.
+// ===== reasoning_effort handling =====
+// The new connector models `reasoning_effort` as an optional (non-defaulted) field, so it is absent from the
+// wire unless the caller selects an effort.
 
 @test:Config
-function testBuildChatCompletionBodyStripsUnsetReasoningEffort() returns error? {
-    // No effort requested (reasoning is ()): the connector's defaulted "medium" must not reach the wire.
-    map<json> body = check buildChatCompletionBody(newTestChatRequest(TEST_MAX_TOKENS), NEW_API_VERSION, ());
+function testBuildLegacyChatBodyOmitsUnsetReasoningEffort() returns error? {
+    chat:ChatCompletionsBody request = newTestChatRequest();
+    applyMaxTokens(request, TEST_MAX_TOKENS, true);
+    map<json> body = check buildLegacyChatBody(request);
     test:assertFalse(body.hasKey("reasoning_effort"),
-            "reasoning_effort must be dropped when the caller did not select an effort");
+            "reasoning_effort must be absent when the caller did not select an effort");
 }
 
 @test:Config
-function testBuildChatCompletionBodyKeepsExplicitReasoningEffort() returns error? {
-    // Effort explicitly requested: the caller sets it on the request and passes the same value in.
-    chat:createChatCompletionRequest request = newTestChatRequest(TEST_MAX_TOKENS);
+function testBuildLegacyChatBodyKeepsSelectedReasoningEffort() returns error? {
+    chat:ChatCompletionsBody request = newTestChatRequest();
     request.reasoning_effort = "high";
-    map<json> body = check buildChatCompletionBody(request, NEW_API_VERSION, "high");
+    applyMaxTokens(request, TEST_MAX_TOKENS, true);
+    map<json> body = check buildLegacyChatBody(request);
     test:assertTrue(body.hasKey("reasoning_effort"),
             "reasoning_effort must be kept when the caller selected an effort");
     test:assertEquals(body["reasoning_effort"], "high");
-}
-
-@test:Config
-function testBuildChatCompletionBodyStripsReasoningEffortOnOldApiVersion() returns error? {
-    // Independent of api-version: an unset effort is dropped on the old (max_tokens) path too.
-    map<json> body = check buildChatCompletionBody(newTestChatRequest(TEST_MAX_TOKENS), OLD_API_VERSION, ());
-    test:assertFalse(body.hasKey("reasoning_effort"),
-            "reasoning_effort must be dropped on old api-versions when no effort was selected");
 }

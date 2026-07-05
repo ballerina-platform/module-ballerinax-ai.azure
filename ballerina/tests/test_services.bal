@@ -20,59 +20,32 @@ import ballerinax/azure.openai.embeddings;
 
 service /llm on new http:Listener(8080) {
 
-    // Chat Completions API mock endpoint (deployment-scoped route used by the `CHAT_COMPLETION` API type).
+    // Chat Completions API mock endpoint — legacy deployment-scoped route used when the service URL does NOT end
+    // with `/v1`. The `api-version` query parameter is REQUIRED on this route.
     resource function post azureopenai/openai/deployments/[string deploymentId]/chat/completions(
             string api\-version, @http:Payload json payload) returns json|error {
-        json[] messages = check (check payload.messages).ensureType();
-
         // Regression guard for the max_tokens -> max_completion_tokens fix: verify the wire body carries the
         // correct token-limit field for the api-version. Applies to both the chat() and generate() paths.
         assertChatCompletionTokenField(api\-version, payload);
+        // The legacy deployment-scoped route carries the deployment in the URL, so a body-level `model` must not
+        // be sent.
+        test:assertTrue(payload.model is error,
+                "Chat Completions (legacy): 'model' must not be present in the body (deployment is in the URL)");
+        return respondToChatCompletion(payload);
+    }
 
-        // Regression guard for reasoning_effort: none of the test providers request an effort, so the connector's
-        // defaulted "medium" must be stripped by ai.azure and never reach the wire.
-        test:assertTrue(payload.reasoning_effort is error,
-                "Chat Completions: reasoning_effort must be absent when no effort was requested");
-
-        // Classify the tools provided in the request.
-        boolean hasGetResultsTool = false;
-        boolean hasOtherTool = false;
-        json|error toolsJson = payload.tools;
-        if toolsJson is json[] {
-            foreach json tool in toolsJson {
-                json fn = check tool.'function;
-                string? toolName = check fn.name.ensureType();
-                if toolName == GET_RESULTS_TOOL {
-                    hasGetResultsTool = true;
-                } else {
-                    hasOtherTool = true;
-                }
-            }
-        }
-
-        if hasGetResultsTool {
-            // generate() path: validate the content and schema, then return the structured result as a tool call.
-            json[] contentParts = check (check messages[0].content).ensureType();
-            string initialText = check contentParts[0].text.ensureType();
-            test:assertEquals(contentParts, getExpectedContentParts(initialText),
-                    string `Chat Completions: content mismatch for prompt, ${initialText}`);
-
-            json[] toolsArr = check toolsJson.ensureType();
-            json toolFn = check toolsArr[0].'function;
-            map<json>? parameters = check (check toolFn.parameters).cloneWithType();
-            if parameters is () {
-                test:assertFail("No parameters in the expected getResults tool");
-            }
-            test:assertEquals(parameters, getExpectedParameterSchema(initialText),
-                    string `Chat Completions: schema mismatch for prompt, ${initialText}`);
-            return getTestServiceResponse(initialText);
-        }
-
-        // chat() path: return a get_weather tool call when tools are present, otherwise a text response.
-        if hasOtherTool {
-            return getChatCompletionToolCallResponse("get_weather", "{\"city\": \"London\"}");
-        }
-        return getChatCompletionContentResponse(getUserMessageContent(messages));
+    // Chat Completions API mock endpoint — v1 GA surface used when the service URL ends with `/v1`. This route
+    // must NOT carry an `api-version` query parameter, and the deployment is sent as `model` in the body.
+    resource function post azureopenai/openai/v1/chat/completions(@http:Payload json payload) returns json|error {
+        string? model = check payload.model.ensureType();
+        test:assertEquals(model, DEPLOYMENT_ID,
+                "Chat Completions (v1): the deployment must be sent as 'model' in the body");
+        // The v1 GA surface always uses `max_completion_tokens`.
+        test:assertTrue(payload.max_completion_tokens !is error,
+                "Chat Completions (v1): 'max_completion_tokens' expected");
+        test:assertTrue(payload.max_tokens is error,
+                "Chat Completions (v1): deprecated 'max_tokens' must not be present");
+        return respondToChatCompletion(payload);
     }
 
     // Responses API mock endpoint — legacy preview route. Used when the service URL does NOT end with `/v1`.
@@ -111,6 +84,56 @@ service /llm on new http:Listener(8080) {
             'object: "list"
         };
     }
+}
+
+// Shared classify-and-respond logic for both Chat Completions mock routes (legacy and v1 GA).
+isolated function respondToChatCompletion(json payload) returns json|error {
+    json[] messages = check (check payload.messages).ensureType();
+
+    // Regression guard for reasoning_effort: none of the test providers request an effort, and the new connector
+    // does not default it, so it must never reach the wire.
+    test:assertTrue(payload.reasoning_effort is error,
+            "Chat Completions: reasoning_effort must be absent when no effort was requested");
+
+    // Classify the tools provided in the request.
+    boolean hasGetResultsTool = false;
+    boolean hasOtherTool = false;
+    json|error toolsJson = payload.tools;
+    if toolsJson is json[] {
+        foreach json tool in toolsJson {
+            json fn = check tool.'function;
+            string? toolName = check fn.name.ensureType();
+            if toolName == GET_RESULTS_TOOL {
+                hasGetResultsTool = true;
+            } else {
+                hasOtherTool = true;
+            }
+        }
+    }
+
+    if hasGetResultsTool {
+        // generate() path: validate the content and schema, then return the structured result as a tool call.
+        json[] contentParts = check (check messages[0].content).ensureType();
+        string initialText = check contentParts[0].text.ensureType();
+        test:assertEquals(contentParts, getExpectedContentParts(initialText),
+                string `Chat Completions: content mismatch for prompt, ${initialText}`);
+
+        json[] toolsArr = check toolsJson.ensureType();
+        json toolFn = check toolsArr[0].'function;
+        map<json>? parameters = check (check toolFn.parameters).cloneWithType();
+        if parameters is () {
+            test:assertFail("No parameters in the expected getResults tool");
+        }
+        test:assertEquals(parameters, getExpectedParameterSchema(initialText),
+                string `Chat Completions: schema mismatch for prompt, ${initialText}`);
+        return getTestServiceResponse(initialText);
+    }
+
+    // chat() path: return a get_weather tool call when tools are present, otherwise a text response.
+    if hasOtherTool {
+        return getChatCompletionToolCallResponse("get_weather", "{\"city\": \"London\"}");
+    }
+    return getChatCompletionContentResponse(getUserMessageContent(messages));
 }
 
 // Asserts that a Chat Completions request body carries exactly the token-limit field appropriate for its
