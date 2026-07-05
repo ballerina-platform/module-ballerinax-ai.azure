@@ -242,6 +242,8 @@ isolated function getChatCompletionToolCallResponse(string name, string argument
         {
             finish_reason: "tool_calls",
             index: 0,
+            // Azure returns `logprobs: null` (present, null) when logprobs are not requested.
+            logprobs: (),
             message: {
                 role: "assistant",
                 content: (),
@@ -275,6 +277,8 @@ isolated function getChatCompletionContentResponse(string content) returns json 
         {
             finish_reason: "stop",
             index: 0,
+            // Azure returns `logprobs: null` (present, null) when logprobs are not requested.
+            logprobs: (),
             message: {
                 role: "assistant",
                 content: "This is a mock response for: " + content

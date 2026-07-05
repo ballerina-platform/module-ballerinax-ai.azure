@@ -256,7 +256,7 @@ public isolated distinct client class OpenAiModelProvider {
         }
         applyMaxTokens(request, self.maxTokens, self.useV1 || usesMaxCompletionTokens(self.apiVersion ?: ""));
 
-        ChatCompletionResult|error response = postChatCompletion(self.chatClient, self.legacyChatClient, self.useV1,
+        chat:InlineResponse200|error response = postChatCompletion(self.chatClient, self.legacyChatClient, self.useV1,
                 self.apiKey, self.deploymentId, self.apiVersion, self.v1ApiVersion, request);
         if response is error {
             ai:Error err = error ai:LlmConnectionError("Error while connecting to the model", response);
@@ -265,17 +265,18 @@ public isolated distinct client class OpenAiModelProvider {
             return err;
         }
 
-        chat:OpenAICreateChatCompletionResponseChoices[] choices = response.choices;
+        chat:OpenAICreateChatCompletionResponseChoices[]|ai:Error choices = getCompletionChoices(response);
+        if choices is ai:Error {
+            span.close(choices);
+            return choices;
+        }
         if choices.length() == 0 {
             ai:Error err = error ai:LlmInvalidResponseError("Empty response from the model when using function call API");
             span.close(err);
             return err;
         }
 
-        string? responseId = response.id;
-        if responseId is string {
-            span.addResponseId(responseId);
-        }
+        span.addResponseId(response.id);
         chat:OpenAICompletionUsage? usage = response.usage;
         if usage is chat:OpenAICompletionUsage {
             span.addInputTokenCount(usage.prompt_tokens);

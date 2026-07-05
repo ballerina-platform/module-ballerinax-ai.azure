@@ -265,8 +265,11 @@ isolated function getTestServiceResponse(string content) returns json =>
         {
             finish_reason: "tool_calls",
             index: 0,
+            // Azure returns `logprobs: null` (present, null) when logprobs are not requested.
+            logprobs: (),
             message: {
                 role: "assistant",
+                content: (),
                 tool_calls: [
                     {
                         id: "tool-call-id",
