@@ -21,13 +21,14 @@ import ballerina/data.jsondata;
 import ballerina/http;
 import ballerina/lang.array;
 import ballerinax/azure.openai.chat as chat;
-import ballerinax/azure.openai.responses as responses;
 
 type ResponseSchema record {|
     map<json> schema;
     boolean isOriginallyJsonObject = true;
 |};
 
+# A single content part of a Chat Completions message. `azure.openai.chat` only generates the text content
+# part type, so the image and audio parts are defined here to match the Azure OpenAI wire format.
 type DocumentContentPart TextContentPart|ImageContentPart|AudioContentPart;
 
 type TextContentPart record {|
@@ -47,6 +48,52 @@ type AudioContentPart record {|
         string data;
     |} input_audio;
 |};
+
+// ===== Chat Completions request message shapes =====
+// `azure.openai.chat:OpenAIChatCompletionRequestMessage` is an open record carrying only `role`, so the concrete
+// per-role shapes are defined here. Each is a structural subtype of `OpenAIChatCompletionRequestMessage`.
+
+type AzureChatUserMessage record {|
+    "user" role = "user";
+    string|DocumentContentPart[] content;
+    string name?;
+|};
+
+type AzureChatSystemMessage record {|
+    "system" role = "system";
+    string content;
+    string name?;
+|};
+
+type AzureChatAssistantMessage record {|
+    "assistant" role = "assistant";
+    string content?;
+    AzureChatToolCall[] tool_calls?;
+|};
+
+type AzureChatToolMessage record {|
+    "tool" role = "tool";
+    string content;
+    string tool_call_id;
+|};
+
+type AzureChatToolCall record {|
+    string id;
+    "function" 'type = "function";
+    record {|string name; string arguments;|} 'function;
+|};
+
+# The non-streaming Chat Completions response shape used to bind both the v1 (connector) and legacy (raw HTTP)
+# responses. Declared open so response fields that are not needed here are ignored during binding.
+#
+# + id - The response identifier
+# + choices - The generated completion choices
+# + usage - Token usage statistics, when available
+type ChatCompletionResult record {
+    string id?;
+    chat:OpenAICreateChatCompletionResponseChoices[] choices;
+    chat:OpenAICompletionUsage usage?;
+};
 
 const JSON_CONVERSION_ERROR = "FromJsonStringError";
 const CONVERSION_ERROR = "ConversionError";
@@ -102,14 +149,14 @@ isolated function getExpectedResponseSchema(typedesc<anydata> expectedResponseTy
     return generateJsonObjectSchema(check generateJsonSchemaForTypedescAsJson(td));
 }
 
-isolated function getGetResultsToolChoice() returns chat:chatCompletionNamedToolChoice => {
+isolated function getGetResultsToolChoice() returns chat:OpenAIChatCompletionNamedToolChoice => {
     'type: FUNCTION,
     'function: {
         name: GET_RESULTS_TOOL
     }
 };
 
-isolated function getGetResultsTool(map<json> parameters) returns chat:chatCompletionTool[]|ai:Error {
+isolated function getGetResultsTool(map<json> parameters) returns chat:OpenAIChatCompletionTool[]|ai:Error {
     map<json>|error toolParam = parameters.ensureType();
     if toolParam is error {
         return error("Error in generated schema: " + toolParam.message());
@@ -245,31 +292,44 @@ isolated function handleParseResponseError(error chatResponseError) returns erro
 // sort lexicographically, so a prefix comparison is a reliable "is this version >= threshold" test.
 const string MAX_COMPLETION_TOKENS_MIN_API_VERSION = "2024-08-01";
 
+# Decides whether a legacy (date-based) api-version accepts `max_completion_tokens`.
+#
+# + apiVersion - The date-based api-version (e.g. `2024-08-01-preview`)
+# + return - `true` for api-versions `>= 2024-08-01`; `false` otherwise
 isolated function usesMaxCompletionTokens(string apiVersion) returns boolean {
     string datePrefix = apiVersion.length() >= 10 ? apiVersion.substring(0, 10) : apiVersion;
     return datePrefix >= MAX_COMPLETION_TOKENS_MIN_API_VERSION;
 }
 
-// Serializes a Chat Completions request to its wire form, choosing the correct fields for the target
-// api-version and model.
-//
-// - Token limit: for api-version >= 2024-08-01-preview the value is sent as `max_completion_tokens` (required
-//   by GPT-5/o-series, which reject `max_tokens`); for older versions it stays as `max_tokens` (those versions
-//   don't recognize `max_completion_tokens`). The generated record always serializes a `max_tokens` key, so on
-//   the newer path we relocate its value and drop the rejected key entirely.
-// - Reasoning effort: the generated `createChatCompletionRequest` defaults `reasoning_effort` to "medium", so
-//   `jsondata:toJson` always serializes it. Keep it only when the caller actually selected a
-//   Chat-Completions-supported effort (mirroring where `request.reasoning_effort` is set); otherwise drop it so
-//   non-reasoning deployments and older api-versions don't receive an unsupported/unintended `reasoning_effort`.
-isolated function buildChatCompletionBody(chat:createChatCompletionRequest request, string apiVersion,
-        responses:ReasoningEffort? reasoning) returns map<json>|ai:Error {
+# Sets the correct token-limit field on a Chat Completions request.
+#
+# GPT-5/o-series reasoning models reject the deprecated `max_tokens` and require `max_completion_tokens`. The v1
+# GA surface always accepts `max_completion_tokens`; on the legacy surface it is accepted only from api-version
+# `2024-08-01-preview` onward, so older versions fall back to `max_tokens`.
+#
+# + request - The Chat Completions request to mutate
+# + maxTokens - The token limit value
+# + useMaxCompletionTokens - `true` to send `max_completion_tokens`; `false` to send `max_tokens`
+isolated function applyMaxTokens(chat:ChatCompletionsBody request, int maxTokens, boolean useMaxCompletionTokens) {
+    if useMaxCompletionTokens {
+        request.max_completion_tokens = maxTokens;
+    } else {
+        request.max_tokens = maxTokens;
+    }
+}
+
+# Serializes a Chat Completions request for the legacy deployment-scoped route.
+#
+# The deployment is carried in the URL path on the legacy route, so a body-level `model` is dropped (both to
+# avoid redundancy and to preserve the request shape used by earlier releases of this module).
+#
+# + request - The Chat Completions request (with the token-limit field already selected)
+# + return - The wire body, or an `ai:Error` on serialization failure
+isolated function buildLegacyChatBody(chat:ChatCompletionsBody request) returns map<json>|ai:Error {
     do {
         map<json> body = check jsondata:toJson(request).ensureType();
-        if usesMaxCompletionTokens(apiVersion) && body.hasKey("max_tokens") {
-            body["max_completion_tokens"] = body.remove("max_tokens");
-        }
-        if !(reasoning is "low"|"medium"|"high") && body.hasKey("reasoning_effort") {
-            _ = body.remove("reasoning_effort");
+        if body.hasKey("model") {
+            _ = body.remove("model");
         }
         return body;
     } on fail error e {
@@ -277,65 +337,120 @@ isolated function buildChatCompletionBody(chat:createChatCompletionRequest reque
     }
 }
 
-isolated function generateLlmResponse(http:Client llmClient, string apiKey, string deploymentId,
-        string apiVersion, decimal? temperature, int maxTokens, responses:ReasoningEffort? reasoning,
-        ai:Prompt prompt, typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
+# Posts a prepared Chat Completions request to the configured surface.
+#
+# - **v1 GA** (`useV1` is `true`): the generated `chat:Client` posts `{serviceUrl}/chat/completions`. `api-version`
+#   is only sent when the caller opted into `preview`/`v1` (`v1ApiVersion`).
+# - **Legacy** (otherwise): the raw HTTP client posts
+#   `POST {serviceUrl}/openai/deployments/{deploymentId}/chat/completions?api-version={apiVersion}` with the
+#   `api-key` header.
+#
+# + chatClient - The generated Chat Completions connector for the v1 GA surface (`()` on the legacy path)
+# + legacyChatClient - The raw HTTP client for the legacy route (`()` on the v1 path)
+# + useV1 - `true` to target the v1 GA surface; `false` for the legacy route
+# + apiKey - The Azure OpenAI API key (sent as `api-key` on the legacy route)
+# + deploymentId - The Azure deployment ID
+# + apiVersion - The date-based `api-version` query value used on the legacy route
+# + v1ApiVersion - The `preview`/`v1` api-version to forward on the v1 route, if any
+# + request - The prepared Chat Completions request
+# + return - The parsed Chat Completions response, or an `error` on failure
+isolated function postChatCompletion(chat:Client? chatClient, http:Client? legacyChatClient, boolean useV1,
+        string apiKey, string deploymentId, string? apiVersion, string? v1ApiVersion,
+        chat:ChatCompletionsBody request) returns ChatCompletionResult|error {
+    if useV1 {
+        chat:Client? llmClient = chatClient;
+        if llmClient is () {
+            return error("Chat Completions (v1) client is not initialized");
+        }
+        chat:InlineResponse200 response;
+        if v1ApiVersion is string {
+            response = check llmClient->/chat/completions.post(request,
+                    api\-version = <chat:AzureAIFoundryModelsApiVersion>v1ApiVersion);
+        } else {
+            response = check llmClient->/chat/completions.post(request);
+        }
+        return response.cloneWithType();
+    }
+
+    http:Client? llmClient = legacyChatClient;
+    if llmClient is () {
+        return error("Chat Completions (legacy) client is not initialized");
+    }
+    map<json> body = check buildLegacyChatBody(request);
+    ChatCompletionResult result = check llmClient->post(
+            string `/deployments/${deploymentId}/chat/completions?api-version=${apiVersion ?: ""}`,
+            body, {"api-key": apiKey});
+    return result;
+}
+
+# Generates a structured value from the LLM via the Chat Completions API (the `generate` method's chat path).
+#
+# + chatClient - The generated Chat Completions connector for the v1 GA surface (`()` on the legacy path)
+# + legacyChatClient - The raw HTTP client for the legacy route (`()` on the v1 path)
+# + useV1 - `true` to target the v1 GA surface; `false` for the legacy route
+# + apiKey - The Azure OpenAI API key
+# + deploymentId - The Azure deployment ID (also sent as the `model` on the v1 route)
+# + apiVersion - The date-based `api-version` used on the legacy route
+# + v1ApiVersion - The `preview`/`v1` api-version forwarded on the v1 route, if any
+# + temperature - The sampling temperature, if any
+# + maxTokens - The maximum number of tokens to generate
+# + reasoning - The reasoning effort, if any
+# + prompt - The user prompt
+# + expectedResponseTypedesc - The expected response type descriptor
+# + return - The parsed response, or an `ai:Error`
+isolated function generateLlmResponse(chat:Client? chatClient, http:Client? legacyChatClient, boolean useV1,
+        string apiKey, string deploymentId, string? apiVersion, string? v1ApiVersion, decimal? temperature,
+        int maxTokens, ReasoningEffort? reasoning, ai:Prompt prompt, typedesc<json> expectedResponseTypedesc)
+        returns anydata|ai:Error {
     observe:GenerateContentSpan span = observe:createGenerateContentSpan(deploymentId);
-    decimal? temp = temperature;
-    if temp is decimal {
-        span.addTemperature(temp);
+    if temperature is decimal {
+        span.addTemperature(temperature);
     }
     span.addProvider("azure.ai.openai");
 
     DocumentContentPart[] content;
     ResponseSchema responseSchema;
-    chat:chatCompletionTool[] tools;
-    chat:chatCompletionRequestUserMessageContentPart[] contentParts;
+    chat:OpenAIChatCompletionTool[] tools;
     do {
         content = check generateChatCreationContent(prompt);
         responseSchema = check getExpectedResponseSchema(expectedResponseTypedesc);
         tools = check getGetResultsTool(responseSchema.schema);
-        contentParts = check content.cloneWithType();
     } on fail error err {
         span.close(err);
         return error ai:Error(err.message(), cause = err.cause(), detail = err.detail());
     }
 
-    chat:createChatCompletionRequest request = {
-        messages: [
-            <chat:chatCompletionRequestUserMessage>{
-                role: ai:USER,
-                content: contentParts
-            }
-        ],
+    AzureChatUserMessage userMessage = {role: "user", content};
+    chat:OpenAIChatCompletionRequestMessage[] messages = [userMessage];
+    chat:ChatCompletionsBody request = {
+        model: deploymentId,
+        messages,
         tools,
-        temperature,
-        max_tokens: maxTokens,
         tool_choice: getGetResultsToolChoice()
     };
-    if reasoning is "low"|"medium"|"high" {
+    if temperature is decimal {
+        request.temperature = temperature;
+    }
+    if reasoning is ReasoningEffort {
         request.reasoning_effort = reasoning;
     }
-    span.addInputMessages(request.messages.toJson());
+    applyMaxTokens(request, maxTokens, useV1 || usesMaxCompletionTokens(apiVersion ?: ""));
+    span.addInputMessages(messages.toJson());
 
-    map<json>|ai:Error body = buildChatCompletionBody(request, apiVersion, reasoning);
-    if body is ai:Error {
-        span.close(body);
-        return body;
-    }
-
-    chat:createChatCompletionResponse|error response = llmClient->post(
-        string `/deployments/${deploymentId}/chat/completions?api-version=${apiVersion}`,
-        body, {"api-key": apiKey});
+    ChatCompletionResult|error response = postChatCompletion(chatClient, legacyChatClient, useV1, apiKey,
+            deploymentId, apiVersion, v1ApiVersion, request);
     if response is error {
         ai:Error err = error("LLM call failed: " + response.message(), cause = response.cause(), detail = response.detail());
         span.close(err);
         return err;
     }
 
-    span.addResponseId(response.id);
-    chat:completionUsage? usage = response.usage;
-    if usage is chat:completionUsage {
+    string? responseId = response.id;
+    if responseId is string {
+        span.addResponseId(responseId);
+    }
+    chat:OpenAICompletionUsage? usage = response.usage;
+    if usage is chat:OpenAICompletionUsage {
         span.addInputTokenCount(usage.prompt_tokens);
         span.addOutputTokenCount(usage.completion_tokens);
     }
@@ -352,23 +467,28 @@ isolated function generateLlmResponse(http:Client llmClient, string apiKey, stri
     return result;
 }
 
-isolated function ensureAnydataResult(chat:createChatCompletionResponse response,
+isolated function ensureAnydataResult(ChatCompletionResult response,
         typedesc<json> expectedResponseTypedesc, boolean isOriginallyJsonObject,
         observe:GenerateContentSpan span) returns anydata|ai:Error {
 
-    chat:createChatCompletionResponse_choices[] choices = response.choices;
+    chat:OpenAICreateChatCompletionResponseChoices[] choices = response.choices;
     if choices.length() == 0 {
         return error("No completion choices");
     }
 
-    chat:chatCompletionResponseMessage message = choices[0].message;
-    chat:chatCompletionMessageToolCall[]? toolCalls = message.tool_calls;
+    chat:OpenAIChatCompletionResponseMessage message = choices[0].message;
+    chat:OpenAIChatCompletionMessageToolCallsItem? toolCalls = message.tool_calls;
     if toolCalls is () || toolCalls.length() == 0 {
         return error(NO_RELEVANT_RESPONSE_FROM_THE_LLM);
     }
     span.addFinishReason(choices[0].finish_reason);
 
-    map<json>|error arguments = toolCalls[0].'function.arguments.fromJsonStringWithType();
+    chat:OpenAIChatCompletionMessageToolCall|chat:OpenAIChatCompletionMessageCustomToolCall firstToolCall = toolCalls[0];
+    if firstToolCall !is chat:OpenAIChatCompletionMessageToolCall {
+        return error(NO_RELEVANT_RESPONSE_FROM_THE_LLM);
+    }
+
+    map<json>|error arguments = firstToolCall.'function.arguments.fromJsonStringWithType();
     if arguments is error {
         return error(NO_RELEVANT_RESPONSE_FROM_THE_LLM);
     }
@@ -387,3 +507,55 @@ isolated function ensureAnydataResult(chat:createChatCompletionResponse response
     }
     return result;
 }
+
+// ===== Connector / raw HTTP client configuration mappers =====
+
+# Maps the module's `ConnectionConfig` to the `azure.openai.chat` connector configuration, injecting api-key auth.
+#
+# The connector's `ApiKeysConfig` requires both `api-key` and `authorization`; Azure api-key authentication only
+# needs the `api-key` header, so `authorization` is left empty.
+#
+# + apiKey - The Azure OpenAI API key
+# + cc - The module connection configuration to map
+# + return - The `azure.openai.chat` connector configuration
+isolated function toChatConnectionConfig(string apiKey, ConnectionConfig cc) returns chat:ConnectionConfig => {
+    auth: {api\-key: apiKey, authorization: ""},
+    httpVersion: cc.httpVersion,
+    http1Settings: cc.http1Settings ?: {},
+    http2Settings: cc.http2Settings ?: {},
+    timeout: cc.timeout,
+    forwarded: cc.forwarded,
+    poolConfig: cc.poolConfig,
+    cache: cc.cache ?: {},
+    compression: cc.compression,
+    circuitBreaker: cc.circuitBreaker,
+    retryConfig: cc.retryConfig,
+    responseLimits: cc.responseLimits ?: {},
+    secureSocket: cc.secureSocket,
+    proxy: cc.proxy,
+    validation: cc.validation
+};
+
+# Maps the module's `ConnectionConfig` to a raw `http:ClientConfiguration` used for the legacy routes.
+#
+# `laxDataBinding` mirrors the generated connectors so real Azure responses bind identically on the legacy path.
+#
+# + cc - The module connection configuration to map
+# + return - The raw HTTP client configuration
+isolated function toRawHttpConfig(ConnectionConfig cc) returns http:ClientConfiguration => {
+    httpVersion: cc.httpVersion,
+    http1Settings: cc.http1Settings ?: {},
+    http2Settings: cc.http2Settings ?: {},
+    timeout: cc.timeout,
+    forwarded: cc.forwarded,
+    poolConfig: cc.poolConfig,
+    cache: cc.cache ?: {},
+    compression: cc.compression,
+    circuitBreaker: cc.circuitBreaker,
+    retryConfig: cc.retryConfig,
+    responseLimits: cc.responseLimits ?: {},
+    secureSocket: cc.secureSocket,
+    proxy: cc.proxy,
+    validation: cc.validation,
+    laxDataBinding: true
+};

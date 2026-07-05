@@ -31,17 +31,28 @@ const API_KEY = "not-a-real-api-key";
 const ERROR_MESSAGE = "Error occurred while attempting to parse the response from the LLM as the expected type. Retrying and/or validating the prompt could fix the response.";
 const RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE = "Runtime schema generation is not yet supported";
 
-// `OpenAiModelProvider` with the default `RESPONSES` API type — exercises the Azure OpenAI Responses API via the
-// legacy preview route (the service URL does not end with `/v1`), which appends `?api-version=...`.
+// `OpenAiModelProvider` with the default `CHAT_COMPLETION` API type — exercises the Azure OpenAI Chat Completions
+// API via the legacy deployment-scoped route (the service URL does not end with `/v1`), which appends
+// `?api-version=...`. This is also the default path for existing (pre-`apiType`) callers.
 final OpenAiModelProvider openAiProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
-final OpenAiModelProvider responsesProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
+
+// `OpenAiModelProvider` targeting the Responses API via the legacy preview route (`?api-version=...`).
+final OpenAiModelProvider responsesProvider =
+    check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION, apiType = RESPONSES);
 
 // `OpenAiModelProvider` targeting the Responses v1 GA surface (`/v1`-suffixed service URL, no `api-version`).
-final OpenAiModelProvider responsesV1Provider = check new (SERVICE_URL_V1, API_KEY, DEPLOYMENT_ID, API_VERSION);
+final OpenAiModelProvider responsesV1Provider =
+    check new (SERVICE_URL_V1, API_KEY, DEPLOYMENT_ID, apiType = RESPONSES);
 
-// `OpenAiModelProvider` with the `CHAT_COMPLETION` API type — exercises the Azure OpenAI Chat Completions API.
+// `OpenAiModelProvider` with the `CHAT_COMPLETION` API type — exercises the Azure OpenAI Chat Completions API
+// via the legacy deployment-scoped route.
 final OpenAiModelProvider chatCompletionProvider =
     check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION, apiType = CHAT_COMPLETION);
+
+// `OpenAiModelProvider` targeting the Chat Completions v1 GA surface (`/v1`-suffixed service URL, no
+// `api-version`), routed through the generated `azure.openai.chat` connector (`POST {serviceUrl}/chat/completions`).
+final OpenAiModelProvider chatCompletionV1Provider =
+    check new (SERVICE_URL_V1, API_KEY, DEPLOYMENT_ID, apiType = CHAT_COMPLETION);
 
 // `CHAT_COMPLETION` providers pinned to a new (post-threshold) and an old (pre-threshold) api-version, used to
 // verify the token-limit field selection end-to-end through the mock's `assertChatCompletionTokenField` guard.
@@ -656,5 +667,70 @@ function testChatCompletionOldApiVersionWithToolsSendsMaxTokens() returns ai:Err
     ai:FunctionCall[]? toolCalls = result.toolCalls;
     test:assertTrue(toolCalls is ai:FunctionCall[]);
     test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
+}
+
+// ===== Chat Completions API: v1 GA surface tests =====
+// These use a `/v1`-suffixed service URL and hit `POST {serviceUrl}/chat/completions` via the generated
+// `azure.openai.chat` connector, with the deployment sent as `model` in the body and NO `api-version`.
+
+@test:Config
+function testChatCompletionV1ChatWithSimpleMessage() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
+    ai:ChatAssistantMessage result = check chatCompletionV1Provider->chat(userMsg, []);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+@test:Config
+function testChatCompletionV1ChatWithMessageArray() returns ai:Error? {
+    ai:ChatMessage[] messages = [
+        <ai:ChatSystemMessage>{role: "system", content: "You are a helpful assistant."},
+        <ai:ChatUserMessage>{role: "user", content: "Hello, how are you?"}
+    ];
+    ai:ChatAssistantMessage result = check chatCompletionV1Provider->chat(messages, []);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+@test:Config
+function testChatCompletionV1ChatWithTools() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "What is the weather in London?"};
+    ai:ChatCompletionFunctions[] tools = [
+        {
+            name: "get_weather",
+            description: "Get the weather for a city",
+            parameters: {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"}
+                },
+                "required": ["city"]
+            }
+        }
+    ];
+    ai:ChatAssistantMessage result = check chatCompletionV1Provider->chat(userMsg, tools);
+    ai:FunctionCall[]? toolCalls = result.toolCalls;
+    test:assertTrue(toolCalls is ai:FunctionCall[]);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "London"});
+}
+
+// `generate()` via the Chat Completions v1 GA surface (native `Generator` -> generated connector).
+@test:Config
+function testChatCompletionV1GenerateMethod() returns ai:Error? {
+    int|error rating = chatCompletionV1Provider->generate(`Rate this blog out of 10.
+        Title: ${blog1.title}
+        Content: ${blog1.content}`);
+    test:assertEquals(rating, 4);
+}
+
+// ===== init validation =====
+
+// A legacy (non-`/v1`) service URL requires an `api-version`; omitting it must fail fast at init.
+@test:Config
+function testLegacyServiceUrlWithoutApiVersionFails() returns error? {
+    OpenAiModelProvider|ai:Error provider =
+        new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, apiType = CHAT_COMPLETION);
+    test:assertTrue(provider is ai:Error, "expected init to fail when api-version is omitted for a legacy URL");
+    test:assertTrue((<ai:Error>provider).message().includes("'apiVersion' argument is required"),
+            "unexpected error message: " + (<ai:Error>provider).message());
 }
 
