@@ -82,6 +82,7 @@ public class Generator {
         return env.getRuntime().callFunction(
                 MODULE, "generateLlmResponse", null,
                 modelProvider.get(StringUtils.fromString(LLM_CLIENT)),
+                modelProvider.get(StringUtils.fromString(API_KEY)),
                 modelProvider.get(StringUtils.fromString(DEPLOYMENT_ID)),
                 modelProvider.get(StringUtils.fromString(API_VERSION)),
                 modelProvider.get(StringUtils.fromString(TEMPERATURE)),

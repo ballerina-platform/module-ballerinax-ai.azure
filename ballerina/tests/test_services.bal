@@ -25,6 +25,15 @@ service /llm on new http:Listener(8080) {
             string api\-version, @http:Payload json payload) returns json|error {
         json[] messages = check (check payload.messages).ensureType();
 
+        // Regression guard for the max_tokens -> max_completion_tokens fix: verify the wire body carries the
+        // correct token-limit field for the api-version. Applies to both the chat() and generate() paths.
+        assertChatCompletionTokenField(api\-version, payload);
+
+        // Regression guard for reasoning_effort: none of the test providers request an effort, so the connector's
+        // defaulted "medium" must be stripped by ai.azure and never reach the wire.
+        test:assertTrue(payload.reasoning_effort is error,
+                "Chat Completions: reasoning_effort must be absent when no effort was requested");
+
         // Classify the tools provided in the request.
         boolean hasGetResultsTool = false;
         boolean hasOtherTool = false;
@@ -101,6 +110,29 @@ service /llm on new http:Listener(8080) {
             },
             'object: "list"
         };
+    }
+}
+
+// Asserts that a Chat Completions request body carries exactly the token-limit field appropriate for its
+// api-version: `max_completion_tokens` (and never `max_tokens`) for api-versions >= 2024-08-01-preview, and
+// `max_tokens` (and never `max_completion_tokens`) for older versions. The expected field is derived from the
+// production `usesMaxCompletionTokens` selector (independently pinned by the unit tests in
+// `test_token_params.bal`); this integration guard additionally proves the selected body actually reaches the
+// wire through the raw HTTP client. A `null` `max_tokens` (which reasoning models also reject) would leave the
+// key present and therefore fail the `assertFalse` below.
+isolated function assertChatCompletionTokenField(string apiVersion, json payload) {
+    boolean maxTokensPresent = payload.max_tokens !is error;
+    boolean maxCompletionTokensPresent = payload.max_completion_tokens !is error;
+    if usesMaxCompletionTokens(apiVersion) {
+        test:assertTrue(maxCompletionTokensPresent,
+                string `Chat Completions: 'max_completion_tokens' expected for api-version '${apiVersion}'`);
+        test:assertFalse(maxTokensPresent,
+                string `Chat Completions: 'max_tokens' must be absent for api-version '${apiVersion}'`);
+    } else {
+        test:assertTrue(maxTokensPresent,
+                string `Chat Completions: 'max_tokens' expected for api-version '${apiVersion}'`);
+        test:assertFalse(maxCompletionTokensPresent,
+                string `Chat Completions: 'max_completion_tokens' must be absent for api-version '${apiVersion}'`);
     }
 }
 

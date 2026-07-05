@@ -21,7 +21,12 @@ const SERVICE_URL = "http://localhost:8080/llm/azureopenai";
 // A `/v1`-suffixed service URL selects the Azure OpenAI Responses v1 GA surface (`{serviceUrl}/responses`).
 const SERVICE_URL_V1 = "http://localhost:8080/llm/azureopenai/openai/v1";
 const DEPLOYMENT_ID = "gpt4onew";
+// `API_VERSION` is exactly the 2024-08-01-preview threshold — the Chat Completions path sends
+// `max_completion_tokens` for it. `NEW_API_VERSION` is comfortably past the threshold, and `OLD_API_VERSION`
+// predates it (so the Chat Completions path must fall back to `max_tokens`).
 const API_VERSION = "2024-08-01-preview";
+const NEW_API_VERSION = "2025-04-01-preview";
+const OLD_API_VERSION = "2024-02-15-preview";
 const API_KEY = "not-a-real-api-key";
 const ERROR_MESSAGE = "Error occurred while attempting to parse the response from the LLM as the expected type. Retrying and/or validating the prompt could fix the response.";
 const RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE = "Runtime schema generation is not yet supported";
@@ -37,6 +42,13 @@ final OpenAiModelProvider responsesV1Provider = check new (SERVICE_URL_V1, API_K
 // `OpenAiModelProvider` with the `CHAT_COMPLETION` API type — exercises the Azure OpenAI Chat Completions API.
 final OpenAiModelProvider chatCompletionProvider =
     check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION, apiType = CHAT_COMPLETION);
+
+// `CHAT_COMPLETION` providers pinned to a new (post-threshold) and an old (pre-threshold) api-version, used to
+// verify the token-limit field selection end-to-end through the mock's `assertChatCompletionTokenField` guard.
+final OpenAiModelProvider chatCompletionNewApiVersionProvider =
+    check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, NEW_API_VERSION, apiType = CHAT_COMPLETION);
+final OpenAiModelProvider chatCompletionOldApiVersionProvider =
+    check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, OLD_API_VERSION, apiType = CHAT_COMPLETION);
 
 string apiKey = "mock-api-key";
 string serviceUrl = "http://localhost:8080/llm";
@@ -601,5 +613,48 @@ function testChatCompletionGenerateMethodWithBasicReturnType() returns ai:Error?
         Title: ${blog1.title}
         Content: ${blog1.content}`);
     test:assertEquals(rating, 4);
+}
+
+// ===== Chat Completions API: token-limit field selection (max_tokens vs max_completion_tokens) =====
+// The wire body is asserted inside the mock via `assertChatCompletionTokenField`; these tests drive the two
+// api-version branches end-to-end so that guard actually runs against a real request.
+
+// api-version >= 2024-08-01-preview: chat() must send `max_completion_tokens` and never `max_tokens`.
+@test:Config
+function testChatCompletionNewApiVersionSendsMaxCompletionTokens() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
+    ai:ChatAssistantMessage result = check chatCompletionNewApiVersionProvider->chat(userMsg, []);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+// api-version < 2024-08-01-preview: chat() must fall back to `max_tokens` and never send `max_completion_tokens`.
+@test:Config
+function testChatCompletionOldApiVersionSendsMaxTokens() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
+    ai:ChatAssistantMessage result = check chatCompletionOldApiVersionProvider->chat(userMsg, []);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+// The token-limit selection must also apply when tools are present (the request-building path differs slightly).
+@test:Config
+function testChatCompletionOldApiVersionWithToolsSendsMaxTokens() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "What is the weather in London?"};
+    ai:ChatCompletionFunctions[] tools = [
+        {
+            name: "get_weather",
+            description: "Get the weather for a city",
+            parameters: {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"}
+                },
+                "required": ["city"]
+            }
+        }
+    ];
+    ai:ChatAssistantMessage result = check chatCompletionOldApiVersionProvider->chat(userMsg, tools);
+    ai:FunctionCall[]? toolCalls = result.toolCalls;
+    test:assertTrue(toolCalls is ai:FunctionCall[]);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
 }
 
