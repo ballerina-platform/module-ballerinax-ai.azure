@@ -298,7 +298,12 @@ isolated function getTestServiceResponse(string content) returns json =>
                 ]
             }
         }
-    ]
+    ],
+    usage: {
+        prompt_tokens: 25,
+        completion_tokens: 12,
+        total_tokens: 37
+    }
 };
 
 isolated function getExpectedContentParts(string message) returns (map<anydata>)[] {

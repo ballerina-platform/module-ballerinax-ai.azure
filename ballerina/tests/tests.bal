@@ -62,7 +62,8 @@ final OpenAiModelProvider chatCompletionOldApiVersionProvider =
     check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, OLD_API_VERSION, apiType = CHAT_COMPLETION);
 
 string apiKey = "mock-api-key";
-string serviceUrl = "http://localhost:8080/llm";
+// The embeddings deployment-scoped route is hosted by the legacy Azure OpenAI mock service.
+string serviceUrl = "http://localhost:8080/llm/azureopenai";
 string embeddingDeploymentId = "text-embed-3-small";
 EmbeddingProvider embeddingProvider = check new (serviceUrl, apiKey, API_VERSION, DEPLOYMENT_ID);
 

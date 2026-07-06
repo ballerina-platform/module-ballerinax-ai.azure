@@ -18,11 +18,34 @@ import ballerina/http;
 import ballerina/test;
 import ballerinax/azure.openai.embeddings;
 
-service /llm on new http:Listener(8080) {
+// The two Azure OpenAI mock surfaces share a single listener. Two distinct services model the two wire surfaces
+// the `OpenAiModelProvider` targets:
+//
+//   1. `legacyAzureOpenAiService` — the **legacy** Azure OpenAI service (deployment-scoped routes that REQUIRE an
+//      `api-version` query parameter). Hosts Chat Completions, Responses, and Embeddings.
+//   2. `v1AzureOpenAiService` — the **v1 GA** Azure OpenAI service (`/openai/v1/...` routes that must NOT carry an
+//      `api-version` query parameter and send the deployment as `model` in the body).
+//
+// Because the v1 base path (`/llm/azureopenai/openai/v1`) is more specific than the legacy base path
+// (`/llm/azureopenai`), Ballerina's longest-prefix service dispatch routes each request to the correct surface.
+listener http:Listener mockListener = new (8080);
 
-    // Chat Completions API mock endpoint — legacy deployment-scoped route used when the service URL does NOT end
-    // with `/v1`. The `api-version` query parameter is REQUIRED on this route.
-    resource function post azureopenai/openai/deployments/[string deploymentId]/chat/completions(
+// Deployment ids that let a mock assert surface-specific wire expectations (reasoning models omit `temperature`
+// and must carry a reasoning effort; the custom-tokens deployment pins the exact token-limit value on the wire).
+const REASONING_DEPLOYMENT = "gpt-5";
+const CUSTOM_TOKENS_DEPLOYMENT = "custom-tokens-model";
+const int CUSTOM_MAX_TOKENS = 1234;
+
+// The reasoning-effort values accepted by the Azure OpenAI specification.
+final readonly & string[] VALID_REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"];
+
+// ===== 1. Legacy Azure OpenAI service =====
+
+service /llm/azureopenai on mockListener {
+
+    // Chat Completions — legacy deployment-scoped route. The `api-version` query parameter is REQUIRED here;
+    // declaring it non-optional makes the mock reject (and the test fail) if the provider ever drops it.
+    resource function post openai/deployments/[string deploymentId]/chat/completions(
             string api\-version, @http:Payload json payload) returns json|error {
         // Regression guard for the max_tokens -> max_completion_tokens fix: verify the wire body carries the
         // correct token-limit field for the api-version. Applies to both the chat() and generate() paths.
@@ -31,42 +54,26 @@ service /llm on new http:Listener(8080) {
         // be sent.
         test:assertTrue(payload.model is error,
                 "Chat Completions (legacy): 'model' must not be present in the body (deployment is in the URL)");
-        return respondToChatCompletion(payload);
+        validateChatWireParams(deploymentId, payload);
+        return respondToChatCompletion(deploymentId, payload);
     }
 
-    // Chat Completions API mock endpoint — v1 GA surface used when the service URL ends with `/v1`. This route
-    // must NOT carry an `api-version` query parameter, and the deployment is sent as `model` in the body.
-    resource function post azureopenai/openai/v1/chat/completions(@http:Payload json payload) returns json|error {
-        string? model = check payload.model.ensureType();
-        test:assertEquals(model, DEPLOYMENT_ID,
-                "Chat Completions (v1): the deployment must be sent as 'model' in the body");
-        // The v1 GA surface always uses `max_completion_tokens`.
-        test:assertTrue(payload.max_completion_tokens !is error,
-                "Chat Completions (v1): 'max_completion_tokens' expected");
-        test:assertTrue(payload.max_tokens is error,
-                "Chat Completions (v1): deprecated 'max_tokens' must not be present");
-        return respondToChatCompletion(payload);
-    }
-
-    // Responses API mock endpoint — legacy preview route. Used when the service URL does NOT end with `/v1`.
-    // The `api-version` query parameter is REQUIRED on this route; declaring it as a non-optional parameter makes
-    // the mock reject (and the test fail) if the provider ever drops it.
-    resource function post azureopenai/openai/responses(string api\-version, @http:Payload json payload)
+    // Responses — legacy preview route. The `api-version` query parameter is REQUIRED here.
+    resource function post openai/responses(string api\-version, @http:Payload json payload)
             returns json|error {
-        test:assertEquals(api\-version, API_VERSION,
-                "Responses API (legacy preview): unexpected or missing api-version query parameter");
+        test:assertTrue(api\-version.length() > 0,
+                "Responses API (legacy preview): the api-version query parameter must be forwarded");
+        validateResponsesWireParams(payload);
         return handleResponsesApiRequest(payload);
     }
 
-    // Responses API mock endpoint — v1 GA surface. Used when the service URL ends with `/v1`.
-    // This route must NOT carry an `api-version` query parameter.
-    resource function post azureopenai/openai/v1/responses(@http:Payload json payload)
-            returns json|error {
-        return handleResponsesApiRequest(payload);
-    }
-
-    resource function post deployments/[string deploymentId]/embeddings(string api\-version, embeddings:Deploymentid_embeddings_body payload)
-        returns embeddings:Inline_response_200|error {
+    // Embeddings — legacy deployment-scoped route.
+    resource function post deployments/[string deploymentId]/embeddings(string api\-version,
+            embeddings:Deploymentid_embeddings_body payload) returns embeddings:Inline_response_200|error {
+        // A dedicated trigger lets the embedding tests exercise the "no embeddings generated" branch.
+        if payload.input is string && payload.input == EMPTY_EMBED_TRIGGER {
+            return {data: [], model: "text-embedding-3-small", usage: {prompt_tokens: 0, total_tokens: 0}, 'object: "list"};
+        }
         embeddings:Inline_response_200_data[] data = from int i in 0 ..< 2
             select {
                 embedding: from int j in 0 ..< 1536
@@ -86,14 +93,111 @@ service /llm on new http:Listener(8080) {
     }
 }
 
-// Shared classify-and-respond logic for both Chat Completions mock routes (legacy and v1 GA).
-isolated function respondToChatCompletion(json payload) returns json|error {
-    json[] messages = check (check payload.messages).ensureType();
+// ===== 2. V1 Azure OpenAI service =====
 
-    // Regression guard for reasoning_effort: none of the test providers request an effort, and the new connector
-    // does not default it, so it must never reach the wire.
-    test:assertTrue(payload.reasoning_effort is error,
-            "Chat Completions: reasoning_effort must be absent when no effort was requested");
+service /llm/azureopenai/openai/v1 on mockListener {
+
+    // Chat Completions — v1 GA route. The deployment is sent as `model` in the body. An `api-version` query
+    // parameter is only present when the caller opted into a `preview`/`v1` surface; a date-based api-version must
+    // never reach this route.
+    resource function post chat/completions(@http:Payload json payload, string? api\-version = ())
+            returns json|error {
+        string model = check payload.model.ensureType();
+        assertV1ApiVersion(api\-version);
+        test:assertTrue(payload.max_completion_tokens !is error,
+                "Chat Completions (v1): 'max_completion_tokens' expected");
+        test:assertTrue(payload.max_tokens is error,
+                "Chat Completions (v1): deprecated 'max_tokens' must not be present");
+        validateChatWireParams(model, payload);
+        return respondToChatCompletion(model, payload);
+    }
+
+    // Responses — v1 GA route. An `api-version` query parameter is only present on a `preview`/`v1` opt-in.
+    resource function post responses(@http:Payload json payload, string? api\-version = ()) returns json|error {
+        assertV1ApiVersion(api\-version);
+        validateResponsesWireParams(payload);
+        return handleResponsesApiRequest(payload);
+    }
+}
+
+// ===== Wire-parameter validation =====
+
+// On the v1 GA surface the only accepted `api-version` values are the opt-in surfaces `preview` and `v1`; a
+// date-based api-version must never be forwarded here.
+isolated function assertV1ApiVersion(string? apiVersion) {
+    if apiVersion is string {
+        test:assertTrue(apiVersion == "preview" || apiVersion == "v1",
+                string `V1 surface: only 'preview'/'v1' api-versions are allowed, found '${apiVersion}'`);
+    }
+}
+
+// Asserts that a reasoning effort value carried on the wire is one accepted by the Azure OpenAI specification.
+isolated function assertValidReasoningEffort(json effort) {
+    string effortStr = effort.toString();
+    test:assertTrue(VALID_REASONING_EFFORTS.indexOf(effortStr) is int,
+            string `Unexpected reasoning effort on the wire: '${effortStr}'`);
+}
+
+// Validates Chat Completions wire parameters. Reasoning models (identified by the reasoning deployment id) must
+// carry a reasoning effort; the custom-tokens deployment pins the exact token-limit value. Any reasoning effort
+// present, on any deployment, must be a spec-valid value.
+//
+// Note: `temperature` is intentionally NOT asserted-absent here. The `azure.openai.chat` connector models the
+// request body's `temperature` as a required field defaulting to `1`, so the value `1` is always serialized even
+// when the caller passes `temperature = ()`. Azure reasoning models accept the default temperature (`1`), so this
+// is spec-compliant; the `temperature = ()` usage documented on the provider simply leaves the default in place
+// on this path rather than removing the field.
+isolated function validateChatWireParams(string deploymentId, json payload) {
+    json|error reasoningEffort = payload.reasoning_effort;
+    if reasoningEffort is json {
+        assertValidReasoningEffort(reasoningEffort);
+    }
+    if deploymentId == REASONING_DEPLOYMENT {
+        test:assertTrue(reasoningEffort is json,
+                "Chat Completions: a reasoning model request must carry 'reasoning_effort'");
+    }
+    if deploymentId == CUSTOM_TOKENS_DEPLOYMENT {
+        json|error mct = payload.max_completion_tokens;
+        json|error mt = payload.max_tokens;
+        json tokenValue = mct is json ? mct : (mt is json ? mt : ());
+        test:assertEquals(tokenValue, CUSTOM_MAX_TOKENS,
+                "Chat Completions: the configured maxTokens must reach the wire");
+    }
+}
+
+// Validates Responses API wire parameters. This module always sends `store: false`; reasoning models carry a
+// nested `reasoning.effort` object; the custom-tokens deployment pins `max_output_tokens`. As on the Chat
+// Completions path, `temperature` defaults to `1` in the connector's request type and is therefore not
+// asserted-absent for reasoning models (the default is spec-compliant for reasoning models).
+isolated function validateResponsesWireParams(json payload) {
+    test:assertEquals(payload.store, false, "Responses API: 'store' must be sent as false");
+    string? model = ();
+    json|error modelJson = payload.model;
+    if modelJson is json {
+        model = modelJson.toString();
+    }
+    json|error reasoning = payload.reasoning;
+    if reasoning is map<json> {
+        json|error effort = reasoning.effort;
+        if effort is json {
+            assertValidReasoningEffort(effort);
+        }
+    }
+    if model == REASONING_DEPLOYMENT {
+        test:assertTrue(reasoning is map<json>,
+                "Responses API: a reasoning model request must carry a 'reasoning' object");
+    }
+    if model == CUSTOM_TOKENS_DEPLOYMENT {
+        test:assertEquals(payload.max_output_tokens, CUSTOM_MAX_TOKENS,
+                "Responses API: the configured maxTokens must reach the wire as 'max_output_tokens'");
+    }
+}
+
+// ===== Chat Completions mock response logic =====
+
+// Shared classify-and-respond logic for both Chat Completions mock routes (legacy and v1 GA).
+isolated function respondToChatCompletion(string deploymentId, json payload) returns json|error {
+    json[] messages = check (check payload.messages).ensureType();
 
     // Classify the tools provided in the request.
     boolean hasGetResultsTool = false;
@@ -115,6 +219,16 @@ isolated function respondToChatCompletion(json payload) returns json|error {
         // generate() path: validate the content and schema, then return the structured result as a tool call.
         json[] contentParts = check (check messages[0].content).ensureType();
         string initialText = check contentParts[0].text.ensureType();
+        // generate() argument-parsing error triggers bypass the schema/content validation below.
+        if initialText.startsWith(TRIGGER_GEN_BAD_ARGS) {
+            return getChatCompletionGetResultsResponse("this-is-not-json");
+        }
+        if initialText.startsWith(TRIGGER_GEN_TYPE_MISMATCH) {
+            return getChatCompletionGetResultsResponse("{\"result\": \"not-an-int\"}");
+        }
+        if initialText.startsWith(TRIGGER_GEN_EMPTY_CHOICES) {
+            return getEmptyChoicesChatCompletionResponse();
+        }
         test:assertEquals(contentParts, getExpectedContentParts(initialText),
                 string `Chat Completions: content mismatch for prompt, ${initialText}`);
 
@@ -129,11 +243,26 @@ isolated function respondToChatCompletion(json payload) returns json|error {
         return getTestServiceResponse(initialText);
     }
 
-    // chat() path: return a get_weather tool call when tools are present, otherwise a text response.
+    // chat() path: return a get_weather tool call when tools are present, otherwise a text response (or a
+    // trigger-driven response for the edge-case coverage tests).
     if hasOtherTool {
         return getChatCompletionToolCallResponse("get_weather", "{\"city\": \"London\"}");
     }
-    return getChatCompletionContentResponse(getUserMessageContent(messages));
+
+    string userContent = getUserMessageContent(messages);
+    if userContent.startsWith(TRIGGER_STREAMING) {
+        return getStreamingChatCompletionResponse();
+    }
+    if userContent.startsWith(TRIGGER_EMPTY_CHOICES) {
+        return getEmptyChoicesChatCompletionResponse();
+    }
+    if userContent.startsWith(TRIGGER_FUNCTION_CALL) {
+        return getDeprecatedFunctionCallResponse();
+    }
+    if userContent.startsWith(TRIGGER_BAD_TOOL_ARGS) {
+        return getChatCompletionToolCallResponse("get_weather", "this-is-not-json");
+    }
+    return getChatCompletionContentResponse(userContent);
 }
 
 // Asserts that a Chat Completions request body carries exactly the token-limit field appropriate for its
@@ -171,6 +300,8 @@ isolated function getUserMessageContent(json[] messages) returns string {
     return "";
 }
 
+// ===== Responses API mock response logic =====
+
 // Shared handler for the Azure OpenAI Responses API mock.
 function handleResponsesApiRequest(json payload) returns json|error {
     json[] inputItems = check (check payload.input).ensureType();
@@ -196,6 +327,14 @@ function handleResponsesApiRequest(json payload) returns json|error {
                 }
             }
         }
+    }
+
+    // Trigger-driven responses for the edge-case coverage tests (status handling and output parsing).
+    // The response is wrapped in a 1-tuple because `()` is itself a valid `json`, so a bare `json?` could not
+    // distinguish "no trigger matched" from "the trigger response is null".
+    [json]? triggerResponse = getResponsesTriggerResponse(initialText);
+    if triggerResponse is [json] {
+        return triggerResponse[0];
     }
 
     // Classify the provided tools.
@@ -231,6 +370,111 @@ function handleResponsesApiRequest(json payload) returns json|error {
 
     return getTestResponsesApiChatResponse(initialText);
 }
+
+// Maps an edge-case trigger prompt to a Responses API response that exercises a specific status/output branch.
+// Returns `()` for ordinary prompts (which are handled by the normal classification logic).
+isolated function getResponsesTriggerResponse(string initialText) returns [json]? {
+    if initialText.startsWith(TRIGGER_STATUS_FAILED_NOERR) {
+        return [buildResponsesStatusResponse("failed", (), ())];
+    }
+    if initialText.startsWith(TRIGGER_STATUS_FAILED) {
+        return [buildResponsesStatusResponse("failed", "The upstream model failed", ())];
+    }
+    if initialText.startsWith(TRIGGER_STATUS_INCOMPLETE_NODETAIL) {
+        return [buildResponsesStatusResponse("incomplete", (), ())];
+    }
+    if initialText.startsWith(TRIGGER_STATUS_INCOMPLETE) {
+        return [buildResponsesStatusResponse("incomplete", (), "max_output_tokens")];
+    }
+    if initialText.startsWith(TRIGGER_STATUS_CANCELLED) {
+        return [buildResponsesStatusResponse("cancelled", (), ())];
+    }
+    if initialText.startsWith(TRIGGER_STATUS_INPROGRESS) {
+        return [buildResponsesStatusResponse("in_progress", (), ())];
+    }
+    if initialText.startsWith(TRIGGER_STATUS_QUEUED) {
+        return [buildResponsesStatusResponse("queued", (), ())];
+    }
+    if initialText.startsWith(TRIGGER_EMPTY_OUTPUT) {
+        return [getResponsesEmptyOutputResponse()];
+    }
+    if initialText.startsWith(TRIGGER_BAD_ARGS) {
+        return [getResponsesBadArgsResponse()];
+    }
+    if initialText.startsWith(TRIGGER_OUTPUT_MESSAGE) {
+        return [getResponsesOutputMessageVariantResponse()];
+    }
+    if initialText.startsWith(TRIGGER_CONTENT_AND_TOOL) {
+        return [getResponsesContentAndToolResponse()];
+    }
+    if initialText.startsWith(TRIGGER_GEN_BAD_ARGS) {
+        return [getResponsesGetResultsResponse("this-is-not-json")];
+    }
+    if initialText.startsWith(TRIGGER_GEN_TYPE_MISMATCH) {
+        return [getResponsesGetResultsResponse("{\"result\": \"not-an-int\"}")];
+    }
+    if initialText.startsWith(TRIGGER_ARGS_NOT_OBJECT) {
+        return [getResponsesFunctionCallArgsResponse("[1, 2, 3]")];
+    }
+    return ();
+}
+
+// Builds a completed Responses API response with a function_call output item carrying caller-supplied raw
+// arguments (used to drive the chat() output converter's argument-parsing error branches).
+isolated function getResponsesFunctionCallArgsResponse(string arguments) returns json => {
+    id: "resp_fc_args",
+    'object: "response",
+    created_at: 1234567890,
+    model: "gpt-4o",
+    status: "completed",
+    'error: (),
+    incomplete_details: (),
+    instructions: (),
+    metadata: (),
+    tool_choice: "auto",
+    tools: [],
+    parallel_tool_calls: false,
+    output: [
+        {
+            id: "fc_args",
+            'type: "function_call",
+            name: "get_weather",
+            arguments: arguments,
+            call_id: "call_args",
+            status: "completed"
+        }
+    ],
+    output_text: ""
+};
+
+// Builds a Responses API function_call output item for the getResults tool with caller-supplied raw arguments.
+isolated function getResponsesGetResultsResponse(string arguments) returns json => {
+    id: "resp_getresults",
+    'object: "response",
+    created_at: 1234567890,
+    model: "gpt-4o",
+    status: "completed",
+    'error: (),
+    incomplete_details: (),
+    instructions: (),
+    metadata: (),
+    tool_choice: "auto",
+    tools: [],
+    parallel_tool_calls: false,
+    output: [
+        {
+            id: "fc_getresults",
+            'type: "function_call",
+            name: GET_RESULTS_TOOL,
+            arguments: arguments,
+            call_id: "call_getresults",
+            status: "completed"
+        }
+    ],
+    output_text: ""
+};
+
+// ===== Chat Completions response builders =====
 
 // Builds a Chat Completions response carrying a single tool call.
 isolated function getChatCompletionToolCallResponse(string name, string arguments) returns json => {
@@ -291,6 +535,79 @@ isolated function getChatCompletionContentResponse(string content) returns json 
         total_tokens: 30
     }
 };
+
+// Builds a streaming (`chat.completion.chunk`) response, which this module does not support and must reject.
+isolated function getStreamingChatCompletionResponse() returns json => {
+    id: "chat-chunk-id",
+    'object: "chat.completion.chunk",
+    created: 1234567890,
+    model: "gpt-4o",
+    choices: []
+};
+
+// Builds a (non-streaming) response with no choices.
+isolated function getEmptyChoicesChatCompletionResponse() returns json => {
+    id: "chat-empty-id",
+    'object: "chat.completion",
+    created: 1234567890,
+    model: "gpt-4o",
+    choices: []
+};
+
+// Builds a response using the deprecated top-level `function_call` field (backward-compatibility path).
+isolated function getDeprecatedFunctionCallResponse() returns json => {
+    id: "chat-fn-call-id",
+    'object: "chat.completion",
+    created: 1234567890,
+    model: "gpt-4o",
+    choices: [
+        {
+            finish_reason: "function_call",
+            index: 0,
+            logprobs: (),
+            message: {
+                role: "assistant",
+                content: (),
+                function_call: {
+                    name: "get_weather",
+                    arguments: "{\"city\": \"Paris\"}"
+                }
+            }
+        }
+    ]
+};
+
+// Builds a Chat Completions getResults tool-call response with caller-supplied raw arguments (used by the
+// generate() argument-parsing error tests).
+isolated function getChatCompletionGetResultsResponse(string arguments) returns json => {
+    id: "chat-getresults-id",
+    'object: "chat.completion",
+    created: 1234567890,
+    model: "gpt-4o",
+    choices: [
+        {
+            finish_reason: "tool_calls",
+            index: 0,
+            logprobs: (),
+            message: {
+                role: "assistant",
+                content: (),
+                tool_calls: [
+                    {
+                        id: "tool-call-id",
+                        'type: "function",
+                        'function: {
+                            name: GET_RESULTS_TOOL,
+                            arguments: arguments
+                        }
+                    }
+                ]
+            }
+        }
+    ]
+};
+
+// ===== Responses API response builders =====
 
 // Builds a Responses API response with a function_call output item (for generate() tests).
 isolated function getTestResponsesApiResponseWithToolCall(string content) returns json {
@@ -405,3 +722,159 @@ isolated function getTestResponsesApiToolCallChatResponse() returns json {
         }
     };
 }
+
+// Builds a Responses API response pinned to a specific non-terminal/terminal status, optionally with an error
+// message (for `failed`) or incomplete-details reason (for `incomplete`).
+isolated function buildResponsesStatusResponse(string status, string? errorMessage, string? incompleteReason)
+        returns json {
+    json errorObj = errorMessage is string ? {code: "server_error", message: errorMessage} : ();
+    json incompleteObj = incompleteReason is string ? {reason: incompleteReason} : ();
+    return {
+        id: "resp_status_" + status,
+        'object: "response",
+        created_at: 1234567890,
+        model: "gpt-4o",
+        status: status,
+        'error: errorObj,
+        incomplete_details: incompleteObj,
+        instructions: (),
+        metadata: (),
+        tool_choice: "auto",
+        tools: [],
+        parallel_tool_calls: false,
+        output: [],
+        output_text: "",
+        usage: {
+            input_tokens: 10,
+            output_tokens: 0,
+            total_tokens: 10,
+            input_tokens_details: {cached_tokens: 0},
+            output_tokens_details: {reasoning_tokens: 0}
+        }
+    };
+}
+
+// Builds a completed Responses API response whose only output item is a message with no usable text content.
+isolated function getResponsesEmptyOutputResponse() returns json => {
+    id: "resp_empty_output",
+    'object: "response",
+    created_at: 1234567890,
+    model: "gpt-4o",
+    status: "completed",
+    'error: (),
+    incomplete_details: (),
+    instructions: (),
+    metadata: (),
+    tool_choice: "auto",
+    tools: [],
+    parallel_tool_calls: false,
+    output: [
+        {
+            id: "msg_empty",
+            'type: "message",
+            role: "assistant",
+            status: "completed",
+            content: []
+        }
+    ],
+    output_text: ""
+};
+
+// Builds a completed Responses API response whose function_call output carries invalid JSON arguments.
+isolated function getResponsesBadArgsResponse() returns json => {
+    id: "resp_bad_args",
+    'object: "response",
+    created_at: 1234567890,
+    model: "gpt-4o",
+    status: "completed",
+    'error: (),
+    incomplete_details: (),
+    instructions: (),
+    metadata: (),
+    tool_choice: "auto",
+    tools: [],
+    parallel_tool_calls: false,
+    output: [
+        {
+            id: "fc_bad",
+            'type: "function_call",
+            name: "get_weather",
+            arguments: "this-is-not-json",
+            call_id: "call_bad",
+            status: "completed"
+        }
+    ],
+    output_text: ""
+};
+
+// Builds a completed Responses API response using the `output_message` item-type variant.
+isolated function getResponsesOutputMessageVariantResponse() returns json => {
+    id: "resp_output_message",
+    'object: "response",
+    created_at: 1234567890,
+    model: "gpt-4o",
+    status: "completed",
+    'error: (),
+    incomplete_details: (),
+    instructions: (),
+    metadata: (),
+    tool_choice: "auto",
+    tools: [],
+    parallel_tool_calls: false,
+    output: [
+        {
+            id: "msg_variant",
+            'type: "output_message",
+            role: "assistant",
+            status: "completed",
+            content: [
+                {
+                    'type: "output_text",
+                    text: "Variant message response.",
+                    annotations: []
+                }
+            ]
+        }
+    ],
+    output_text: "Variant message response."
+};
+
+// Builds a completed Responses API response carrying BOTH a text message and a function_call output item.
+isolated function getResponsesContentAndToolResponse() returns json => {
+    id: "resp_content_and_tool",
+    'object: "response",
+    created_at: 1234567890,
+    model: "gpt-4o",
+    status: "completed",
+    'error: (),
+    incomplete_details: (),
+    instructions: (),
+    metadata: (),
+    tool_choice: "auto",
+    tools: [],
+    parallel_tool_calls: false,
+    output: [
+        {
+            id: "msg_ct",
+            'type: "message",
+            role: "assistant",
+            status: "completed",
+            content: [
+                {
+                    'type: "output_text",
+                    text: "Let me check the weather.",
+                    annotations: []
+                }
+            ]
+        },
+        {
+            id: "fc_ct",
+            'type: "function_call",
+            name: "get_weather",
+            arguments: "{\"city\": \"Berlin\"}",
+            call_id: "call_ct",
+            status: "completed"
+        }
+    ],
+    output_text: "Let me check the weather."
+};
