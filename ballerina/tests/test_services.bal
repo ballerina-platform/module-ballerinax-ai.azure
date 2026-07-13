@@ -74,3 +74,69 @@ service /llm on new http:Listener(8080) {
         };
     }
 }
+
+// Separate mock service for parallel tool call tests
+service / on new http:Listener(8081) {
+    resource function post deployments/[string deploymentId]/chat/completions(
+            string api\-version, chat:CreateChatCompletionRequest payload)
+                returns chat:CreateChatCompletionResponse|error {
+
+        chat:ChatCompletionRequestMessage[] messages = check payload.messages.ensureType();
+
+        if messages.length() == 1 {
+            // First turn: return two parallel tool calls
+            return {
+                id: "parallel-test-id",
+                'object: "chat.completion",
+                created: 1234567890,
+                model: "gpt-4o",
+                choices: [
+                    {
+                        message: {
+                            role: "assistant",
+                            tool_calls: [
+                                {
+                                    id: "call_paris_id",
+                                    'type: "function",
+                                    'function: {name: "getWeather", arguments: "{\"city\": \"Paris\"}"}
+                                },
+                                {
+                                    id: "call_tokyo_id",
+                                    'type: "function",
+                                    'function: {name: "getWeather", arguments: "{\"city\": \"Tokyo\"}"}
+                                }
+                            ]
+                        }
+                    }
+                ]
+            };
+        }
+
+        // Second turn: verify history is reconstructed correctly
+        // Assistant message must use tool_calls (not function_call)
+        json[]? toolCallsInHistory = check messages[1]["tool_calls"].ensureType();
+        test:assertTrue(toolCallsInHistory is json[], "Assistant message must use tool_calls field");
+        test:assertEquals((<json[]>toolCallsInHistory).length(), 2, "Both tool calls must be in history");
+
+        // Tool result messages must use role: "tool" with tool_call_id
+        test:assertEquals(messages[2]["role"], "tool", "First tool result must have role 'tool'");
+        test:assertEquals(messages[2]["tool_call_id"], "call_paris_id", "First result must reference call_paris_id");
+        test:assertEquals(messages[3]["role"], "tool", "Second tool result must have role 'tool'");
+        test:assertEquals(messages[3]["tool_call_id"], "call_tokyo_id", "Second result must reference call_tokyo_id");
+
+        return {
+            id: "parallel-test-id-2",
+            'object: "chat.completion",
+            created: 1234567890,
+            model: "gpt-4o",
+            choices: [
+                {
+                    message: {
+                        role: "assistant",
+                        content: "Paris is sunny at 25°C and Tokyo is rainy at 18°C."
+                    }
+                }
+            ]
+        };
+    }
+}

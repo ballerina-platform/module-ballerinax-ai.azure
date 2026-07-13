@@ -25,6 +25,7 @@ const ERROR_MESSAGE = "Error occurred while attempting to parse the response fro
 const RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE = "Runtime schema generation is not yet supported";
 
 final OpenAiModelProvider openAiProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
+final OpenAiModelProvider parallelTestProvider = check new ("http://localhost:8081", API_KEY, DEPLOYMENT_ID, API_VERSION);
 
 string apiKey = "mock-api-key";
 string serviceUrl = "http://localhost:8080/llm";
@@ -382,4 +383,56 @@ function testGenerateMethodWithTextChunk() returns error? {
     ReviewArray result = check openAiProvider->generate(`How would you rate these text chunks out of ${maxScore}. ${chunks}. Thank you!`);
     Review r = check review.fromJsonStringWithType();
     test:assertEquals(result, [r, r]);
+}
+
+final ai:ChatCompletionFunctions[] weatherTools = [
+    {
+        name: "getWeather",
+        description: "Get the current weather for a city",
+        parameters: {
+            "type": "object",
+            "properties": {
+                "city": {"type": "string"}
+            },
+            "required": ["city"]
+        }
+    }
+];
+
+@test:Config {}
+function testParallelToolCallsInResponse() returns error? {
+    ai:ChatUserMessage userMsg = {role: ai:USER, content: "Get weather for Paris and Tokyo"};
+
+    ai:ChatAssistantMessage response = check parallelTestProvider->chat(userMsg, weatherTools);
+
+    ai:FunctionCall[]? toolCalls = response.toolCalls;
+    test:assertTrue(toolCalls is ai:FunctionCall[], "Expected tool calls in response");
+    ai:FunctionCall[] calls = <ai:FunctionCall[]>toolCalls;
+    test:assertEquals(calls.length(), 2, "Expected 2 parallel tool calls");
+    test:assertEquals(calls[0].name, "getWeather");
+    test:assertEquals(calls[0].arguments, {"city": "Paris"});
+    test:assertEquals(calls[0].id, "call_paris_id");
+    test:assertEquals(calls[1].name, "getWeather");
+    test:assertEquals(calls[1].arguments, {"city": "Tokyo"});
+    test:assertEquals(calls[1].id, "call_tokyo_id");
+}
+
+@test:Config {}
+function testParallelToolCallsHistoryReconstruction() returns error? {
+    ai:ChatMessage[] messages = [
+        <ai:ChatUserMessage>{role: ai:USER, content: "Get weather for Paris and Tokyo"},
+        <ai:ChatAssistantMessage>{
+            role: ai:ASSISTANT,
+            content: (),
+            toolCalls: [
+                {name: "getWeather", arguments: {"city": "Paris"}, id: "call_paris_id"},
+                {name: "getWeather", arguments: {"city": "Tokyo"}, id: "call_tokyo_id"}
+            ]
+        },
+        <ai:ChatFunctionMessage>{role: "function", name: "getWeather", content: "Sunny, 25°C", id: "call_paris_id"},
+        <ai:ChatFunctionMessage>{role: "function", name: "getWeather", content: "Rainy, 18°C", id: "call_tokyo_id"}
+    ];
+
+    ai:ChatAssistantMessage response = check parallelTestProvider->chat(messages, weatherTools);
+    test:assertEquals(response.content, "Paris is sunny at 25°C and Tokyo is rainy at 18°C.");
 }
