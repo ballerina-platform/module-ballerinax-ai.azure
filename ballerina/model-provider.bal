@@ -19,7 +19,7 @@ import ballerina/ai.observe;
 import ballerina/jballerina.java;
 import ballerinax/azure.openai.chat;
 
-const DEFAULT_MAX_TOKEN_COUNT = 512;
+const DEFAULT_MAX_TOKEN_COUNT = 4096;
 const DEFAULT_TEMPERATURE = 0.7d;
 
 # OpenAiProvider is a client class that provides an interface for interacting with Azure-hosted OpenAI language models.
