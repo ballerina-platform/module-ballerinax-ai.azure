@@ -127,8 +127,11 @@ isolated function convertToResponsesInput(ai:ChatMessage[]|ai:ChatUserMessage me
                 }
                 foreach ai:FunctionCall tc in toolCalls {
                     string callId = tc.id ?: string `call_${tc.name}`;
+                    // Only set `call_id` (the `call_...` correlation id). The optional item `id`
+                    // must be a server-assigned `fc_...` id; sending the `call_...` value there
+                    // makes Azure reject the turn ("Expected an ID that begins with 'fc'").
+                    // Omitting it matches the working ai.openai Responses path.
                     ResponsesFunctionCall functionCall = {
-                        id: callId,
                         call_id: callId,
                         name: tc.name,
                         arguments: (tc?.arguments ?: {}).toJsonString(),

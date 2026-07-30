@@ -11,7 +11,9 @@ chat-model provider, `OpenAiModelProvider`, which can target either the Azure Op
 Responses API. The API surface is selected at initialization time through the `apiType` parameter, which defaults
 to `CHAT_COMPLETION`. The concrete route additionally depends on the `serviceUrl`: a URL ending with `/v1` targets
 the Azure OpenAI **v1 GA** surface, while any other URL targets the **legacy** `?api-version=...` route. An
-`EmbeddingProvider` is also provided for Azure OpenAI embedding models.
+`EmbeddingProvider` is also provided for Azure OpenAI embedding models, which selects its route the same way: a
+`/v1` service URL posts `{serviceUrl}/embeddings` with no `api-version`, while any other URL posts the legacy
+deployment-scoped `?api-version=...` route.
 
 ## Issues and projects
 

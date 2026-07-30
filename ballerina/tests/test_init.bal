@@ -105,3 +105,74 @@ function testResponsesLegacyClientInitFailure() {
     test:assertTrue(provider is ai:Error);
     test:assertTrue((<ai:Error>provider).message().includes("Responses"));
 }
+
+// ===== EmbeddingProvider: api-version resolution =====
+// The embedding provider resolves the api-version exactly like the model provider: it is required on the legacy
+// deployment-scoped route and optional on the v1 GA surface (`/v1`-suffixed service URL).
+
+// A legacy (non-`/v1`) service URL requires an `api-version`; omitting it must fail fast at init.
+@test:Config
+function testEmbeddingLegacyServiceUrlWithoutApiVersionFails() {
+    EmbeddingProvider|ai:Error provider = new (SERVICE_URL, API_KEY, (), DEPLOYMENT_ID);
+    test:assertTrue(provider is ai:Error, "expected init to fail when api-version is omitted for a legacy URL");
+    test:assertTrue((<ai:Error>provider).message().includes("'apiVersion' argument is required"),
+            "unexpected error message: " + (<ai:Error>provider).message());
+}
+
+// An empty (whitespace-only) api-version is treated the same as a missing one on the legacy surface.
+@test:Config
+function testEmbeddingLegacyServiceUrlWithEmptyApiVersionFails() {
+    EmbeddingProvider|ai:Error provider = new (SERVICE_URL, API_KEY, "   ", DEPLOYMENT_ID);
+    test:assertTrue(provider is ai:Error, "a blank api-version must be rejected for a legacy URL");
+    test:assertTrue((<ai:Error>provider).message().includes("'apiVersion' argument is required"));
+}
+
+// A date-based api-version is ignored (with a warning) on the v1 GA surface; the request must not carry it (the
+// mock's `assertV1ApiVersion` guard fails the test if it does).
+@test:Config
+function testEmbeddingV1ServiceUrlIgnoresDateApiVersion() returns error? {
+    EmbeddingProvider provider = check new (SERVICE_URL_V1, API_KEY, "2024-10-21", DEPLOYMENT_ID);
+    ai:Embedding embedding = check provider->embed(<ai:TextChunk>{content: "Hello, world!"});
+    float[] vectors = check embedding.cloneWithType();
+    test:assertEquals(vectors.length(), 1536);
+}
+
+// `preview` and `v1` are the opt-in v1 surfaces and ARE forwarded as `?api-version=` on the v1 route.
+@test:Config {
+    dataProvider: v1ApiVersionOptIns
+}
+function testEmbeddingV1ServiceUrlForwardsOptInApiVersion(string optIn) returns error? {
+    EmbeddingProvider provider = check new (SERVICE_URL_V1, API_KEY, optIn, DEPLOYMENT_ID);
+    ai:Embedding embedding = check provider->embed(<ai:TextChunk>{content: "Hello, world!"});
+    float[] vectors = check embedding.cloneWithType();
+    test:assertEquals(vectors.length(), 1536);
+}
+
+function v1ApiVersionOptIns() returns string[][] => [["preview"], ["v1"]];
+
+// A trailing slash on the service URL is normalised before the `/v1` suffix check.
+@test:Config
+function testEmbeddingV1ServiceUrlWithTrailingSlash() returns error? {
+    EmbeddingProvider provider = check new (SERVICE_URL_V1 + "/", API_KEY, (), DEPLOYMENT_ID);
+    ai:Embedding embedding = check provider->embed(<ai:TextChunk>{content: "Hello, world!"});
+    float[] vectors = check embedding.cloneWithType();
+    test:assertEquals(vectors.length(), 1536);
+}
+
+// ===== EmbeddingProvider: client initialisation failures (malformed service URL) =====
+
+@test:Config
+function testEmbeddingV1ClientInitFailure() {
+    EmbeddingProvider|ai:Error provider = new ("http://invalid host/v1", API_KEY, (), DEPLOYMENT_ID);
+    test:assertTrue(provider is ai:Error);
+    test:assertTrue((<ai:Error>provider).message().includes("Embeddings (v1)"),
+            "unexpected error message: " + (<ai:Error>provider).message());
+}
+
+@test:Config
+function testEmbeddingLegacyClientInitFailure() {
+    EmbeddingProvider|ai:Error provider = new ("http://invalid host", API_KEY, API_VERSION, DEPLOYMENT_ID);
+    test:assertTrue(provider is ai:Error);
+    test:assertTrue((<ai:Error>provider).message().includes("Failed to initialize"),
+            "unexpected error message: " + (<ai:Error>provider).message());
+}

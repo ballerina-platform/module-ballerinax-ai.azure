@@ -67,6 +67,10 @@ string serviceUrl = "http://localhost:8080/llm/azureopenai";
 string embeddingDeploymentId = "text-embed-3-small";
 EmbeddingProvider embeddingProvider = check new (serviceUrl, apiKey, API_VERSION, DEPLOYMENT_ID);
 
+// `EmbeddingProvider` targeting the v1 GA surface (`/v1`-suffixed service URL with the api-version omitted as
+// `()`), which posts `{serviceUrl}/embeddings` with the deployment sent as `model` in the body.
+final EmbeddingProvider embeddingV1Provider = check new (SERVICE_URL_V1, apiKey, (), DEPLOYMENT_ID);
+
 @test:Config {}
 function testEmbeddings() returns error? {
     ai:TextChunk chunk = {
@@ -88,6 +92,36 @@ function testBatchEmbeddings() returns error? {
         }
     ];
     ai:Embedding[] results = check embeddingProvider->batchEmbed(chunks);
+    test:assertEquals(results.length(), 2);
+    foreach ai:Embedding result in results {
+        float[] vectors = check result.cloneWithType();
+        test:assertEquals(vectors.length(), 1536);
+    }
+}
+
+// ===== Embeddings: v1 GA surface tests =====
+// These use a `/v1`-suffixed service URL and hit `POST {serviceUrl}/embeddings` with NO `api-version`.
+
+@test:Config {}
+function testV1Embeddings() returns error? {
+    ai:TextChunk chunk = {
+        content: "Hello, world!"
+    };
+    ai:Embedding data = check embeddingV1Provider->embed(chunk);
+    float[] vectors = check data.cloneWithType();
+    test:assertEquals(vectors.length(), 1536);
+}
+
+@test:Config {}
+function testV1BatchEmbeddings() returns error? {
+    ai:TextChunk[] chunks = [
+        {
+            content: "Hello, world!"
+        }, {
+            content: "Hello, world!!!"
+        }
+    ];
+    ai:Embedding[] results = check embeddingV1Provider->batchEmbed(chunks);
     test:assertEquals(results.length(), 2);
     foreach ai:Embedding result in results {
         float[] vectors = check result.cloneWithType();

@@ -18,7 +18,22 @@ targets the Azure OpenAI **v1 GA** surface through the generated `ballerinax/azu
 The `apiVersion` argument is **required** for legacy (non-`/v1`) service URLs (e.g. `"2024-10-21"`). For v1 (`/v1`)
 service URLs it is optional and normally omitted; pass `"preview"` or `"v1"` to opt into a specific v1 surface.
 
-This module also provides an `EmbeddingProvider` for Azure OpenAI embedding models.
+This module also provides an `EmbeddingProvider` for Azure OpenAI embedding models. It resolves the `apiVersion` the
+same way, based on the shape of the `serviceUrl`:
+
+| `serviceUrl` ends with `/v1` (v1 GA) | otherwise (legacy) |
+| --- | --- |
+| `POST {serviceUrl}/embeddings` (deployment sent as `model` in the body) | `POST {serviceUrl}/deployments/{deploymentId}/embeddings?api-version=...` |
+
+```ballerina
+// Legacy service URL — a date-based `apiVersion` is required.
+final ai:EmbeddingProvider legacyEmbeddingProvider = check new azure:EmbeddingProvider(
+    "https://<resource>.openai.azure.com/openai", "api-key", "2023-05-15", "deployment-id");
+
+// v1 GA service URL — the `apiVersion` is not needed, so pass `()`.
+final ai:EmbeddingProvider embeddingProvider = check new azure:EmbeddingProvider(
+    "https://<resource>.openai.azure.com/openai/v1", "api-key", (), "deployment-id");
+```
 
 ## Prerequisites
 

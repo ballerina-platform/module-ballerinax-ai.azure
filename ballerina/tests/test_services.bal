@@ -67,29 +67,19 @@ service /llm/azureopenai on mockListener {
         return handleResponsesApiRequest(payload);
     }
 
-    // Embeddings — legacy deployment-scoped route.
+    // Embeddings — legacy deployment-scoped route. The `api-version` query parameter is REQUIRED here; declaring
+    // it non-optional makes the mock reject (and the test fail) if the provider ever drops it.
     resource function post deployments/[string deploymentId]/embeddings(string api\-version,
             embeddings:Deploymentid_embeddings_body payload) returns embeddings:Inline_response_200|error {
-        // A dedicated trigger lets the embedding tests exercise the "no embeddings generated" branch.
-        if payload.input is string && payload.input == EMPTY_EMBED_TRIGGER {
-            return {data: [], model: "text-embedding-3-small", usage: {prompt_tokens: 0, total_tokens: 0}, 'object: "list"};
-        }
-        embeddings:Inline_response_200_data[] data = from int i in 0 ..< 2
-            select {
-                embedding: from int j in 0 ..< 1536
-                    select 0.1 + j * 0.1,
-                index: i,
-                'object: "list"
-            };
-        return {
-            data: payload.input is embeddings:InputItemsString[] ? data : [data[0]],
-            model: "text-embedding-3-small",
-            usage: {
-                prompt_tokens: 15,
-                total_tokens: 15
-            },
-            'object: "list"
-        };
+        test:assertTrue(api\-version.length() > 0,
+                "Embeddings (legacy): the api-version query parameter must be forwarded");
+        // The legacy deployment-scoped route carries the deployment in the URL, so a body-level `model` must not
+        // be sent.
+        test:assertTrue(payload?.model is (),
+                "Embeddings (legacy): 'model' must not be present in the body (deployment is in the URL)");
+        string|embeddings:InputItemsString[]? input = payload.input;
+        return buildEmbeddingsResponse(input is embeddings:InputItemsString[],
+                input is string && input == EMPTY_EMBED_TRIGGER);
     }
 }
 
@@ -118,6 +108,45 @@ service /llm/azureopenai/openai/v1 on mockListener {
         validateResponsesWireParams(payload);
         return handleResponsesApiRequest(payload);
     }
+
+    // Embeddings — v1 GA route. The deployment is sent as `model` in the body. An `api-version` query parameter is
+    // only present when the caller opted into a `preview`/`v1` surface; a date-based api-version must never reach
+    // this route.
+    resource function post embeddings(@http:Payload json payload, string? api\-version = ())
+            returns embeddings:Inline_response_200|error {
+        assertV1ApiVersion(api\-version);
+        string model = check payload.model.ensureType();
+        test:assertTrue(model.length() > 0,
+                "Embeddings (v1): the deployment must be sent as 'model' in the body");
+        json input = check payload.input;
+        return buildEmbeddingsResponse(input is json[], input is string && input == EMPTY_EMBED_TRIGGER);
+    }
+}
+
+// ===== Embeddings mock response logic =====
+
+// Shared mock embeddings response builder for both surfaces (legacy deployment-scoped and v1 GA). `isBatch`
+// selects the two-vector batch response; `isEmpty` drives the "no embeddings generated" branch.
+isolated function buildEmbeddingsResponse(boolean isBatch, boolean isEmpty) returns embeddings:Inline_response_200 {
+    if isEmpty {
+        return {data: [], model: "text-embedding-3-small", usage: {prompt_tokens: 0, total_tokens: 0}, 'object: "list"};
+    }
+    embeddings:Inline_response_200_data[] data = from int i in 0 ..< 2
+        select {
+            embedding: from int j in 0 ..< 1536
+                select 0.1 + j * 0.1,
+            index: i,
+            'object: "list"
+        };
+    return {
+        data: isBatch ? data : [data[0]],
+        model: "text-embedding-3-small",
+        usage: {
+            prompt_tokens: 15,
+            total_tokens: 15
+        },
+        'object: "list"
+    };
 }
 
 // ===== Wire-parameter validation =====
