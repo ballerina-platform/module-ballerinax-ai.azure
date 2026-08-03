@@ -83,8 +83,12 @@ public type ConnectionConfig record {|
 #
 # | `apiType` | `serviceUrl` ends with `/v1` (v1 GA) | otherwise (legacy) |
 # | --- | --- | --- |
-# | `CHAT_COMPLETION` | `POST {serviceUrl}/chat/completions` via the `azure.openai.chat` connector | `POST {serviceUrl}/openai/deployments/{deploymentId}/chat/completions?api-version={apiVersion}` |
-# | `RESPONSES` | `POST {serviceUrl}/responses` via the `azure.openai.responses` connector | `POST {serviceUrl}/openai/responses?api-version={apiVersion}` |
+# | `CHAT_COMPLETION` | `POST {serviceUrl}/chat/completions` via the `azure.openai.chat` connector | `POST {legacyBase}/deployments/{deploymentId}/chat/completions?api-version={apiVersion}` |
+# | `RESPONSES` | `POST {serviceUrl}/responses` via the `azure.openai.responses` connector | `POST {legacyBase}/responses?api-version={apiVersion}` |
+#
+# On the legacy surface `legacyBase` is the `serviceUrl` completed with `/openai` when it is a bare origin
+# (e.g. `https://<resource>.openai.azure.com`) and used verbatim when it already carries a path (e.g. an API
+# Management base path).
 public enum ApiType {
     # Use the Azure OpenAI **Chat Completions API**. This is the default and preserves the behaviour of
     # earlier releases of this module.

@@ -37,10 +37,10 @@ isolated function newTestChatRequest() returns chat:ChatCompletionsBody {
 
 @test:Config
 function testUsesMaxCompletionTokensAtOrAfterThreshold() {
-    test:assertTrue(usesMaxCompletionTokens("2024-08-01-preview"),
-            "the 2024-08-01-preview threshold itself must use max_completion_tokens");
-    test:assertTrue(usesMaxCompletionTokens("2024-08-01"),
-            "the bare 2024-08-01 GA date must use max_completion_tokens");
+    test:assertTrue(usesMaxCompletionTokens("2024-09-01-preview"),
+            "the 2024-09-01-preview threshold itself must use max_completion_tokens");
+    test:assertTrue(usesMaxCompletionTokens("2024-09-01"),
+            "the bare 2024-09-01 date must use max_completion_tokens");
     test:assertTrue(usesMaxCompletionTokens("2024-10-21"),
             "a later GA api-version must use max_completion_tokens");
     test:assertTrue(usesMaxCompletionTokens("2025-04-01-preview"),
@@ -49,7 +49,11 @@ function testUsesMaxCompletionTokensAtOrAfterThreshold() {
 
 @test:Config
 function testUsesMaxCompletionTokensBeforeThreshold() {
-    test:assertFalse(usesMaxCompletionTokens("2024-07-31-preview"),
+    // `max_completion_tokens` reached the Chat Completions schema in 2024-09-01-preview, so 2024-08-01-preview
+    // must still send `max_tokens`: Azure rejects the newer field on that api-version.
+    test:assertFalse(usesMaxCompletionTokens("2024-08-01-preview"),
+            "2024-08-01-preview predates max_completion_tokens and must fall back to max_tokens");
+    test:assertFalse(usesMaxCompletionTokens("2024-08-31-preview"),
             "the day before the threshold must fall back to max_tokens");
     test:assertFalse(usesMaxCompletionTokens("2024-02-15-preview"),
             "an older preview api-version must fall back to max_tokens");
@@ -121,6 +125,36 @@ function testBuildLegacyChatBodyPreservesOtherFields() returns error? {
     test:assertTrue(body.hasKey("messages"), "messages must be carried through unchanged");
     json[] messages = check body["messages"].ensureType();
     test:assertEquals(messages.length(), 1);
+}
+
+// ===== resolveLegacyBase: `/openai` completion without rewriting caller-owned paths =====
+
+@test:Config
+function testResolveLegacyBaseCompletesBareOrigin() {
+    test:assertEquals(resolveLegacyBase("https://my-resource.openai.azure.com"),
+            "https://my-resource.openai.azure.com/openai",
+            "a bare Azure OpenAI origin must be completed with '/openai'");
+    test:assertEquals(resolveLegacyBase("http://localhost:8080"), "http://localhost:8080/openai",
+            "a bare origin with a port must be completed with '/openai'");
+}
+
+@test:Config
+function testResolveLegacyBaseKeepsExistingOpenAiSuffix() {
+    test:assertEquals(resolveLegacyBase("https://my-resource.openai.azure.com/openai"),
+            "https://my-resource.openai.azure.com/openai",
+            "a service URL that already ends with '/openai' must be left unchanged");
+}
+
+@test:Config
+function testResolveLegacyBaseKeepsCallerOwnedPathVerbatim() {
+    // Regression guard: a gateway/API Management base path must never have '/openai' injected into it, which
+    // would turn a working pre-existing configuration into a 404.
+    test:assertEquals(resolveLegacyBase("https://gw.example.com/azure-openai"),
+            "https://gw.example.com/azure-openai",
+            "a gateway base path must be used verbatim");
+    test:assertEquals(resolveLegacyBase("http://localhost:8080/llm/azureopenai"),
+            "http://localhost:8080/llm/azureopenai",
+            "a multi-segment base path must be used verbatim");
 }
 
 // ===== reasoning_effort handling =====

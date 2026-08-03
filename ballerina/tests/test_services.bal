@@ -22,7 +22,10 @@ import ballerinax/azure.openai.embeddings;
 // the `OpenAiModelProvider` targets:
 //
 //   1. `legacyAzureOpenAiService` — the **legacy** Azure OpenAI service (deployment-scoped routes that REQUIRE an
-//      `api-version` query parameter). Hosts Chat Completions, Responses, and Embeddings.
+//      `api-version` query parameter). Hosts Chat Completions, Responses, and Embeddings. Chat and Responses are
+//      served both with and without an `/openai` base-path segment, because `resolveLegacyBase` uses a
+//      path-carrying service URL verbatim (`/llm/azureopenai/...`) while a service URL that already ends with
+//      `/openai` keeps that segment. Both shapes share one handler, so the wire assertions apply to both.
 //   2. `v1AzureOpenAiService` — the **v1 GA** Azure OpenAI service (`/openai/v1/...` routes that must NOT carry an
 //      `api-version` query parameter and send the deployment as `model` in the body).
 //
@@ -45,26 +48,28 @@ service /llm/azureopenai on mockListener {
 
     // Chat Completions — legacy deployment-scoped route. The `api-version` query parameter is REQUIRED here;
     // declaring it non-optional makes the mock reject (and the test fail) if the provider ever drops it.
+    resource function post deployments/[string deploymentId]/chat/completions(
+            string api\-version, @http:Payload json payload) returns json|error {
+        return handleLegacyChatCompletion(deploymentId, api\-version, payload);
+    }
+
+    // Chat Completions — same route under an `/openai` base path, exercised by service URLs that already end with
+    // `/openai` (and by the bare-origin completion, which produces the same shape).
     resource function post openai/deployments/[string deploymentId]/chat/completions(
             string api\-version, @http:Payload json payload) returns json|error {
-        // Regression guard for the max_tokens -> max_completion_tokens fix: verify the wire body carries the
-        // correct token-limit field for the api-version. Applies to both the chat() and generate() paths.
-        assertChatCompletionTokenField(api\-version, payload);
-        // The legacy deployment-scoped route carries the deployment in the URL, so a body-level `model` must not
-        // be sent.
-        test:assertTrue(payload.model is error,
-                "Chat Completions (legacy): 'model' must not be present in the body (deployment is in the URL)");
-        validateChatWireParams(deploymentId, payload);
-        return respondToChatCompletion(deploymentId, payload);
+        return handleLegacyChatCompletion(deploymentId, api\-version, payload);
     }
 
     // Responses — legacy preview route. The `api-version` query parameter is REQUIRED here.
+    resource function post responses(string api\-version, @http:Payload json payload)
+            returns json|error {
+        return handleLegacyResponses(api\-version, payload);
+    }
+
+    // Responses — same route under an `/openai` base path.
     resource function post openai/responses(string api\-version, @http:Payload json payload)
             returns json|error {
-        test:assertTrue(api\-version.length() > 0,
-                "Responses API (legacy preview): the api-version query parameter must be forwarded");
-        validateResponsesWireParams(payload);
-        return handleResponsesApiRequest(payload);
+        return handleLegacyResponses(api\-version, payload);
     }
 
     // Embeddings — legacy deployment-scoped route. The `api-version` query parameter is REQUIRED here; declaring
@@ -81,6 +86,29 @@ service /llm/azureopenai on mockListener {
         return buildEmbeddingsResponse(input is embeddings:InputItemsString[],
                 input is string && input == EMPTY_EMBED_TRIGGER);
     }
+}
+
+// Shared legacy Chat Completions handler. Both legacy chat routes (with and without an `/openai` base-path
+// segment) delegate here, so the wire assertions apply to every legacy base URL shape.
+function handleLegacyChatCompletion(string deploymentId, string apiVersion, json payload)
+        returns json|error {
+    // Regression guard for the max_tokens -> max_completion_tokens fix: verify the wire body carries the
+    // correct token-limit field for the api-version. Applies to both the chat() and generate() paths.
+    assertChatCompletionTokenField(apiVersion, payload);
+    // The legacy deployment-scoped route carries the deployment in the URL, so a body-level `model` must not
+    // be sent.
+    test:assertTrue(payload.model is error,
+            "Chat Completions (legacy): 'model' must not be present in the body (deployment is in the URL)");
+    validateChatWireParams(deploymentId, payload);
+    return respondToChatCompletion(deploymentId, payload);
+}
+
+// Shared legacy Responses handler; both legacy responses routes delegate here.
+function handleLegacyResponses(string apiVersion, json payload) returns json|error {
+    test:assertTrue(apiVersion.length() > 0,
+            "Responses API (legacy preview): the api-version query parameter must be forwarded");
+    validateResponsesWireParams(payload);
+    return handleResponsesApiRequest(payload);
 }
 
 // ===== 2. V1 Azure OpenAI service =====

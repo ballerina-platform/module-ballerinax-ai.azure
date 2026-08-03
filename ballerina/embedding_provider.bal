@@ -24,8 +24,9 @@ import ballerinax/azure.openai.embeddings;
 # The concrete wire route depends on the shape of the `serviceUrl`: a URL ending with `/v1` targets the Azure OpenAI
 # **v1 GA** surface (`POST {serviceUrl}/embeddings`, with the deployment sent as `model` in the body and no
 # `api-version` required), while any other URL targets the **legacy** deployment-scoped route
-# (`POST {serviceUrl}/deployments/{deploymentId}/embeddings?api-version=...`) through the generated
-# `ballerinax/azure.openai.embeddings` connector.
+# (`POST {legacyBase}/deployments/{deploymentId}/embeddings?api-version=...`) through the generated
+# `ballerinax/azure.openai.embeddings` connector, where `legacyBase` is the `serviceUrl` completed with `/openai`
+# when it is a bare origin and used verbatim when it already carries a path.
 public distinct isolated client class EmbeddingProvider {
     *ai:EmbeddingProvider;
     # Generated Embeddings connector for the legacy deployment-scoped route. Created only when the `serviceUrl`
@@ -48,7 +49,9 @@ public distinct isolated client class EmbeddingProvider {
     #
     # + serviceUrl - The base URL of OpenAI API endpoint. A URL ending with `/v1`
     #              (e.g. `https://<resource>.openai.azure.com/openai/v1`) targets the v1 GA surface; any other URL
-    #              (e.g. `https://<resource>.openai.azure.com/openai`) targets the legacy route.
+    #              (e.g. `https://<resource>.openai.azure.com/openai`) targets the legacy route. A bare origin
+    #              (e.g. `https://<resource>.openai.azure.com`) is completed with `/openai`; a URL that already
+    #              carries a path (e.g. an API Management base path) is used verbatim.
     # + accessToken - The access token for authenticating API requests
     # + apiVersion - The API version of the Azure OpenAI API. **Required** for legacy (non-`/v1`) service URLs
     #              (e.g. `"2023-05-15"`). For v1 (`/v1`) service URLs the value is optional and normally passed as
@@ -74,9 +77,10 @@ public distinct isolated client class EmbeddingProvider {
         self.apiVersion = resolvedApiVersion;
         self.v1ApiVersion = resolvedV1ApiVersion;
 
-        // Create only the client required by the selected surface; the unused field stays `()`.
+        // Create only the client required by the selected surface; the unused field stays `()`. The legacy base is
+        // resolved with the same rule as the model provider, so one `serviceUrl` means the same thing to both.
         [embeddings:Client?, http:Client?] [embeddingsClient, v1EmbeddingsClient] =
-                check createEmbeddingsClients(isV1, accessToken, trimmedUrl, config);
+                check createEmbeddingsClients(isV1, accessToken, trimmedUrl, resolveLegacyBase(trimmedUrl), config);
         self.embeddingsClient = embeddingsClient;
         self.v1EmbeddingsClient = v1EmbeddingsClient;
         self.apiKey = accessToken;
@@ -161,10 +165,11 @@ public distinct isolated client class EmbeddingProvider {
 #
 # + isV1 - `true` when the `serviceUrl` targets the v1 GA surface (ends with `/v1`); `false` for the legacy surface
 # + accessToken - The Azure OpenAI API key
-# + trimmedUrl - The trailing-slash-trimmed service URL
+# + trimmedUrl - The trailing-slash-trimmed service URL (base for the v1 GA route)
+# + legacyBase - The base URL for the legacy deployment-scoped route
 # + config - Additional HTTP connection configuration
 # + return - An `[embeddingsClient, v1EmbeddingsClient]` tuple, or an `ai:Error` when client initialization fails
-isolated function createEmbeddingsClients(boolean isV1, string accessToken, string trimmedUrl,
+isolated function createEmbeddingsClients(boolean isV1, string accessToken, string trimmedUrl, string legacyBase,
         ConnectionConfig config) returns [embeddings:Client?, http:Client?]|ai:Error {
     if isV1 {
         http:Client|error v1EmbeddingsClient = new (trimmedUrl, toRawHttpConfig(config));
@@ -196,7 +201,7 @@ isolated function createEmbeddingsClients(boolean isV1, string accessToken, stri
         proxy: config.proxy,
         validation: config.validation
     };
-    embeddings:Client|error embeddingsClient = new (openAiConfig, trimmedUrl);
+    embeddings:Client|error embeddingsClient = new (openAiConfig, legacyBase);
     if embeddingsClient is error {
         return error ai:Error("Failed to initialize OpenAI embedding provider", embeddingsClient);
     }
@@ -209,7 +214,7 @@ isolated function createEmbeddingsClients(boolean isV1, string accessToken, stri
 #   `model` in the body and the `api-key` header. `api-version` is only sent when the caller opted into
 #   `preview`/`v1` (`v1ApiVersion`).
 # - **Legacy** (otherwise): the generated connector posts
-#   `POST {serviceUrl}/deployments/{deploymentId}/embeddings?api-version={apiVersion}`.
+#   `POST {legacyBase}/deployments/{deploymentId}/embeddings?api-version={apiVersion}`.
 #
 # + embeddingsClient - The generated Embeddings connector for the legacy route (`()` on the v1 path)
 # + v1EmbeddingsClient - The raw HTTP client for the v1 GA route (`()` on the legacy path)

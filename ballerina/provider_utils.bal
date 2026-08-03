@@ -291,15 +291,17 @@ isolated function handleParseResponseError(error chatResponseError) returns erro
     return chatResponseError;
 }
 
-// Azure introduced `max_completion_tokens` (and made reasoning models reject the legacy `max_tokens`) in
-// api-version 2024-08-01-preview. api-version values are date-prefixed (YYYY-MM-DD[-preview]) and therefore
-// sort lexicographically, so a prefix comparison is a reliable "is this version >= threshold" test.
-const string MAX_COMPLETION_TOKENS_MIN_API_VERSION = "2024-08-01";
+// Azure added `max_completion_tokens` to the Chat Completions request schema (and made the o-series reject the
+// legacy `max_tokens`) in api-version 2024-09-01-preview, alongside o1-preview/o1-mini support. It is absent from
+// the 2024-08-01-preview Chat Completions schema, which only carries it on the Assistants run schemas.
+// api-version values are date-prefixed (YYYY-MM-DD[-preview]) and therefore sort lexicographically, so a prefix
+// comparison is a reliable "is this version >= threshold" test.
+const string MAX_COMPLETION_TOKENS_MIN_API_VERSION = "2024-09-01";
 
 # Decides whether a legacy (date-based) api-version accepts `max_completion_tokens`.
 #
-# + apiVersion - The date-based api-version (e.g. `2024-08-01-preview`)
-# + return - `true` for api-versions `>= 2024-08-01`; `false` otherwise
+# + apiVersion - The date-based api-version (e.g. `2024-09-01-preview`)
+# + return - `true` for api-versions `>= 2024-09-01`; `false` otherwise
 isolated function usesMaxCompletionTokens(string apiVersion) returns boolean {
     string datePrefix = apiVersion.length() >= 10 ? apiVersion.substring(0, 10) : apiVersion;
     return datePrefix >= MAX_COMPLETION_TOKENS_MIN_API_VERSION;
@@ -309,7 +311,7 @@ isolated function usesMaxCompletionTokens(string apiVersion) returns boolean {
 #
 # GPT-5/o-series reasoning models reject the deprecated `max_tokens` and require `max_completion_tokens`. The v1
 # GA surface always accepts `max_completion_tokens`; on the legacy surface it is accepted only from api-version
-# `2024-08-01-preview` onward, so older versions fall back to `max_tokens`.
+# `2024-09-01-preview` onward, so older versions fall back to `max_tokens`.
 #
 # + request - The Chat Completions request to mutate
 # + maxTokens - The token limit value
@@ -346,8 +348,8 @@ isolated function buildLegacyChatBody(chat:ChatCompletionsBody request) returns 
 # - **v1 GA** (`useV1` is `true`): the generated `chat:Client` posts `{serviceUrl}/chat/completions`. `api-version`
 #   is only sent when the caller opted into `preview`/`v1` (`v1ApiVersion`).
 # - **Legacy** (otherwise): the raw HTTP client posts
-#   `POST {serviceUrl}/openai/deployments/{deploymentId}/chat/completions?api-version={apiVersion}` with the
-#   `api-key` header.
+#   `POST {legacyBase}/deployments/{deploymentId}/chat/completions?api-version={apiVersion}` with the `api-key`
+#   header, where `legacyBase` is the resolved legacy base URL (see `resolveLegacyBase`).
 #
 # + chatClient - The generated Chat Completions connector for the v1 GA surface (`()` on the legacy path)
 # + legacyChatClient - The raw HTTP client for the legacy route (`()` on the v1 path)
@@ -512,14 +514,14 @@ isolated function ensureAnydataResult(chat:InlineResponse200 response,
 
 # Maps the module's `ConnectionConfig` to the `azure.openai.chat` connector configuration, injecting api-key auth.
 #
-# The connector's `ApiKeysConfig` requires both `api-key` and `authorization`; Azure api-key authentication only
-# needs the `api-key` header, so `authorization` is left empty.
+# Azure api-key authentication is carried solely by the `api-key` header. No `authorization` value is supplied:
+# sending an empty `Authorization` header makes API Management/WAF front ends reject the request with a 401.
 #
 # + apiKey - The Azure OpenAI API key
 # + cc - The module connection configuration to map
 # + return - The `azure.openai.chat` connector configuration
 isolated function toChatConnectionConfig(string apiKey, ConnectionConfig cc) returns chat:ConnectionConfig => {
-    auth: {api\-key: apiKey, authorization: ""},
+    auth: {api\-key: apiKey},
     httpVersion: cc.httpVersion,
     http1Settings: cc.http1Settings ?: {},
     http2Settings: cc.http2Settings ?: {},

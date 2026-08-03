@@ -272,8 +272,8 @@ isolated function convertResponsesOutputToAssistantMessage(responses:InlineRespo
 #
 # - **v1 GA** (`useV1` is `true`): the generated `responses:Client` posts `{serviceUrl}/responses`. `api-version`
 #   is only sent when the caller opted into `preview`/`v1` (`v1ApiVersion`).
-# - **Legacy** (otherwise): the raw HTTP client posts `POST {serviceUrl}/openai/responses?api-version={apiVersion}`
-#   with the `api-key` header.
+# - **Legacy** (otherwise): the raw HTTP client posts `POST {legacyBase}/responses?api-version={apiVersion}` with
+#   the `api-key` header, where `legacyBase` is the resolved legacy base URL (see `resolveLegacyBase`).
 #
 # + responsesClient - The generated Responses connector for the v1 GA surface (`()` on the legacy path)
 # + legacyResponsesClient - The raw HTTP client for the legacy route (`()` on the v1 path)
@@ -341,14 +341,14 @@ isolated function checkResponseStatus(responses:InlineResponse200 response) retu
 
 # Maps the module's `ConnectionConfig` to the `azure.openai.responses` connector configuration.
 #
-# The connector's `ApiKeysConfig` requires both `api-key` and `authorization`; Azure api-key authentication only
-# needs the `api-key` header, so `authorization` is left empty.
+# Azure api-key authentication is carried solely by the `api-key` header. No `authorization` value is supplied:
+# sending an empty `Authorization` header makes API Management/WAF front ends reject the request with a 401.
 #
 # + apiKey - The Azure OpenAI API key
 # + cc - The module connection configuration to map
 # + return - The `azure.openai.responses` connector configuration
 isolated function toResponsesConnectionConfig(string apiKey, ConnectionConfig cc) returns responses:ConnectionConfig => {
-    auth: {api\-key: apiKey, authorization: ""},
+    auth: {api\-key: apiKey},
     httpVersion: cc.httpVersion,
     http1Settings: cc.http1Settings ?: {},
     http2Settings: cc.http2Settings ?: {},

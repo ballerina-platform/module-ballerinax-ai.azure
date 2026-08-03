@@ -40,7 +40,7 @@ public isolated distinct client class OpenAiModelProvider {
     # Created only when `apiType` is `CHAT_COMPLETION` and the `serviceUrl` targets the v1 GA surface; `()` otherwise.
     private final chat:Client? chatClient;
     # Raw HTTP client for the legacy Chat Completions route
-    # (`POST {serviceUrl}/openai/deployments/{deploymentId}/chat/completions?api-version=...`). Created only when
+    # (`POST {legacyBase}/deployments/{deploymentId}/chat/completions?api-version=...`). Created only when
     # `apiType` is `CHAT_COMPLETION` and the `serviceUrl` targets the legacy surface; `()` otherwise. A raw client
     # (rather than the connector) is used so the request body can be serialized here and the correct token-limit
     # field (`max_tokens` vs `max_completion_tokens`) selected per api-version.
@@ -48,7 +48,7 @@ public isolated distinct client class OpenAiModelProvider {
     # Generated Responses connector for the v1 GA surface (`POST {serviceUrl}/responses`).
     # Created only when `apiType` is `RESPONSES` and the `serviceUrl` targets the v1 GA surface; `()` otherwise.
     private final responses:Client? responsesClient;
-    # Raw HTTP client for the legacy Responses route (`POST {serviceUrl}/openai/responses?api-version=...`).
+    # Raw HTTP client for the legacy Responses route (`POST {legacyBase}/responses?api-version=...`).
     # Created only when `apiType` is `RESPONSES` and the `serviceUrl` targets the legacy surface; `()` otherwise.
     private final http:Client? legacyResponsesClient;
     # `true` when the `serviceUrl` targets the v1 GA surface (ends with `/v1`); `false` for the legacy surface.
@@ -68,7 +68,9 @@ public isolated distinct client class OpenAiModelProvider {
     #
     # + serviceUrl - The base URL of the Azure OpenAI API endpoint. A URL ending with `/v1`
     #              (e.g. `https://<resource>.openai.azure.com/openai/v1`) targets the v1 GA surface; any other URL
-    #              (e.g. `https://<resource>.openai.azure.com`) targets the legacy route.
+    #              (e.g. `https://<resource>.openai.azure.com/openai`) targets the legacy route. A bare origin
+    #              (e.g. `https://<resource>.openai.azure.com`) is completed with `/openai`; a URL that already
+    #              carries a path (e.g. an API Management base path) is used verbatim.
     # + apiKey - The Azure OpenAI API key
     # + deploymentId - The deployment identifier for the specific model deployment in Azure
     # + apiVersion - The Azure OpenAI `api-version`. **Required** for legacy (non-`/v1`) service URLs
@@ -112,8 +114,8 @@ public isolated distinct client class OpenAiModelProvider {
         self.apiVersion = resolvedApiVersion;
         self.v1ApiVersion = resolvedV1ApiVersion;
 
-        // Base for the legacy raw-HTTP routes must end with `/openai` (the deployment/route segments are appended
-        // per request).
+        // Base for the legacy raw-HTTP routes (the deployment/route segments are appended per request). A bare
+        // origin is completed with `/openai`; a URL that already has a path is used verbatim.
         string legacyBase = resolveLegacyBase(trimmedUrl);
 
         // Create only the client required by the selected (apiType, surface) combination; unused fields stay `()`.
@@ -468,13 +470,28 @@ isolated function resolveApiVersions(boolean isV1, string? apiVersion) returns [
     return [resolvedApiVersion, resolvedV1ApiVersion];
 }
 
-# Resolves the base URL for the legacy raw-HTTP routes, ensuring it ends with `/openai` (the deployment/route
-# segments are appended per request).
+# Resolves the base URL for the legacy routes (the deployment/route segments are appended per request).
+#
+# Azure's own legacy spec server is `https://{endpoint}/openai`, so a bare Azure OpenAI origin
+# (e.g. `https://<resource>.openai.azure.com`) is completed with `/openai` as a convenience. A URL that already
+# carries a path is used **verbatim**: callers fronting Azure OpenAI through API Management or another gateway
+# (e.g. `https://gw.example.com/azure-openai`) own their base path, and silently injecting `/openai` into it would
+# turn a working configuration into a 404.
 #
 # + trimmedUrl - The trailing-slash-trimmed service URL
-# + return - The legacy base URL ending with `/openai`
+# + return - The legacy base URL: `{trimmedUrl}/openai` for a bare origin, `trimmedUrl` unchanged otherwise
 isolated function resolveLegacyBase(string trimmedUrl) returns string =>
-    trimmedUrl.endsWith("/openai") ? trimmedUrl : trimmedUrl + "/openai";
+    hasPathSegment(trimmedUrl) ? trimmedUrl : trimmedUrl + "/openai";
+
+# Checks whether a URL carries a path of its own (i.e. anything after the `scheme://authority` prefix).
+#
+# + url - The URL to inspect
+# + return - `true` when the URL has a path segment; `false` for a bare origin such as `https://host:443`
+isolated function hasPathSegment(string url) returns boolean {
+    int? schemeSeparator = url.indexOf("://");
+    string authorityAndPath = schemeSeparator is int ? url.substring(schemeSeparator + 3) : url;
+    return authorityAndPath.includes("/");
+}
 
 # Creates only the client required by the selected `(apiType, surface)` combination; unused clients are returned as
 # `()`.

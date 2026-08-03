@@ -12,18 +12,26 @@ targets the Azure OpenAI **v1 GA** surface through the generated `ballerinax/azu
 
 | `apiType` | `serviceUrl` ends with `/v1` (v1 GA) | otherwise (legacy) |
 | --- | --- | --- |
-| `CHAT_COMPLETION` (default) | `POST {serviceUrl}/chat/completions` | `POST {serviceUrl}/openai/deployments/{deploymentId}/chat/completions?api-version=...` |
-| `RESPONSES` | `POST {serviceUrl}/responses` | `POST {serviceUrl}/openai/responses?api-version=...` |
+| `CHAT_COMPLETION` (default) | `POST {serviceUrl}/chat/completions` | `POST {legacyBase}/deployments/{deploymentId}/chat/completions?api-version=...` |
+| `RESPONSES` | `POST {serviceUrl}/responses` | `POST {legacyBase}/responses?api-version=...` |
+
+On the legacy surface, `legacyBase` is derived from the `serviceUrl` as follows:
+
+- a **bare origin** (e.g. `https://<resource>.openai.azure.com`) is completed with `/openai`, matching Azure's own
+  legacy spec server (`https://{endpoint}/openai`);
+- a URL that **already carries a path** is used **verbatim**. This keeps existing `.../openai` service URLs working
+  unchanged, and lets callers who front Azure OpenAI through API Management or another gateway
+  (e.g. `https://gw.example.com/azure-openai`) own their base path without the module rewriting it.
 
 The `apiVersion` argument is **required** for legacy (non-`/v1`) service URLs (e.g. `"2024-10-21"`). For v1 (`/v1`)
 service URLs it is optional and normally omitted; pass `"preview"` or `"v1"` to opt into a specific v1 surface.
 
-This module also provides an `EmbeddingProvider` for Azure OpenAI embedding models. It resolves the `apiVersion` the
-same way, based on the shape of the `serviceUrl`:
+This module also provides an `EmbeddingProvider` for Azure OpenAI embedding models. It resolves the `apiVersion` and
+the legacy base URL exactly the same way, so one `serviceUrl` means the same thing to both providers:
 
 | `serviceUrl` ends with `/v1` (v1 GA) | otherwise (legacy) |
 | --- | --- |
-| `POST {serviceUrl}/embeddings` (deployment sent as `model` in the body) | `POST {serviceUrl}/deployments/{deploymentId}/embeddings?api-version=...` |
+| `POST {serviceUrl}/embeddings` (deployment sent as `model` in the body) | `POST {legacyBase}/deployments/{deploymentId}/embeddings?api-version=...` |
 
 ```ballerina
 // Legacy service URL — a date-based `apiVersion` is required.

@@ -21,10 +21,11 @@ const SERVICE_URL = "http://localhost:8080/llm/azureopenai";
 // A `/v1`-suffixed service URL selects the Azure OpenAI Responses v1 GA surface (`{serviceUrl}/responses`).
 const SERVICE_URL_V1 = "http://localhost:8080/llm/azureopenai/openai/v1";
 const DEPLOYMENT_ID = "gpt4onew";
-// `API_VERSION` is exactly the 2024-08-01-preview threshold — the Chat Completions path sends
-// `max_completion_tokens` for it. `NEW_API_VERSION` is comfortably past the threshold, and `OLD_API_VERSION`
-// predates it (so the Chat Completions path must fall back to `max_tokens`).
-const API_VERSION = "2024-08-01-preview";
+// `API_VERSION` is exactly the 2024-09-01-preview threshold — the api-version that added
+// `max_completion_tokens` to the Chat Completions schema, so the Chat Completions path sends it for this value.
+// `NEW_API_VERSION` is comfortably past the threshold, and `OLD_API_VERSION` predates it (so the Chat Completions
+// path must fall back to `max_tokens`).
+const API_VERSION = "2024-09-01-preview";
 const NEW_API_VERSION = "2025-04-01-preview";
 const OLD_API_VERSION = "2024-02-15-preview";
 const API_KEY = "not-a-real-api-key";
@@ -609,7 +610,7 @@ function testResponsesV1ChatWithTools() returns ai:Error? {
 
 // ===== Chat Completions API (`apiType = CHAT_COMPLETION`) tests =====
 // These hit the deployment-scoped Azure OpenAI Chat Completions endpoint:
-//   /openai/deployments/{deploymentId}/chat/completions?api-version=...
+//   {legacyBase}/deployments/{deploymentId}/chat/completions?api-version=...
 
 @test:Config
 function testChatCompletionChatWithSimpleMessage() returns ai:Error? {
@@ -665,7 +666,7 @@ function testChatCompletionGenerateMethodWithBasicReturnType() returns ai:Error?
 // The wire body is asserted inside the mock via `assertChatCompletionTokenField`; these tests drive the two
 // api-version branches end-to-end so that guard actually runs against a real request.
 
-// api-version >= 2024-08-01-preview: chat() must send `max_completion_tokens` and never `max_tokens`.
+// api-version >= 2024-09-01-preview: chat() must send `max_completion_tokens` and never `max_tokens`.
 @test:Config
 function testChatCompletionNewApiVersionSendsMaxCompletionTokens() returns ai:Error? {
     ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
@@ -673,7 +674,7 @@ function testChatCompletionNewApiVersionSendsMaxCompletionTokens() returns ai:Er
     test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
 }
 
-// api-version < 2024-08-01-preview: chat() must fall back to `max_tokens` and never send `max_completion_tokens`.
+// api-version < 2024-09-01-preview: chat() must fall back to `max_tokens` and never send `max_completion_tokens`.
 @test:Config
 function testChatCompletionOldApiVersionSendsMaxTokens() returns ai:Error? {
     ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
