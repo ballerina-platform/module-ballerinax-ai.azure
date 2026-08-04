@@ -34,7 +34,7 @@ const DEFAULT_TEMPERATURE = 0.7d;
 # `ballerinax/azure.openai.chat` / `ballerinax/azure.openai.responses` connectors, while any other URL targets the
 # **legacy** route (`?api-version=...`) through a raw HTTP client. See the `ApiType` documentation for the full
 # routing matrix.
-public isolated distinct client class OpenAiModelProvider {
+public isolated client class OpenAiModelProvider {
     *ai:ModelProvider;
     # Generated Chat Completions connector for the v1 GA surface (`POST {serviceUrl}/chat/completions`).
     # Created only when `apiType` is `CHAT_COMPLETION` and the `serviceUrl` targets the v1 GA surface; `()` otherwise.
