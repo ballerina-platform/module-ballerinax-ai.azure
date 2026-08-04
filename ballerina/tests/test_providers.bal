@@ -21,19 +21,19 @@
 // Chat Completions, legacy surface (a post-threshold api-version so the token limit is sent as
 // `max_completion_tokens`, which reasoning models require).
 final OpenAiModelProvider reasoningChatLegacyProvider = check new (SERVICE_URL, API_KEY, REASONING_DEPLOYMENT,
-    NEW_API_VERSION, reasoningEffort = "high", temperature = (), apiType = CHAT_COMPLETION);
+    NEW_API_VERSION, reasoningEffort = HIGH, temperature = (), apiType = CHAT_COMPLETION);
 
 // Chat Completions, v1 GA surface.
 final OpenAiModelProvider reasoningChatV1Provider = check new (SERVICE_URL_V1, API_KEY, REASONING_DEPLOYMENT,
-    reasoningEffort = "medium", temperature = (), apiType = CHAT_COMPLETION);
+    reasoningEffort = MEDIUM, temperature = (), apiType = CHAT_COMPLETION);
 
 // Responses, legacy preview surface.
 final OpenAiModelProvider reasoningResponsesLegacyProvider = check new (SERVICE_URL, API_KEY, REASONING_DEPLOYMENT,
-    API_VERSION, reasoningEffort = "low", temperature = (), apiType = RESPONSES);
+    API_VERSION, reasoningEffort = LOW, temperature = (), apiType = RESPONSES);
 
 // Responses, v1 GA surface.
 final OpenAiModelProvider reasoningResponsesV1Provider = check new (SERVICE_URL_V1, API_KEY, REASONING_DEPLOYMENT,
-    reasoningEffort = "minimal", temperature = (), apiType = RESPONSES);
+    reasoningEffort = MINIMAL, temperature = (), apiType = RESPONSES);
 
 // ===== Custom max-token providers (pin the exact token-limit value on the wire) =====
 final OpenAiModelProvider customTokensChatProvider = check new (SERVICE_URL, API_KEY, CUSTOM_TOKENS_DEPLOYMENT,

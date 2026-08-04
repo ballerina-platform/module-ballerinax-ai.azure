@@ -99,8 +99,21 @@ public enum ApiType {
 
 # Reasoning effort level for reasoning models (`gpt-5`/`o`-series).
 #
-# The supported set follows the Azure OpenAI specification: `none`, `minimal`, `low`, `medium`, `high`, and
-# `xhigh`. Not every model supports every value (for example, `minimal` is only supported by the original
-# `gpt-5` reasoning models, `xhigh` only by `gpt-5.1-codex-max` and later, and `none` only by `gpt-5.1`+).
-# Passing an unsupported value for the target deployment results in an error from the service.
-public type ReasoningEffort "none"|"minimal"|"low"|"medium"|"high"|"xhigh";
+# The supported set follows the Azure OpenAI specification. Not every model supports every value (for example,
+# `MINIMAL` is only supported by the original `gpt-5` reasoning models, `XHIGH` only by `gpt-5.1-codex-max` and
+# later, and `NONE` only by `gpt-5.1`+). Passing an unsupported value for the target deployment results in an
+# error from the service.
+public enum ReasoningEffort {
+    # No reasoning; supported by `gpt-5.1` and later.
+    NONE = "none",
+    # The smallest amount of reasoning; supported by the original `gpt-5` reasoning models.
+    MINIMAL = "minimal",
+    # Favours speed and fewer reasoning tokens.
+    LOW = "low",
+    # Balances reasoning depth and latency.
+    MEDIUM = "medium",
+    # Favours more complete reasoning.
+    HIGH = "high",
+    # The largest amount of reasoning; supported by `gpt-5.1-codex-max` and later.
+    XHIGH = "xhigh"
+}

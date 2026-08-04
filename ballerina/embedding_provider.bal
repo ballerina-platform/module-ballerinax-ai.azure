@@ -47,11 +47,9 @@ public distinct isolated client class EmbeddingProvider {
 
     # Initializes the OpenAI embedding model with the given connection configuration.
     #
-    # + serviceUrl - The base URL of OpenAI API endpoint. A URL ending with `/v1`
-    #              (e.g. `https://<resource>.openai.azure.com/openai/v1`) targets the v1 GA surface; any other URL
-    #              (e.g. `https://<resource>.openai.azure.com/openai`) targets the legacy route. A bare origin
-    #              (e.g. `https://<resource>.openai.azure.com`) is completed with `/openai`; a URL that already
-    #              carries a path (e.g. an API Management base path) is used verbatim.
+    # + serviceUrl - The base URL of the Azure OpenAI API endpoint. Use the new v1 GA URL
+    #              (`https://<resource>.services.ai.azure.com/openai/v1`) or the legacy URL
+    #              (`https://<resource>.openai.azure.com/openai`).
     # + accessToken - The access token for authenticating API requests
     # + apiVersion - The API version of the Azure OpenAI API. **Required** for legacy (non-`/v1`) service URLs
     #              (e.g. `"2023-05-15"`). For v1 (`/v1`) service URLs the value is optional and normally passed as

@@ -89,7 +89,7 @@ function testReasoningResponsesWithTools() returns ai:Error? {
 // mock validates the value on the wire.
 @test:Config
 function testAllReasoningEffortValuesChatCompletions() returns ai:Error? {
-    ReasoningEffort[] efforts = ["none", "minimal", "low", "medium", "high", "xhigh"];
+    ReasoningEffort[] efforts = [NONE, MINIMAL, LOW, MEDIUM, HIGH, XHIGH];
     ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
     foreach ReasoningEffort effort in efforts {
         OpenAiModelProvider provider = check new (SERVICE_URL_V1, API_KEY, REASONING_DEPLOYMENT,
@@ -101,7 +101,7 @@ function testAllReasoningEffortValuesChatCompletions() returns ai:Error? {
 
 @test:Config
 function testAllReasoningEffortValuesResponses() returns ai:Error? {
-    ReasoningEffort[] efforts = ["none", "minimal", "low", "medium", "high", "xhigh"];
+    ReasoningEffort[] efforts = [NONE, MINIMAL, LOW, MEDIUM, HIGH, XHIGH];
     ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
     foreach ReasoningEffort effort in efforts {
         OpenAiModelProvider provider = check new (SERVICE_URL_V1, API_KEY, REASONING_DEPLOYMENT,

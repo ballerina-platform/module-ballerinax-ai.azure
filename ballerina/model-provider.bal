@@ -66,11 +66,9 @@ public isolated client class OpenAiModelProvider {
 
     # Initializes the Azure OpenAI model with the given connection configuration and model configuration.
     #
-    # + serviceUrl - The base URL of the Azure OpenAI API endpoint. A URL ending with `/v1`
-    #              (e.g. `https://<resource>.openai.azure.com/openai/v1`) targets the v1 GA surface; any other URL
-    #              (e.g. `https://<resource>.openai.azure.com/openai`) targets the legacy route. A bare origin
-    #              (e.g. `https://<resource>.openai.azure.com`) is completed with `/openai`; a URL that already
-    #              carries a path (e.g. an API Management base path) is used verbatim.
+    # + serviceUrl - The base URL of the Azure OpenAI API endpoint. Use the new v1 GA URL
+    #              (`https://<resource>.services.ai.azure.com/openai/v1`) or the legacy URL
+    #              (`https://<resource>.openai.azure.com/openai`).
     # + apiKey - The Azure OpenAI API key
     # + deploymentId - The deployment identifier for the specific model deployment in Azure
     # + apiVersion - The Azure OpenAI `api-version`. **Required** for legacy (non-`/v1`) service URLs

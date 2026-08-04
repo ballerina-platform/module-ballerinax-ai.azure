@@ -17,10 +17,12 @@ The Azure OpenAI connector offers APIs for connecting with Azure OpenAI Large La
 It provides a single chat-model provider class, `OpenAiModelProvider`, which implements `ai:ModelProvider`. The
 provider can target either the Azure OpenAI **Chat Completions API** (the default) or the **Responses API**,
 selected at initialization time through the `apiType` parameter. The concrete wire route additionally depends on
-the shape of the `serviceUrl`: a URL ending with `/v1` (e.g. `https://<resource>.openai.azure.com/openai/v1`)
-targets the Azure OpenAI **v1 GA** surface through the generated `ballerinax/azure.openai.chat` /
-`ballerinax/azure.openai.responses` connectors, while any other URL targets the **legacy** route (with an
-`?api-version=...` query parameter).
+the shape of the `serviceUrl`: a URL ending with `/v1` targets the Azure OpenAI **v1 GA** surface through the
+generated `ballerinax/azure.openai.chat` / `ballerinax/azure.openai.responses` connectors, while any other URL
+targets the **legacy** route (with an `?api-version=...` query parameter).
+
+The new v1 GA URL is `https://<resource>.services.ai.azure.com/openai/v1`; the legacy URL is
+`https://<resource>.openai.azure.com/openai`.
 
 | `apiType` | `serviceUrl` ends with `/v1` (v1 GA) | otherwise (legacy) |
 | --- | --- | --- |
@@ -52,7 +54,7 @@ final ai:EmbeddingProvider legacyEmbeddingProvider = check new azure:EmbeddingPr
 
 // v1 GA service URL — the `apiVersion` is not needed, so pass `()`.
 final ai:EmbeddingProvider embeddingProvider = check new azure:EmbeddingProvider(
-    "https://<resource>.openai.azure.com/openai/v1", "api-key", (), "deployment-id");
+    "https://<resource>.services.ai.azure.com/openai/v1", "api-key", (), "deployment-id");
 ```
 
 ## Prerequisites
@@ -101,7 +103,7 @@ and can be omitted:
 
 ```ballerina
 final ai:ModelProvider azureOpenAiModel = check new azure:OpenAiModelProvider(
-    "https://<resource>.openai.azure.com/openai/v1", "api-key", "deployment-id");
+    "https://<resource>.services.ai.azure.com/openai/v1", "api-key", "deployment-id");
 ```
 
 ### Step 4: Invoke chat completion
