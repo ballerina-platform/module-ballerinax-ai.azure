@@ -1,101 +1,123 @@
-# Ballerina Azure OpenAI Model Provider Library
-
-[![Build](https://github.com/ballerina-platform/module-ballerinax-ai.azure/workflows/CI/badge.svg)](https://github.com/ballerina-platform/module-ballerinax-ai.azure/actions?query=workflow%3ACI)
-[![GitHub Last Commit](https://img.shields.io/github/last-commit/ballerina-platform/module-ballerinax-ai.azure.svg)](https://github.com/ballerina-platform/module-ballerinax-ai.azure/commits/main)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-
 ## Overview
 
-This module provides a generic API for connecting with Azure OpenAI LLM chat completion models. It offers a single
-chat-model provider, `OpenAiModelProvider`, which can target either the Azure OpenAI Chat Completions API or the
-Responses API. The API surface is selected at initialization time through the `apiType` parameter, which defaults
-to `CHAT_COMPLETION`. The concrete route additionally depends on the `serviceUrl`: a URL ending with `/v1` targets
-the Azure OpenAI **v1 GA** surface, while any other URL targets the **legacy** `?api-version=...` route. An
-`EmbeddingProvider` is also provided for Azure OpenAI embedding models, which selects its route the same way: a
-`/v1` service URL posts `{serviceUrl}/embeddings` with no `api-version`, while any other URL posts the legacy
-deployment-scoped `?api-version=...` route.
+Azure OpenAI Service provides access to OpenAI's powerful language models within the Microsoft Azure platform.
 
-## Issues and projects
+The Azure OpenAI connector offers APIs for connecting with Azure OpenAI Large Language Models (LLMs), enabling the integration of advanced conversational AI, text generation, and language processing capabilities into applications.
 
-Issues and Projects tabs are disabled for this repository as this is part of the Ballerina Library. To report bugs, request new features, start new discussions, view project boards, etc., go to the [Ballerina Library parent repository](https://github.com/ballerina-platform/ballerina-standard-library).
-This repository only contains the source code for the module.
+### Key Features
 
-## Build from the source
+- Connect and interact with Azure OpenAI Large Language Models (LLMs)
+- Support for the GPT-5 series, GPT-4 series, GPT-3.5, and other advanced OpenAI models
+- Both the **Chat Completions API** and the **Responses API**, over both the **v1 GA** and **legacy** surfaces
+- Parallel (multiple) tool calls in a single assistant turn, on both API surfaces
+- Reasoning-effort control for reasoning models (`gpt-5`/`o`-series)
+- Text embeddings through a dedicated `EmbeddingProvider`, over both the v1 GA and legacy surfaces
+- Seamless integration with Azure AI infrastructure
+- Secure communication with API key and token authentication
 
-### Prerequisites
+### API surfaces
 
-1. Download and install Java SE Development Kit (JDK) version 21 (from one of the following locations).
+It provides a single chat-model provider class, `OpenAiModelProvider`, which implements `ai:ModelProvider`. The
+provider can target either the Azure OpenAI **Chat Completions API** (the default) or the **Responses API**,
+selected at initialization time through the `apiType` parameter. The concrete wire route additionally depends on
+the shape of the `serviceUrl`: a URL ending with `/v1` (e.g. `https://<resource>.openai.azure.com/openai/v1`)
+targets the Azure OpenAI **v1 GA** surface through the generated `ballerinax/azure.openai.chat` /
+`ballerinax/azure.openai.responses` connectors, while any other URL targets the **legacy** route (with an
+`?api-version=...` query parameter).
 
-   - [Oracle](https://www.oracle.com/java/technologies/downloads/)
-   - [OpenJDK](https://adoptium.net/)
+| `apiType` | `serviceUrl` ends with `/v1` (v1 GA) | otherwise (legacy) |
+| --- | --- | --- |
+| `CHAT_COMPLETION` (default) | `POST {serviceUrl}/chat/completions` | `POST {legacyBase}/deployments/{deploymentId}/chat/completions?api-version=...` |
+| `RESPONSES` | `POST {serviceUrl}/responses` | `POST {legacyBase}/responses?api-version=...` |
 
-     > **Note:** Set the JAVA_HOME environment variable to the path name of the directory into which you installed JDK.
+On the legacy surface, `legacyBase` is derived from the `serviceUrl` as follows:
 
-2. Generate a GitHub access token with read package permissions, then set the following `env` variables:
+- a **bare origin** (e.g. `https://<resource>.openai.azure.com`) is completed with `/openai`, matching Azure's own
+  legacy spec server (`https://{endpoint}/openai`);
+- a URL that **already carries a path** is used **verbatim**. This keeps existing `.../openai` service URLs working
+  unchanged, and lets callers who front Azure OpenAI through API Management or another gateway
+  (e.g. `https://gw.example.com/azure-openai`) own their base path without the module rewriting it.
 
-   ```shell
-   export packageUser=<Your GitHub Username>
-   export packagePAT=<GitHub Personal Access Token>
-   ```
+The `apiVersion` argument is **required** for legacy (non-`/v1`) service URLs (e.g. `"2024-10-21"`). For v1 (`/v1`)
+service URLs it is optional and normally omitted; pass `"preview"` or `"v1"` to opt into a specific v1 surface.
 
-### Build options
+This module also provides an `EmbeddingProvider` for Azure OpenAI embedding models. It resolves the `apiVersion` and
+the legacy base URL exactly the same way, so one `serviceUrl` means the same thing to both providers:
 
-Execute the commands below to build from the source.
+| `serviceUrl` ends with `/v1` (v1 GA) | otherwise (legacy) |
+| --- | --- |
+| `POST {serviceUrl}/embeddings` (deployment sent as `model` in the body) | `POST {legacyBase}/deployments/{deploymentId}/embeddings?api-version=...` |
 
-1. To build the package:
+```ballerina
+// Legacy service URL — a date-based `apiVersion` is required.
+final ai:EmbeddingProvider legacyEmbeddingProvider = check new azure:EmbeddingProvider(
+    "https://<resource>.openai.azure.com/openai", "api-key", "2023-05-15", "deployment-id");
 
-   ```bash
-   ./gradlew clean build
-   ```
+// v1 GA service URL — the `apiVersion` is not needed, so pass `()`.
+final ai:EmbeddingProvider embeddingProvider = check new azure:EmbeddingProvider(
+    "https://<resource>.openai.azure.com/openai/v1", "api-key", (), "deployment-id");
+```
 
-2. To run the tests:
+### Tool calling
 
-   ```bash
-   ./gradlew clean test
-   ```
+Both API surfaces support **parallel tool calls**: a single assistant turn may return several `ai:FunctionCall`
+entries in `ai:ChatAssistantMessage.toolCalls`. When such a turn is sent back as history, each call is correlated
+with its result through the tool call `id`, so an `ai:ChatFunctionMessage` per call must carry the matching `id`.
 
-3. To run a group of tests
+## Prerequisites
 
-   ```bash
-   ./gradlew clean test -Pgroups=<test_group_names>
-   ```
+Before using this module in your Ballerina application, first you must obtain the nessary configuration to engage the LLM.
 
-4. To build the without the tests:
+- Create an [Azure](https://azure.microsoft.com/en-us/features/azure-portal/) account.
+- Create an [Azure OpenAI resource](https://learn.microsoft.com/en-us/azure/cognitive-services/openai/how-to/create-resource).
+- Obtain the tokens. Refer to the [Azure OpenAI Authentication](https://learn.microsoft.com/en-us/azure/cognitive-services/openai/reference#authentication) guide to learn how to generate and use tokens.
 
-   ```bash
-   ./gradlew clean build -x test
-   ```
+## Quickstart
 
-5. To debug the package with a remote debugger:
+To use the `ai.azure` module in your Ballerina application, update the `.bal` file as follows:
 
-   ```bash
-   ./gradlew clean build -Pdebug=<port>
-   ```
+### Step 1: Import the module
 
-6. To debug with Ballerina language:
+Import the `ai.azure;` module.
 
-   ```bash
-   ./gradlew clean build -PbalJavaDebug=<port>
-   ```
+```ballerina
+import ballerinax/ai.azure;
+```
 
-7. Publish the generated artifacts to the local Ballerina central repository:
+### Step 2: Intialize the Model Provider
 
-   ```bash
-   ./gradlew clean build -PpublishToLocalCentral=true
-   ```
+Initialize the provider. By default it uses the Chat Completions API. On a legacy (non-`/v1`) service URL a
+date-based `apiVersion` is required:
 
-8. Publish the generated artifacts to the Ballerina central repository:
+```ballerina
+import ballerina/ai;
+import ballerinax/ai.azure;
 
-   ```bash
-   ./gradlew clean build -PpublishToCentral=true
-   ```
+final ai:ModelProvider azureOpenAiModel = check new azure:OpenAiModelProvider(
+    "https://<resource>.openai.azure.com", "api-key", "deployment-id", "2024-10-21");
+```
 
-## Contribute to Ballerina
+To use the Responses API instead, set `apiType` to `RESPONSES`:
 
-As an open-source project, Ballerina welcomes contributions from the community.
+```ballerina
+final ai:ModelProvider azureOpenAiModel = check new azure:OpenAiModelProvider(
+    "https://<resource>.openai.azure.com", "api-key", "deployment-id", "2025-03-01-preview",
+    apiType = azure:RESPONSES);
+```
 
-For more information, go to the [contribution guidelines](https://github.com/ballerina-platform/ballerina-lang/blob/master/CONTRIBUTING.md).
+To target the Azure OpenAI **v1 GA** surface, use a `/v1`-suffixed service URL; the `apiVersion` is then optional
+and can be omitted:
 
-## Code of conduct
+```ballerina
+final ai:ModelProvider azureOpenAiModel = check new azure:OpenAiModelProvider(
+    "https://<resource>.openai.azure.com/openai/v1", "api-key", "deployment-id");
+```
 
-All the contributors are encouraged to read the [Ballerina Code of Conduct](https://ballerina.io/code-of-conduct).
+### Step 4: Invoke chat completion
+
+```ballerina
+ai:ChatMessage[] chatMessages = [{role: "user", content: "hi"}];
+ai:ChatAssistantMessage response = check azureOpenAiModel->chat(chatMessages, tools = []);
+
+chatMessages.push(response);
+```

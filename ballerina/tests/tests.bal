@@ -456,7 +456,7 @@ function testGenerateMethodWithTextChunk() returns error? {
     test:assertEquals(result, [r, r]);
 }
 
-// ===== Chat Completions: parallel tool calling =====
+// ===== Parallel (multiple) tool calls =====
 
 final ai:ChatCompletionFunctions[] weatherTools = [
     {
@@ -519,6 +519,91 @@ function testParallelToolCallsHistoryReconstruction() returns error? {
 
     ai:ChatAssistantMessage response = check openAiProvider->chat(messages, weatherTools);
     test:assertEquals(response.content, "Paris is sunny at 25°C and Tokyo is rainy at 18°C.");
+}
+
+// ----- Shared parallel tool call fixtures -----
+
+// The trigger marker must lead the user content so the mocks can route the flow; it travels with the history, so
+// the follow-up turn is recognised too.
+final string parallelHistoryPrompt = TRIGGER_PARALLEL_HISTORY + ": Get weather for Paris and Tokyo";
+final string parallelToolsPrompt = TRIGGER_PARALLEL_TOOL_CALLS + ": Get weather for Paris and Tokyo";
+
+// The assistant turn returned by the first call, replayed as history along with one result per tool call. The
+// `id` on each result is what lets the provider correlate it with its originating call on both surfaces.
+function buildParallelToolCallHistory() returns ai:ChatMessage[] => [
+    <ai:ChatUserMessage>{role: ai:USER, content: parallelHistoryPrompt},
+    <ai:ChatAssistantMessage>{
+        role: ai:ASSISTANT,
+        content: (),
+        toolCalls: [
+            {name: "getWeather", arguments: {"city": "Paris"}, id: PARIS_CALL_ID},
+            {name: "getWeather", arguments: {"city": "Tokyo"}, id: TOKYO_CALL_ID}
+        ]
+    },
+    <ai:ChatFunctionMessage>{role: "function", name: "getWeather", content: "Sunny, 25°C", id: PARIS_CALL_ID},
+    <ai:ChatFunctionMessage>{role: "function", name: "getWeather", content: "Rainy, 18°C", id: TOKYO_CALL_ID}
+];
+
+// Asserts that both parallel tool calls survived the response conversion, in order and with their ids intact.
+function assertParallelToolCalls(ai:ChatAssistantMessage response) {
+    ai:FunctionCall[]? toolCalls = response.toolCalls;
+    test:assertTrue(toolCalls is ai:FunctionCall[], "Expected tool calls in the response");
+    ai:FunctionCall[] calls = <ai:FunctionCall[]>toolCalls;
+    test:assertEquals(calls.length(), 2, "Expected 2 parallel tool calls");
+    test:assertEquals(calls[0].name, "getWeather");
+    test:assertEquals(calls[0].arguments, {"city": "Paris"});
+    test:assertEquals(calls[0].id, PARIS_CALL_ID);
+    test:assertEquals(calls[1].name, "getWeather");
+    test:assertEquals(calls[1].arguments, {"city": "Tokyo"});
+    test:assertEquals(calls[1].id, TOKYO_CALL_ID);
+}
+
+// ----- Chat Completions: v1 GA surface -----
+
+@test:Config
+function testParallelToolCallsInResponseV1() returns error? {
+    ai:ChatUserMessage userMsg = {role: ai:USER, content: parallelToolsPrompt};
+    ai:ChatAssistantMessage response = check chatCompletionV1Provider->chat(userMsg, weatherTools);
+    assertParallelToolCalls(response);
+}
+
+@test:Config
+function testParallelToolCallsHistoryReconstructionV1() returns error? {
+    ai:ChatAssistantMessage response =
+        check chatCompletionV1Provider->chat(buildParallelToolCallHistory(), weatherTools);
+    test:assertEquals(response.content, PARALLEL_TOOLS_ANSWER);
+}
+
+// ----- Responses API: legacy surface -----
+
+@test:Config
+function testResponsesParallelToolCallsInResponse() returns error? {
+    ai:ChatUserMessage userMsg = {role: ai:USER, content: parallelToolsPrompt};
+    ai:ChatAssistantMessage response = check responsesProvider->chat(userMsg, weatherTools);
+    assertParallelToolCalls(response);
+}
+
+@test:Config
+function testResponsesParallelToolCallsHistoryReconstruction() returns error? {
+    ai:ChatAssistantMessage response =
+        check responsesProvider->chat(buildParallelToolCallHistory(), weatherTools);
+    test:assertEquals(response.content, PARALLEL_TOOLS_ANSWER);
+}
+
+// ----- Responses API: v1 GA surface -----
+
+@test:Config
+function testResponsesParallelToolCallsInResponseV1() returns error? {
+    ai:ChatUserMessage userMsg = {role: ai:USER, content: parallelToolsPrompt};
+    ai:ChatAssistantMessage response = check responsesV1Provider->chat(userMsg, weatherTools);
+    assertParallelToolCalls(response);
+}
+
+@test:Config
+function testResponsesParallelToolCallsHistoryReconstructionV1() returns error? {
+    ai:ChatAssistantMessage response =
+        check responsesV1Provider->chat(buildParallelToolCallHistory(), weatherTools);
+    test:assertEquals(response.content, PARALLEL_TOOLS_ANSWER);
 }
 
 // ===== Responses API: generate() tests =====
