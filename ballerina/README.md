@@ -1,6 +1,18 @@
 ## Overview
 
-This module offers APIs for connecting with Azure OpenAI Large Language Models (LLM).
+Azure OpenAI Service provides access to OpenAI's powerful language models within the Microsoft Azure platform.
+
+The Azure OpenAI connector offers APIs for connecting with Azure OpenAI Large Language Models (LLMs), enabling the integration of advanced conversational AI, text generation, and language processing capabilities into applications.
+
+### Key Features
+
+- Connect and interact with Azure OpenAI Large Language Models (LLMs)
+- Support for GPT-5, GPT-4, GPT-3.5, and other advanced OpenAI models
+- Support for both the Chat Completions API and the Responses API, selected through the `apiType` parameter
+- Seamless integration with Azure AI infrastructure
+- Secure communication with API key and token authentication
+
+### API surfaces
 
 It provides a single chat-model provider class, `OpenAiModelProvider`, which implements `ai:ModelProvider`. The
 provider can target either the Azure OpenAI **Chat Completions API** (the default) or the **Responses API**,

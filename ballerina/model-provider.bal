@@ -241,6 +241,9 @@ public isolated client class OpenAiModelProvider {
             return error ai:LlmInvalidResponseError("Error while parsing the model response", chatAssistantMessage);
         }
         if chatAssistantMessage.toolCalls is ai:FunctionCall[] {
+            // A tool-call response carries no text output, so the output type is left untagged; the message itself
+            // is still recorded so traces keep the tool calls the model asked for.
+            span.addOutputMessages(chatAssistantMessage);
             span.close();
             return chatAssistantMessage;
         }
@@ -333,7 +336,11 @@ public isolated client class OpenAiModelProvider {
         }
 
         span.addOutputMessages(message);
-        span.addOutputType(observe:TEXT);
+        if message.toolCalls !is ai:FunctionCall[] {
+            // Only a text response gets an output type; a tool-call response is left untagged, matching the
+            // Chat Completions path above.
+            span.addOutputType(observe:TEXT);
+        }
         span.close();
         return message;
     }

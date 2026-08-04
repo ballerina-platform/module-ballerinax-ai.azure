@@ -302,11 +302,19 @@ isolated function respondToChatCompletion(string deploymentId, json payload) ret
 
     // chat() path: return a get_weather tool call when tools are present, otherwise a text response (or a
     // trigger-driven response for the edge-case coverage tests).
+    string userContent = getUserMessageContent(messages);
+    // The parallel tool calling triggers must be matched before the generic single-tool-call branch below, since
+    // they too are sent with tools present and need to override its response.
+    if userContent.startsWith(TRIGGER_PARALLEL_TOOL_CALLS) {
+        return getParallelToolCallsResponse();
+    }
+    if userContent.startsWith(TRIGGER_PARALLEL_HISTORY) {
+        return handleParallelToolCallHistory(messages);
+    }
     if hasOtherTool {
         return getChatCompletionToolCallResponse("get_weather", "{\"city\": \"London\"}");
     }
 
-    string userContent = getUserMessageContent(messages);
     if userContent.startsWith(TRIGGER_STREAMING) {
         return getStreamingChatCompletionResponse();
     }
@@ -558,6 +566,94 @@ isolated function getChatCompletionToolCallResponse(string name, string argument
                         }
                     }
                 ]
+            }
+        }
+    ],
+    usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        total_tokens: 30
+    }
+};
+
+// Builds a Chat Completions response carrying two parallel tool calls, as Azure returns when a model decides to
+// invoke the same function for two different arguments in one turn.
+isolated function getParallelToolCallsResponse() returns json => {
+    id: "parallel-test-id",
+    'object: "chat.completion",
+    created: 1234567890,
+    model: "gpt-4o",
+    choices: [
+        {
+            finish_reason: "tool_calls",
+            index: 0,
+            logprobs: (),
+            message: {
+                role: "assistant",
+                content: (),
+                tool_calls: [
+                    {
+                        id: "call_paris_id",
+                        'type: "function",
+                        'function: {name: "getWeather", arguments: "{\"city\": \"Paris\"}"}
+                    },
+                    {
+                        id: "call_tokyo_id",
+                        'type: "function",
+                        'function: {name: "getWeather", arguments: "{\"city\": \"Tokyo\"}"}
+                    }
+                ]
+            }
+        }
+    ],
+    usage: {
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        total_tokens: 30
+    }
+};
+
+// Asserts that a chat history containing an assistant message with two tool calls plus their two results reaches
+// the wire in the shape the Chat Completions API requires: the assistant message must use the `tool_calls` array
+// (not the deprecated singular `function_call`), and each result must be a `role: "tool"` message carrying the
+// `tool_call_id` of the call it answers.
+isolated function handleParallelToolCallHistory(json[] messages) returns json|error {
+    test:assertEquals(messages.length(), 4, "Expected the full 4-message history on the wire");
+
+    map<json> assistant = check messages[1].ensureType();
+    // The assistant message must use the plural `tool_calls` array and must NOT fall back to the deprecated
+    // singular `function_call`, which cannot express more than one call.
+    test:assertFalse(assistant.hasKey("function_call"),
+            "Assistant message must not use the deprecated 'function_call' field");
+    json[] toolCallsInHistory = check assistant["tool_calls"].ensureType();
+    test:assertEquals(toolCallsInHistory.length(), 2, "Both tool calls must be in history");
+
+    map<json> firstResult = check messages[2].ensureType();
+    test:assertEquals(firstResult["role"], "tool", "First tool result must have role 'tool'");
+    test:assertEquals(firstResult["tool_call_id"], "call_paris_id", "First result must reference call_paris_id");
+
+    map<json> secondResult = check messages[3].ensureType();
+    test:assertEquals(secondResult["role"], "tool", "Second tool result must have role 'tool'");
+    test:assertEquals(secondResult["tool_call_id"], "call_tokyo_id", "Second result must reference call_tokyo_id");
+
+    return getChatCompletionContentResponse2("Paris is sunny at 25°C and Tokyo is rainy at 18°C.");
+}
+
+// Builds a Chat Completions response whose assistant content is returned verbatim (unlike
+// `getChatCompletionContentResponse`, which prefixes a mock marker).
+isolated function getChatCompletionContentResponse2(string content) returns json => {
+    id: "parallel-test-id-2",
+    'object: "chat.completion",
+    created: 1234567890,
+    model: "gpt-4o",
+    choices: [
+        {
+            finish_reason: "stop",
+            index: 0,
+            logprobs: (),
+            message: {
+                role: "assistant",
+                content: content
             }
         }
     ],

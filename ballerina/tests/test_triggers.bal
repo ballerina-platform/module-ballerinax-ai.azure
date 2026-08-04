@@ -25,6 +25,13 @@ const TRIGGER_EMPTY_CHOICES = "TRIGGER_EMPTY_CHOICES";
 const TRIGGER_FUNCTION_CALL = "TRIGGER_FUNCTION_CALL";
 const TRIGGER_BAD_TOOL_ARGS = "TRIGGER_BAD_TOOL_ARGS";
 
+// Parallel tool calling. Unlike the markers above, these are matched *before* the mock's generic
+// "tools present -> return one get_weather call" branch, because they must override it.
+// `TRIGGER_PARALLEL_TOOL_CALLS` returns two `tool_calls` in one response; `TRIGGER_PARALLEL_HISTORY` asserts that a
+// history carrying two tool calls and their two results is reconstructed correctly on the wire.
+const TRIGGER_PARALLEL_TOOL_CALLS = "TRIGGER_PARALLEL_TOOL_CALLS";
+const TRIGGER_PARALLEL_HISTORY = "TRIGGER_PARALLEL_HISTORY";
+
 // ===== Responses API triggers =====
 // The `_NOERR`/`_NODETAIL` variants MUST be listed before their base marker in the mock's dispatch, since the
 // base marker is a prefix of the variant.
