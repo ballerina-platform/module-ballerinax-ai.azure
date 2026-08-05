@@ -36,11 +36,11 @@ const DEFAULT_MAX_TOKEN_COUNT = 4096;
 public isolated client class OpenAiModelProvider {
     *ai:ModelProvider;
     # Generated Chat Completions connector for the v1 GA surface (`POST {serviceUrl}/chat/completions`).
-    # Created only when `apiType` is `CHAT_COMPLETION` and the `serviceUrl` targets the v1 GA surface; `()` otherwise.
+    # Created only when `apiType` is `CHAT_COMPLETIONS` and the `serviceUrl` targets the v1 GA surface; `()` otherwise.
     private final chat:Client? chatClient;
     # Raw HTTP client for the legacy Chat Completions route
     # (`POST {legacyBase}/deployments/{deploymentId}/chat/completions?api-version=...`). Created only when
-    # `apiType` is `CHAT_COMPLETION` and the `serviceUrl` targets the legacy surface; `()` otherwise. A raw client
+    # `apiType` is `CHAT_COMPLETIONS` and the `serviceUrl` targets the legacy surface; `()` otherwise. A raw client
     # (rather than the connector) is used so the request body can be serialized here and the correct token-limit
     # field (`max_tokens` vs `max_completion_tokens`) selected per api-version.
     private final http:Client? legacyChatClient;
@@ -80,7 +80,7 @@ public isolated client class OpenAiModelProvider {
     #               Set it to `()` for models that do not support this parameter (e.g. GPT-5/o-series reasoning
     #               models).
     # + reasoningEffort - Reasoning effort level for reasoning models.
-    # + apiType - The Azure OpenAI API surface to use. Defaults to `CHAT_COMPLETION`. Set to `RESPONSES` to use the
+    # + apiType - The Azure OpenAI API surface to use. Defaults to `CHAT_COMPLETIONS`. Set to `RESPONSES` to use the
     #           Responses API instead.
     # + connectionConfig - Additional HTTP connection configuration
     # + return - `nil` on successful initialization; otherwise, returns an `ai:Error`
@@ -91,7 +91,7 @@ public isolated client class OpenAiModelProvider {
             @display {label: "Maximum Tokens"} int maxTokens = DEFAULT_MAX_TOKEN_COUNT,
             @display {label: "Temperature"} decimal? temperature = (),
             @display {label: "Reasoning Effort"} ReasoningEffort? reasoningEffort = (),
-            @display {label: "API Type"} ApiType apiType = CHAT_COMPLETION,
+            @display {label: "API Type"} ApiType apiType = CHAT_COMPLETIONS,
             @display {label: "Connection Configuration"} *ConnectionConfig connectionConfig) returns ai:Error? {
 
         self.apiKey = apiKey;
@@ -134,7 +134,7 @@ public isolated client class OpenAiModelProvider {
     isolated remote function chat(ai:ChatMessage[]|ai:ChatUserMessage messages,
             ai:ChatCompletionFunctions[] tools = [],
             string? stop = ()) returns ai:ChatAssistantMessage|ai:Error {
-        if self.apiType == CHAT_COMPLETION {
+        if self.apiType == CHAT_COMPLETIONS {
             return self.chatViaChatCompletions(messages, tools, stop);
         }
         return self.chatViaResponses(messages, tools, stop);
@@ -519,7 +519,7 @@ isolated function hasPathSegment(string url) returns boolean {
 isolated function createClients(ApiType apiType, boolean isV1, string apiKey, string trimmedUrl, string legacyBase,
         ConnectionConfig connectionConfig)
         returns [chat:Client?, http:Client?, responses:Client?, http:Client?]|ai:Error {
-    if apiType == CHAT_COMPLETION {
+    if apiType == CHAT_COMPLETIONS {
         if isV1 {
             chat:Client|error chatClient = new (toChatConnectionConfig(apiKey, connectionConfig), trimmedUrl);
             if chatClient is error {

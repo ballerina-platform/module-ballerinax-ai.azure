@@ -93,7 +93,7 @@ function testAllReasoningEffortValuesChatCompletions() returns ai:Error? {
     ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
     foreach ReasoningEffort effort in efforts {
         OpenAiModelProvider provider = check new (SERVICE_URL_V1, API_KEY, REASONING_DEPLOYMENT,
-            reasoningEffort = effort, temperature = (), apiType = CHAT_COMPLETION);
+            reasoningEffort = effort, temperature = (), apiType = CHAT_COMPLETIONS);
         ai:ChatAssistantMessage result = check provider->chat(userMsg, []);
         test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
     }
@@ -165,7 +165,7 @@ function testResponsesWithStopSequenceIsIgnored() returns ai:Error? {
 @test:Config
 function testProviderWithCustomConnectionConfig() returns ai:Error? {
     OpenAiModelProvider provider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION,
-        apiType = CHAT_COMPLETION, timeout = 120, forwarded = "enable");
+        apiType = CHAT_COMPLETIONS, timeout = 120, forwarded = "enable");
     ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
     ai:ChatAssistantMessage result = check provider->chat(userMsg, []);
     test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");

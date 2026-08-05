@@ -26,7 +26,7 @@ The new v1 GA URL is `https://<resource>.services.ai.azure.com/openai/v1`; the l
 
 | `apiType` | `serviceUrl` ends with `/v1` (v1 GA) | otherwise (legacy) |
 | --- | --- | --- |
-| `CHAT_COMPLETION` (default) | `POST {serviceUrl}/chat/completions` | `POST {legacyBase}/deployments/{deploymentId}/chat/completions?api-version=...` |
+| `CHAT_COMPLETIONS` (default) | `POST {serviceUrl}/chat/completions` | `POST {legacyBase}/deployments/{deploymentId}/chat/completions?api-version=...` |
 | `RESPONSES` | `POST {serviceUrl}/responses` | `POST {legacyBase}/responses?api-version=...` |
 
 On the legacy surface, `legacyBase` is derived from the `serviceUrl` as follows:
