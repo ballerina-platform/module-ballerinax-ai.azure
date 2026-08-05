@@ -1,6 +1,6 @@
-// Copyright (c) 2025 WSO2 LLC. (http://www.wso2.org).
+// Copyright (c) 2025 WSO2 LLC (http://www.wso2.com).
 //
-// WSO2 Inc. licenses this file to you under the Apache License,
+// WSO2 LLC. licenses this file to you under the Apache License,
 // Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.
 // You may obtain a copy of the License at
@@ -18,19 +18,59 @@ import ballerina/ai;
 import ballerina/test;
 
 const SERVICE_URL = "http://localhost:8080/llm/azureopenai";
+// A `/v1`-suffixed service URL selects the Azure OpenAI Responses v1 GA surface (`{serviceUrl}/responses`).
+const SERVICE_URL_V1 = "http://localhost:8080/llm/azureopenai/openai/v1";
 const DEPLOYMENT_ID = "gpt4onew";
-const API_VERSION = "2023-08-01-preview";
+// `API_VERSION` is exactly the 2024-09-01-preview threshold — the api-version that added
+// `max_completion_tokens` to the Chat Completions schema, so the Chat Completions path sends it for this value.
+// `NEW_API_VERSION` is comfortably past the threshold, and `OLD_API_VERSION` predates it (so the Chat Completions
+// path must fall back to `max_tokens`).
+const API_VERSION = "2024-09-01-preview";
+const NEW_API_VERSION = "2025-04-01-preview";
+const OLD_API_VERSION = "2024-02-15-preview";
 const API_KEY = "not-a-real-api-key";
 const ERROR_MESSAGE = "Error occurred while attempting to parse the response from the LLM as the expected type. Retrying and/or validating the prompt could fix the response.";
 const RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE = "Runtime schema generation is not yet supported";
 
+// `OpenAiModelProvider` with the default `CHAT_COMPLETION` API type — exercises the Azure OpenAI Chat Completions
+// API via the legacy deployment-scoped route (the service URL does not end with `/v1`), which appends
+// `?api-version=...`. This is also the default path for existing (pre-`apiType`) callers.
 final OpenAiModelProvider openAiProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
-final OpenAiModelProvider parallelTestProvider = check new ("http://localhost:8081", API_KEY, DEPLOYMENT_ID, API_VERSION);
+
+// `OpenAiModelProvider` targeting the Responses API via the legacy preview route (`?api-version=...`).
+final OpenAiModelProvider responsesProvider =
+    check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION, apiType = RESPONSES);
+
+// `OpenAiModelProvider` targeting the Responses v1 GA surface (`/v1`-suffixed service URL, no `api-version`).
+final OpenAiModelProvider responsesV1Provider =
+    check new (SERVICE_URL_V1, API_KEY, DEPLOYMENT_ID, apiType = RESPONSES);
+
+// `OpenAiModelProvider` with the `CHAT_COMPLETION` API type — exercises the Azure OpenAI Chat Completions API
+// via the legacy deployment-scoped route.
+final OpenAiModelProvider chatCompletionProvider =
+    check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION, apiType = CHAT_COMPLETION);
+
+// `OpenAiModelProvider` targeting the Chat Completions v1 GA surface (`/v1`-suffixed service URL, no
+// `api-version`), routed through the generated `azure.openai.chat` connector (`POST {serviceUrl}/chat/completions`).
+final OpenAiModelProvider chatCompletionV1Provider =
+    check new (SERVICE_URL_V1, API_KEY, DEPLOYMENT_ID, apiType = CHAT_COMPLETION);
+
+// `CHAT_COMPLETION` providers pinned to a new (post-threshold) and an old (pre-threshold) api-version, used to
+// verify the token-limit field selection end-to-end through the mock's `assertChatCompletionTokenField` guard.
+final OpenAiModelProvider chatCompletionNewApiVersionProvider =
+    check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, NEW_API_VERSION, apiType = CHAT_COMPLETION);
+final OpenAiModelProvider chatCompletionOldApiVersionProvider =
+    check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, OLD_API_VERSION, apiType = CHAT_COMPLETION);
 
 string apiKey = "mock-api-key";
-string serviceUrl = "http://localhost:8080/llm";
+// The embeddings deployment-scoped route is hosted by the legacy Azure OpenAI mock service.
+string serviceUrl = "http://localhost:8080/llm/azureopenai";
 string embeddingDeploymentId = "text-embed-3-small";
 EmbeddingProvider embeddingProvider = check new (serviceUrl, apiKey, API_VERSION, DEPLOYMENT_ID);
+
+// `EmbeddingProvider` targeting the v1 GA surface (`/v1`-suffixed service URL with the api-version omitted as
+// `()`), which posts `{serviceUrl}/embeddings` with the deployment sent as `model` in the body.
+final EmbeddingProvider embeddingV1Provider = check new (SERVICE_URL_V1, apiKey, (), DEPLOYMENT_ID);
 
 @test:Config {}
 function testEmbeddings() returns error? {
@@ -53,6 +93,36 @@ function testBatchEmbeddings() returns error? {
         }
     ];
     ai:Embedding[] results = check embeddingProvider->batchEmbed(chunks);
+    test:assertEquals(results.length(), 2);
+    foreach ai:Embedding result in results {
+        float[] vectors = check result.cloneWithType();
+        test:assertEquals(vectors.length(), 1536);
+    }
+}
+
+// ===== Embeddings: v1 GA surface tests =====
+// These use a `/v1`-suffixed service URL and hit `POST {serviceUrl}/embeddings` with NO `api-version`.
+
+@test:Config {}
+function testV1Embeddings() returns error? {
+    ai:TextChunk chunk = {
+        content: "Hello, world!"
+    };
+    ai:Embedding data = check embeddingV1Provider->embed(chunk);
+    float[] vectors = check data.cloneWithType();
+    test:assertEquals(vectors.length(), 1536);
+}
+
+@test:Config {}
+function testV1BatchEmbeddings() returns error? {
+    ai:TextChunk[] chunks = [
+        {
+            content: "Hello, world!"
+        }, {
+            content: "Hello, world!!!"
+        }
+    ];
+    ai:Embedding[] results = check embeddingV1Provider->batchEmbed(chunks);
     test:assertEquals(results.length(), 2);
     foreach ai:Embedding result in results {
         float[] vectors = check result.cloneWithType();
@@ -211,10 +281,11 @@ function testGenerateMethodWithAudioDocument() returns ai:Error? {
         }
     };
 
-    string|error description = openAiProvider->generate(`Please describe the audio content. ${aud}.`);
+    // Audio input is only supported on the Chat Completions API path.
+    string|error description = chatCompletionProvider->generate(`Please describe the audio content. ${aud}.`);
     test:assertEquals(description, "This is a sample audio description.");
 
-    string[]|error descriptions = openAiProvider->generate(
+    string[]|error descriptions = chatCompletionProvider->generate(
         `Please describe the following audio contents. ${<ai:AudioDocument[]>[aud, aud]}.`);
     test:assertEquals(descriptions, ["This is a sample audio description.", "This is a sample audio description."]);
 
@@ -222,7 +293,7 @@ function testGenerateMethodWithAudioDocument() returns ai:Error? {
         content: sampleBinaryData
     };
 
-    description = openAiProvider->generate(`Please describe the audio content. ${aud2}.`);
+    description = chatCompletionProvider->generate(`Please describe the audio content. ${aud2}.`);
     if description is string {
         test:assertFail();
     }
@@ -385,6 +456,8 @@ function testGenerateMethodWithTextChunk() returns error? {
     test:assertEquals(result, [r, r]);
 }
 
+// ===== Parallel (multiple) tool calls =====
+
 final ai:ChatCompletionFunctions[] weatherTools = [
     {
         name: "getWeather",
@@ -399,11 +472,16 @@ final ai:ChatCompletionFunctions[] weatherTools = [
     }
 ];
 
-@test:Config {}
+// Verifies that a Chat Completions response carrying two `tool_calls` is parsed into two `ai:FunctionCall`s with
+// their ids, names, and arguments preserved in order. Regression guard for parallel tool calling support.
+@test:Config
 function testParallelToolCallsInResponse() returns error? {
-    ai:ChatUserMessage userMsg = {role: ai:USER, content: "Get weather for Paris and Tokyo"};
+    ai:ChatUserMessage userMsg = {
+        role: ai:USER,
+        content: TRIGGER_PARALLEL_TOOL_CALLS + ": Get weather for Paris and Tokyo"
+    };
 
-    ai:ChatAssistantMessage response = check parallelTestProvider->chat(userMsg, weatherTools);
+    ai:ChatAssistantMessage response = check openAiProvider->chat(userMsg, weatherTools);
 
     ai:FunctionCall[]? toolCalls = response.toolCalls;
     test:assertTrue(toolCalls is ai:FunctionCall[], "Expected tool calls in response");
@@ -417,10 +495,16 @@ function testParallelToolCallsInResponse() returns error? {
     test:assertEquals(calls[1].id, "call_tokyo_id");
 }
 
-@test:Config {}
+// Verifies that a history containing an assistant message with two tool calls plus their two results is
+// reconstructed on the wire as a `tool_calls` array and two `role: "tool"` messages carrying the matching
+// `tool_call_id`s. The wire assertions live in the mock (`handleParallelToolCallHistory`).
+@test:Config
 function testParallelToolCallsHistoryReconstruction() returns error? {
     ai:ChatMessage[] messages = [
-        <ai:ChatUserMessage>{role: ai:USER, content: "Get weather for Paris and Tokyo"},
+        <ai:ChatUserMessage>{
+            role: ai:USER,
+            content: TRIGGER_PARALLEL_HISTORY + ": Get weather for Paris and Tokyo"
+        },
         <ai:ChatAssistantMessage>{
             role: ai:ASSISTANT,
             content: (),
@@ -433,6 +517,422 @@ function testParallelToolCallsHistoryReconstruction() returns error? {
         <ai:ChatFunctionMessage>{role: "function", name: "getWeather", content: "Rainy, 18°C", id: "call_tokyo_id"}
     ];
 
-    ai:ChatAssistantMessage response = check parallelTestProvider->chat(messages, weatherTools);
+    ai:ChatAssistantMessage response = check openAiProvider->chat(messages, weatherTools);
     test:assertEquals(response.content, "Paris is sunny at 25°C and Tokyo is rainy at 18°C.");
 }
+
+// ----- Shared parallel tool call fixtures -----
+
+// The trigger marker must lead the user content so the mocks can route the flow; it travels with the history, so
+// the follow-up turn is recognised too.
+final string parallelHistoryPrompt = TRIGGER_PARALLEL_HISTORY + ": Get weather for Paris and Tokyo";
+final string parallelToolsPrompt = TRIGGER_PARALLEL_TOOL_CALLS + ": Get weather for Paris and Tokyo";
+
+// The assistant turn returned by the first call, replayed as history along with one result per tool call. The
+// `id` on each result is what lets the provider correlate it with its originating call on both surfaces.
+function buildParallelToolCallHistory() returns ai:ChatMessage[] => [
+    <ai:ChatUserMessage>{role: ai:USER, content: parallelHistoryPrompt},
+    <ai:ChatAssistantMessage>{
+        role: ai:ASSISTANT,
+        content: (),
+        toolCalls: [
+            {name: "getWeather", arguments: {"city": "Paris"}, id: PARIS_CALL_ID},
+            {name: "getWeather", arguments: {"city": "Tokyo"}, id: TOKYO_CALL_ID}
+        ]
+    },
+    <ai:ChatFunctionMessage>{role: "function", name: "getWeather", content: "Sunny, 25°C", id: PARIS_CALL_ID},
+    <ai:ChatFunctionMessage>{role: "function", name: "getWeather", content: "Rainy, 18°C", id: TOKYO_CALL_ID}
+];
+
+// Asserts that both parallel tool calls survived the response conversion, in order and with their ids intact.
+function assertParallelToolCalls(ai:ChatAssistantMessage response) {
+    ai:FunctionCall[]? toolCalls = response.toolCalls;
+    test:assertTrue(toolCalls is ai:FunctionCall[], "Expected tool calls in the response");
+    ai:FunctionCall[] calls = <ai:FunctionCall[]>toolCalls;
+    test:assertEquals(calls.length(), 2, "Expected 2 parallel tool calls");
+    test:assertEquals(calls[0].name, "getWeather");
+    test:assertEquals(calls[0].arguments, {"city": "Paris"});
+    test:assertEquals(calls[0].id, PARIS_CALL_ID);
+    test:assertEquals(calls[1].name, "getWeather");
+    test:assertEquals(calls[1].arguments, {"city": "Tokyo"});
+    test:assertEquals(calls[1].id, TOKYO_CALL_ID);
+}
+
+// ----- Chat Completions: v1 GA surface -----
+
+@test:Config
+function testParallelToolCallsInResponseV1() returns error? {
+    ai:ChatUserMessage userMsg = {role: ai:USER, content: parallelToolsPrompt};
+    ai:ChatAssistantMessage response = check chatCompletionV1Provider->chat(userMsg, weatherTools);
+    assertParallelToolCalls(response);
+}
+
+@test:Config
+function testParallelToolCallsHistoryReconstructionV1() returns error? {
+    ai:ChatAssistantMessage response =
+        check chatCompletionV1Provider->chat(buildParallelToolCallHistory(), weatherTools);
+    test:assertEquals(response.content, PARALLEL_TOOLS_ANSWER);
+}
+
+// ----- Responses API: legacy surface -----
+
+@test:Config
+function testResponsesParallelToolCallsInResponse() returns error? {
+    ai:ChatUserMessage userMsg = {role: ai:USER, content: parallelToolsPrompt};
+    ai:ChatAssistantMessage response = check responsesProvider->chat(userMsg, weatherTools);
+    assertParallelToolCalls(response);
+}
+
+@test:Config
+function testResponsesParallelToolCallsHistoryReconstruction() returns error? {
+    ai:ChatAssistantMessage response =
+        check responsesProvider->chat(buildParallelToolCallHistory(), weatherTools);
+    test:assertEquals(response.content, PARALLEL_TOOLS_ANSWER);
+}
+
+// ----- Responses API: v1 GA surface -----
+
+@test:Config
+function testResponsesParallelToolCallsInResponseV1() returns error? {
+    ai:ChatUserMessage userMsg = {role: ai:USER, content: parallelToolsPrompt};
+    ai:ChatAssistantMessage response = check responsesV1Provider->chat(userMsg, weatherTools);
+    assertParallelToolCalls(response);
+}
+
+@test:Config
+function testResponsesParallelToolCallsHistoryReconstructionV1() returns error? {
+    ai:ChatAssistantMessage response =
+        check responsesV1Provider->chat(buildParallelToolCallHistory(), weatherTools);
+    test:assertEquals(response.content, PARALLEL_TOOLS_ANSWER);
+}
+
+// ===== Responses API: generate() tests =====
+
+@test:Config
+function testResponsesGenerateMethodWithBasicReturnType() returns ai:Error? {
+    int|error rating = responsesProvider->generate(`Rate this blog out of 10.
+        Title: ${blog1.title}
+        Content: ${blog1.content}`);
+    test:assertEquals(rating, 4);
+}
+
+@test:Config
+function testResponsesGenerateMethodWithBasicArrayReturnType() returns ai:Error? {
+    int[]|error rating = responsesProvider->generate(`Evaluate this blogs out of 10.
+        Title: ${blog1.title}
+        Content: ${blog1.content}
+
+        Title: ${blog1.title}
+        Content: ${blog1.content}`);
+    test:assertEquals(rating, [9, 1]);
+}
+
+@test:Config
+function testResponsesGenerateMethodWithRecordReturnType() returns error? {
+    Review|error result = responsesProvider->generate(`Please rate this blog out of ${"10"}.
+        Title: ${blog2.title}
+        Content: ${blog2.content}`);
+    test:assertEquals(result, check review.fromJsonStringWithType(Review));
+}
+
+@test:Config
+function testResponsesGenerateMethodWithTextDocument() returns ai:Error? {
+    ai:TextDocument blog = {
+        content: string `Title: ${blog1.title} Content: ${blog1.content}`
+    };
+    int maxScore = 10;
+
+    int|error rating = responsesProvider->generate(`How would you rate this ${"blog"} content out of ${maxScore}. ${blog}.`);
+    test:assertEquals(rating, 4);
+}
+
+@test:Config
+function testResponsesGenerateMethodWithImageDocumentWithUrl() returns ai:Error? {
+    ai:ImageDocument img = {
+        content: "https://example.com/image.jpg",
+        metadata: {
+            mimeType: "image/jpg"
+        }
+    };
+
+    string|error description = responsesProvider->generate(`Describe the image. ${img}.`);
+    test:assertEquals(description, "This is a sample image description.");
+}
+
+@test:Config
+function testResponsesGenerateMethodWithRecordArrayReturnType() returns error? {
+    int maxScore = 10;
+    Review r = check review.fromJsonStringWithType(Review);
+
+    ReviewArray|error result = responsesProvider->generate(`Please rate this blogs out of ${maxScore}.
+        [{Title: ${blog1.title}, Content: ${blog1.content}}, {Title: ${blog2.title}, Content: ${blog2.content}}]`);
+    test:assertEquals(result, [r, r]);
+}
+
+@test:Config
+function testResponsesGenerateMethodWithStringUnionNull() returns error? {
+    string? result = check responsesProvider->generate(`Give me a random joke`);
+    test:assertTrue(result is string);
+}
+
+// ===== Responses API: chat() tests =====
+
+@test:Config
+function testResponsesChatWithSimpleMessage() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
+    ai:ChatAssistantMessage result = check responsesProvider->chat(userMsg, []);
+    test:assertTrue(result.content is string);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+@test:Config
+function testResponsesChatWithMessageArray() returns ai:Error? {
+    ai:ChatMessage[] messages = [
+        <ai:ChatSystemMessage>{role: "system", content: "You are a helpful assistant."},
+        <ai:ChatUserMessage>{role: "user", content: "Hello, how are you?"}
+    ];
+    ai:ChatAssistantMessage result = check responsesProvider->chat(messages, []);
+    test:assertTrue(result.content is string);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+@test:Config
+function testResponsesChatWithTools() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "What is the weather in London?"};
+    ai:ChatCompletionFunctions[] tools = [
+        {
+            name: "get_weather",
+            description: "Get the weather for a city",
+            parameters: {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"}
+                },
+                "required": ["city"]
+            }
+        }
+    ];
+    ai:ChatAssistantMessage result = check responsesProvider->chat(userMsg, tools);
+    ai:FunctionCall[]? toolCalls = result.toolCalls;
+    test:assertTrue(toolCalls is ai:FunctionCall[]);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls).length(), 1);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "London"});
+}
+
+// ===== Responses API: v1 GA surface tests =====
+// These use a `/v1`-suffixed service URL and hit `POST {serviceUrl}/responses` with NO `api-version`.
+
+@test:Config
+function testResponsesV1GenerateMethod() returns ai:Error? {
+    int|error rating = responsesV1Provider->generate(`Rate this blog out of 10.
+        Title: ${blog1.title}
+        Content: ${blog1.content}`);
+    test:assertEquals(rating, 4);
+}
+
+@test:Config
+function testResponsesV1ChatWithSimpleMessage() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
+    ai:ChatAssistantMessage result = check responsesV1Provider->chat(userMsg, []);
+    test:assertTrue(result.content is string);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+@test:Config
+function testResponsesV1ChatWithMessageArray() returns ai:Error? {
+    ai:ChatMessage[] messages = [
+        <ai:ChatSystemMessage>{role: "system", content: "You are a helpful assistant."},
+        <ai:ChatUserMessage>{role: "user", content: "Hello, how are you?"}
+    ];
+    ai:ChatAssistantMessage result = check responsesV1Provider->chat(messages, []);
+    test:assertTrue(result.content is string);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+@test:Config
+function testResponsesV1ChatWithTools() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "What is the weather in London?"};
+    ai:ChatCompletionFunctions[] tools = [
+        {
+            name: "get_weather",
+            description: "Get the weather for a city",
+            parameters: {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"}
+                },
+                "required": ["city"]
+            }
+        }
+    ];
+    ai:ChatAssistantMessage result = check responsesV1Provider->chat(userMsg, tools);
+    ai:FunctionCall[]? toolCalls = result.toolCalls;
+    test:assertTrue(toolCalls is ai:FunctionCall[]);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls).length(), 1);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "London"});
+}
+
+// ===== Chat Completions API (`apiType = CHAT_COMPLETION`) tests =====
+// These hit the deployment-scoped Azure OpenAI Chat Completions endpoint:
+//   {legacyBase}/deployments/{deploymentId}/chat/completions?api-version=...
+
+@test:Config
+function testChatCompletionChatWithSimpleMessage() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
+    ai:ChatAssistantMessage result = check chatCompletionProvider->chat(userMsg, []);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+@test:Config
+function testChatCompletionChatWithMessageArray() returns ai:Error? {
+    ai:ChatMessage[] messages = [
+        <ai:ChatSystemMessage>{role: "system", content: "You are a helpful assistant."},
+        <ai:ChatUserMessage>{role: "user", content: "Hello, how are you?"}
+    ];
+    ai:ChatAssistantMessage result = check chatCompletionProvider->chat(messages, []);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+@test:Config
+function testChatCompletionChatWithTools() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "What is the weather in London?"};
+    ai:ChatCompletionFunctions[] tools = [
+        {
+            name: "get_weather",
+            description: "Get the weather for a city",
+            parameters: {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"}
+                },
+                "required": ["city"]
+            }
+        }
+    ];
+    ai:ChatAssistantMessage result = check chatCompletionProvider->chat(userMsg, tools);
+    ai:FunctionCall[]? toolCalls = result.toolCalls;
+    test:assertTrue(toolCalls is ai:FunctionCall[]);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "London"});
+}
+
+// Note: `generate()` via the Chat Completions API exercises the native `Generator`, so it requires the
+// native JAR (`ai.azure-native`) to be rebuilt from `native/` before running.
+@test:Config
+function testChatCompletionGenerateMethodWithBasicReturnType() returns ai:Error? {
+    int|error rating = chatCompletionProvider->generate(`Rate this blog out of 10.
+        Title: ${blog1.title}
+        Content: ${blog1.content}`);
+    test:assertEquals(rating, 4);
+}
+
+// ===== Chat Completions API: token-limit field selection (max_tokens vs max_completion_tokens) =====
+// The wire body is asserted inside the mock via `assertChatCompletionTokenField`; these tests drive the two
+// api-version branches end-to-end so that guard actually runs against a real request.
+
+// api-version >= 2024-09-01-preview: chat() must send `max_completion_tokens` and never `max_tokens`.
+@test:Config
+function testChatCompletionNewApiVersionSendsMaxCompletionTokens() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
+    ai:ChatAssistantMessage result = check chatCompletionNewApiVersionProvider->chat(userMsg, []);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+// api-version < 2024-09-01-preview: chat() must fall back to `max_tokens` and never send `max_completion_tokens`.
+@test:Config
+function testChatCompletionOldApiVersionSendsMaxTokens() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
+    ai:ChatAssistantMessage result = check chatCompletionOldApiVersionProvider->chat(userMsg, []);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+// The token-limit selection must also apply when tools are present (the request-building path differs slightly).
+@test:Config
+function testChatCompletionOldApiVersionWithToolsSendsMaxTokens() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "What is the weather in London?"};
+    ai:ChatCompletionFunctions[] tools = [
+        {
+            name: "get_weather",
+            description: "Get the weather for a city",
+            parameters: {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"}
+                },
+                "required": ["city"]
+            }
+        }
+    ];
+    ai:ChatAssistantMessage result = check chatCompletionOldApiVersionProvider->chat(userMsg, tools);
+    ai:FunctionCall[]? toolCalls = result.toolCalls;
+    test:assertTrue(toolCalls is ai:FunctionCall[]);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
+}
+
+// ===== Chat Completions API: v1 GA surface tests =====
+// These use a `/v1`-suffixed service URL and hit `POST {serviceUrl}/chat/completions` via the generated
+// `azure.openai.chat` connector, with the deployment sent as `model` in the body and NO `api-version`.
+
+@test:Config
+function testChatCompletionV1ChatWithSimpleMessage() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
+    ai:ChatAssistantMessage result = check chatCompletionV1Provider->chat(userMsg, []);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+@test:Config
+function testChatCompletionV1ChatWithMessageArray() returns ai:Error? {
+    ai:ChatMessage[] messages = [
+        <ai:ChatSystemMessage>{role: "system", content: "You are a helpful assistant."},
+        <ai:ChatUserMessage>{role: "user", content: "Hello, how are you?"}
+    ];
+    ai:ChatAssistantMessage result = check chatCompletionV1Provider->chat(messages, []);
+    test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
+}
+
+@test:Config
+function testChatCompletionV1ChatWithTools() returns ai:Error? {
+    ai:ChatUserMessage userMsg = {role: "user", content: "What is the weather in London?"};
+    ai:ChatCompletionFunctions[] tools = [
+        {
+            name: "get_weather",
+            description: "Get the weather for a city",
+            parameters: {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"}
+                },
+                "required": ["city"]
+            }
+        }
+    ];
+    ai:ChatAssistantMessage result = check chatCompletionV1Provider->chat(userMsg, tools);
+    ai:FunctionCall[]? toolCalls = result.toolCalls;
+    test:assertTrue(toolCalls is ai:FunctionCall[]);
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].name, "get_weather");
+    test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "London"});
+}
+
+// `generate()` via the Chat Completions v1 GA surface (native `Generator` -> generated connector).
+@test:Config
+function testChatCompletionV1GenerateMethod() returns ai:Error? {
+    int|error rating = chatCompletionV1Provider->generate(`Rate this blog out of 10.
+        Title: ${blog1.title}
+        Content: ${blog1.content}`);
+    test:assertEquals(rating, 4);
+}
+
+// ===== init validation =====
+
+// A legacy (non-`/v1`) service URL requires an `api-version`; omitting it must fail fast at init.
+@test:Config
+function testLegacyServiceUrlWithoutApiVersionFails() returns error? {
+    OpenAiModelProvider|ai:Error provider =
+        new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, apiType = CHAT_COMPLETION);
+    test:assertTrue(provider is ai:Error, "expected init to fail when api-version is omitted for a legacy URL");
+    test:assertTrue((<ai:Error>provider).message().includes("'apiVersion' argument is required"),
+            "unexpected error message: " + (<ai:Error>provider).message());
+}
+

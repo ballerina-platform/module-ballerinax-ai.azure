@@ -1,6 +1,6 @@
-// Copyright (c) 2025 WSO2 LLC. (http://www.wso2.org).
+// Copyright (c) 2025 WSO2 LLC (http://www.wso2.com).
 //
-// WSO2 Inc. licenses this file to you under the Apache License,
+// WSO2 LLC. licenses this file to you under the Apache License,
 // Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.
 // You may obtain a copy of the License at
@@ -13,8 +13,6 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-
-import ballerinax/azure.openai.chat;
 
 isolated function getExpectedParameterSchema(string message) returns map<json> {
     if message.startsWith("Evaluate this") {
@@ -273,7 +271,7 @@ isolated function getTheMockLLMResult(string message) returns string {
     return "INVALID";
 }
 
-isolated function getTestServiceResponse(string content) returns chat:CreateChatCompletionResponse =>
+isolated function getTestServiceResponse(string content) returns json =>
     {
     id: "test-id",
     'object: "chat.completion",
@@ -281,7 +279,13 @@ isolated function getTestServiceResponse(string content) returns chat:CreateChat
     model: "gpt-4o",
     choices: [
         {
+            finish_reason: "tool_calls",
+            index: 0,
+            // Azure returns `logprobs: null` (present, null) when logprobs are not requested.
+            logprobs: (),
             message: {
+                role: "assistant",
+                content: (),
                 tool_calls: [
                     {
                         id: "tool-call-id",
@@ -294,7 +298,12 @@ isolated function getTestServiceResponse(string content) returns chat:CreateChat
                 ]
             }
         }
-    ]
+    ],
+    usage: {
+        prompt_tokens: 25,
+        completion_tokens: 12,
+        total_tokens: 37
+    }
 };
 
 isolated function getExpectedContentParts(string message) returns (map<anydata>)[] {

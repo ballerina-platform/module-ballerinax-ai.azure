@@ -14,7 +14,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import ballerina/ai;
 import ballerina/http;
 
 # Configurations for controlling the behaviours when communicating with a remote HTTP endpoint.
@@ -78,12 +77,43 @@ public type ConnectionConfig record {|
     boolean validation = true;
 |};
 
-type AzureChatUserMessage record {|
-    *ai:ChatUserMessage;
-    string content;
-|};
+# The Azure OpenAI API surface used by the `OpenAiModelProvider`.
+#
+# The concrete wire route is derived from both this value and the shape of the `serviceUrl`:
+#
+# | `apiType` | `serviceUrl` ends with `/v1` (v1 GA) | otherwise (legacy) |
+# | --- | --- | --- |
+# | `CHAT_COMPLETION` | `POST {serviceUrl}/chat/completions` via the `azure.openai.chat` connector | `POST {legacyBase}/deployments/{deploymentId}/chat/completions?api-version={apiVersion}` |
+# | `RESPONSES` | `POST {serviceUrl}/responses` via the `azure.openai.responses` connector | `POST {legacyBase}/responses?api-version={apiVersion}` |
+#
+# On the legacy surface `legacyBase` is the `serviceUrl` completed with `/openai` when it is a bare origin
+# (e.g. `https://<resource>.openai.azure.com`) and used verbatim when it already carries a path (e.g. an API
+# Management base path).
+public enum ApiType {
+    # Use the Azure OpenAI **Chat Completions API**. This is the default and preserves the behaviour of
+    # earlier releases of this module.
+    CHAT_COMPLETION,
+    # Use the Azure OpenAI **Responses API**.
+    RESPONSES
+}
 
-type AzureChatSystemMessage record {|
-    *ai:ChatSystemMessage;
-    string content;
-|};
+# Reasoning effort level for reasoning models (`gpt-5`/`o`-series).
+#
+# The supported set follows the Azure OpenAI specification. Not every model supports every value (for example,
+# `MINIMAL` is only supported by the original `gpt-5` reasoning models, `XHIGH` only by `gpt-5.1-codex-max` and
+# later, and `NONE` only by `gpt-5.1`+). Passing an unsupported value for the target deployment results in an
+# error from the service.
+public enum ReasoningEffort {
+    # No reasoning; supported by `gpt-5.1` and later.
+    NONE = "none",
+    # The smallest amount of reasoning; supported by the original `gpt-5` reasoning models.
+    MINIMAL = "minimal",
+    # Favours speed and fewer reasoning tokens.
+    LOW = "low",
+    # Balances reasoning depth and latency.
+    MEDIUM = "medium",
+    # Favours more complete reasoning.
+    HIGH = "high",
+    # The largest amount of reasoning; supported by `gpt-5.1-codex-max` and later.
+    XHIGH = "xhigh"
+}

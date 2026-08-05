@@ -7,9 +7,55 @@ The Azure OpenAI connector offers APIs for connecting with Azure OpenAI Large La
 ### Key Features
 
 - Connect and interact with Azure OpenAI Large Language Models (LLMs)
-- Support for GPT-4, GPT-3.5, and other advanced OpenAI models
+- Support for GPT-5, GPT-4, GPT-3.5, and other advanced OpenAI models
+- Support for both the Chat Completions API and the Responses API, selected through the `apiType` parameter
 - Seamless integration with Azure AI infrastructure
 - Secure communication with API key and token authentication
+
+### API surfaces
+
+It provides a single chat-model provider class, `OpenAiModelProvider`, which implements `ai:ModelProvider`. The
+provider can target either the Azure OpenAI **Chat Completions API** (the default) or the **Responses API**,
+selected at initialization time through the `apiType` parameter. The concrete wire route additionally depends on
+the shape of the `serviceUrl`: a URL ending with `/v1` targets the Azure OpenAI **v1 GA** surface through the
+generated `ballerinax/azure.openai.chat` / `ballerinax/azure.openai.responses` connectors, while any other URL
+targets the **legacy** route (with an `?api-version=...` query parameter).
+
+The new v1 GA URL is `https://<resource>.services.ai.azure.com/openai/v1`; the legacy URL is
+`https://<resource>.openai.azure.com/openai`.
+
+| `apiType` | `serviceUrl` ends with `/v1` (v1 GA) | otherwise (legacy) |
+| --- | --- | --- |
+| `CHAT_COMPLETION` (default) | `POST {serviceUrl}/chat/completions` | `POST {legacyBase}/deployments/{deploymentId}/chat/completions?api-version=...` |
+| `RESPONSES` | `POST {serviceUrl}/responses` | `POST {legacyBase}/responses?api-version=...` |
+
+On the legacy surface, `legacyBase` is derived from the `serviceUrl` as follows:
+
+- a **bare origin** (e.g. `https://<resource>.openai.azure.com`) is completed with `/openai`, matching Azure's own
+  legacy spec server (`https://{endpoint}/openai`);
+- a URL that **already carries a path** is used **verbatim**. This keeps existing `.../openai` service URLs working
+  unchanged, and lets callers who front Azure OpenAI through API Management or another gateway
+  (e.g. `https://gw.example.com/azure-openai`) own their base path without the module rewriting it.
+
+The `apiVersion` argument is **required** for legacy (non-`/v1`) service URLs (e.g. `"2024-10-21"`). For v1 (`/v1`)
+service URLs it is optional and normally omitted; pass `"preview"` or `"v1"` to opt into a specific v1 surface.
+
+This module also provides an `EmbeddingProvider` for Azure OpenAI embedding models. It resolves the `apiVersion` and
+the legacy base URL exactly the same way, so one `serviceUrl` means the same thing to both providers:
+
+| `serviceUrl` ends with `/v1` (v1 GA) | otherwise (legacy) |
+| --- | --- |
+| `POST {serviceUrl}/embeddings` (deployment sent as `model` in the body) | `POST {legacyBase}/deployments/{deploymentId}/embeddings?api-version=...` |
+
+```ballerina
+// Legacy service URL — a date-based `apiVersion` is required.
+final ai:EmbeddingProvider legacyEmbeddingProvider = check new azure:EmbeddingProvider(
+    "https://<resource>.openai.azure.com/openai", "api-key", "2023-05-15", "deployment-id");
+
+// v1 GA service URL — the `apiVersion` is not needed, so pass `()`.
+final ai:EmbeddingProvider embeddingProvider = check new azure:EmbeddingProvider(
+    "https://<resource>.services.ai.azure.com/openai/v1", "api-key", (), "deployment-id");
+```
 
 ## Prerequisites
 
@@ -33,13 +79,31 @@ import ballerinax/ai.azure;
 
 ### Step 2: Intialize the Model Provider
 
-Here's how to initialize the Model Provider:
+Initialize the provider. By default it uses the Chat Completions API. On a legacy (non-`/v1`) service URL a
+date-based `apiVersion` is required:
 
 ```ballerina
 import ballerina/ai;
 import ballerinax/ai.azure;
 
-final ai:ModelProvider  azureOpenAiModel = check new azure:OpenAiModelProvider("https://service-url", "api-key", "deployment-id", "deployment-version");
+final ai:ModelProvider azureOpenAiModel = check new azure:OpenAiModelProvider(
+    "https://<resource>.openai.azure.com", "api-key", "deployment-id", "2024-10-21");
+```
+
+To use the Responses API instead, set `apiType` to `RESPONSES`:
+
+```ballerina
+final ai:ModelProvider azureOpenAiModel = check new azure:OpenAiModelProvider(
+    "https://<resource>.openai.azure.com", "api-key", "deployment-id", "2025-03-01-preview",
+    apiType = azure:RESPONSES);
+```
+
+To target the Azure OpenAI **v1 GA** surface, use a `/v1`-suffixed service URL; the `apiVersion` is then optional
+and can be omitted:
+
+```ballerina
+final ai:ModelProvider azureOpenAiModel = check new azure:OpenAiModelProvider(
+    "https://<resource>.services.ai.azure.com/openai/v1", "api-key", "deployment-id");
 ```
 
 ### Step 4: Invoke chat completion
