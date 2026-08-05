@@ -20,7 +20,7 @@ import ballerina/constraint;
 import ballerina/data.jsondata;
 import ballerina/http;
 import ballerina/lang.array;
-import ballerinax/azure.openai.chat as chat;
+import ballerinax/azure.openai.chat;
 
 type ResponseSchema record {|
     map<json> schema;

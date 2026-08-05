@@ -1,6 +1,6 @@
-// Copyright (c) 2025 WSO2 LLC. (http://www.wso2.org).
+// Copyright (c) 2025 WSO2 LLC (http://www.wso2.com).
 //
-// WSO2 Inc. licenses this file to you under the Apache License,
+// WSO2 LLC. licenses this file to you under the Apache License,
 // Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.
 // You may obtain a copy of the License at
@@ -16,6 +16,7 @@
 
 import ballerina/ai;
 import ballerina/test;
+import ballerinax/azure.openai.responses;
 
 // Unit tests for the message/content conversion helpers shared by the Chat Completions and Responses paths.
 // These pin the conversion branches directly (no HTTP), complementing the end-to-end tests.
@@ -197,4 +198,47 @@ function testConvertToResponsesTools() {
     ];
     var result = convertToResponsesTools(tools);
     test:assertEquals(result.length(), 2);
+}
+
+// ===== nextToolCallId =====
+
+@test:Config
+function testNextToolCallIdCountsPerName() {
+    map<int> counts = {};
+    test:assertEquals(nextToolCallId("getWeather", counts), "call_getWeather_1");
+    test:assertEquals(nextToolCallId("getWeather", counts), "call_getWeather_2");
+    // Counters are tracked per tool name, so an unrelated tool starts back at 1.
+    test:assertEquals(nextToolCallId("getTime", counts), "call_getTime_1");
+    test:assertEquals(nextToolCallId("getWeather", counts), "call_getWeather_3");
+}
+
+@test:Config
+function testConvertToResponsesInputGeneratesDistinctIdsForRepeatedToolWithoutIds() returns ai:Error? {
+    // When a tool call carries no id, the generated `call_id` must still be unique per call: two calls to
+    // the same tool in one turn previously collapsed onto a single id, which the Responses API rejects.
+    ai:ChatMessage[] messages = [
+        <ai:ChatUserMessage>{role: "user", content: "Weather in Paris and Tokyo?"},
+        <ai:ChatAssistantMessage>{
+            role: "assistant",
+            toolCalls: [
+                {name: "getWeather", arguments: {"city": "Paris"}},
+                {name: "getWeather", arguments: {"city": "Tokyo"}}
+            ]
+        },
+        <ai:ChatFunctionMessage>{role: "function", name: "getWeather", content: "sunny"},
+        <ai:ChatFunctionMessage>{role: "function", name: "getWeather", content: "rainy"}
+    ];
+    [responses:OpenAIInputItem[], string?] [items, _] = check convertToResponsesInput(messages);
+    test:assertEquals(items.length(), 5);
+
+    ResponsesFunctionCall firstCall = <ResponsesFunctionCall>items[1];
+    ResponsesFunctionCall secondCall = <ResponsesFunctionCall>items[2];
+    test:assertEquals(firstCall.call_id, "call_getWeather_1");
+    test:assertEquals(secondCall.call_id, "call_getWeather_2");
+    test:assertNotEquals(firstCall.call_id, secondCall.call_id);
+
+    ResponsesFunctionCallOutput firstOutput = <ResponsesFunctionCallOutput>items[3];
+    ResponsesFunctionCallOutput secondOutput = <ResponsesFunctionCallOutput>items[4];
+    test:assertEquals(firstOutput.call_id, firstCall.call_id);
+    test:assertEquals(secondOutput.call_id, secondCall.call_id);
 }

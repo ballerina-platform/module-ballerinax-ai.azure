@@ -1,6 +1,6 @@
-// Copyright (c) 2025 WSO2 LLC. (http://www.wso2.org).
+// Copyright (c) 2025 WSO2 LLC (http://www.wso2.com).
 //
-// WSO2 Inc. licenses this file to you under the Apache License,
+// WSO2 LLC. licenses this file to you under the Apache License,
 // Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.
 // You may obtain a copy of the License at
@@ -17,8 +17,8 @@
 import ballerina/ai;
 import ballerina/http;
 import ballerina/test;
-import ballerinax/azure.openai.chat as chat;
-import ballerinax/azure.openai.responses as responses;
+import ballerinax/azure.openai.chat;
+import ballerinax/azure.openai.responses;
 
 // The native `generate()` entry point dispatches into `generateLlmResponse` / `generateLlmResponseViaResponses`
 // via a Java `callFunction`, which is not attributed to Ballerina code coverage. These tests therefore call those
@@ -53,7 +53,7 @@ function testGenerateLlmResponseLegacyHappyPath() returns error? {
 function testGenerateLlmResponseLegacyReasoningNoTemperature() returns error? {
     // Reasoning model: no temperature, a reasoning effort, and a post-threshold api-version (max_completion_tokens).
     anydata result = check generateLlmResponse((), legacyChatRawClient, false, API_KEY, REASONING_DEPLOYMENT,
-        NEW_API_VERSION, (), (), 512, "high", ratePrompt(), int);
+        NEW_API_VERSION, (), (), 512, HIGH, ratePrompt(), int);
     test:assertEquals(result, 4);
 }
 
@@ -126,7 +126,7 @@ function testGenerateViaResponsesLegacyHappyPath() returns error? {
 @test:Config
 function testGenerateViaResponsesReasoningNoTemperature() returns error? {
     anydata result = check generateLlmResponseViaResponses((), legacyResponsesRawClient, false, API_KEY,
-        API_VERSION, (), REASONING_DEPLOYMENT, (), 512, "high", ratePrompt(), int);
+        API_VERSION, (), REASONING_DEPLOYMENT, (), 512, HIGH, ratePrompt(), int);
     test:assertEquals(result, 4);
 }
 

@@ -19,8 +19,8 @@ import ballerina/ai.observe;
 import ballerina/http;
 import ballerina/jballerina.java;
 import ballerina/log;
-import ballerinax/azure.openai.chat as chat;
-import ballerinax/azure.openai.responses as responses;
+import ballerinax/azure.openai.chat;
+import ballerinax/azure.openai.responses;
 
 const DEFAULT_MAX_TOKEN_COUNT = 4096;
 const DEFAULT_TEMPERATURE = 0.7d;
@@ -352,6 +352,11 @@ public isolated client class OpenAiModelProvider {
             chatCompletionRequestMessages.push(check self.mapUserMessage(messages));
             return chatCompletionRequestMessages;
         }
+        // Per-tool-name occurrence counters used only when a message carries no id of its own.
+        // Counting requests and results separately keeps the nth call to a given tool paired with the
+        // nth result for that tool, while still giving each call its own id.
+        map<int> toolCallCounts = {};
+        map<int> toolResultCounts = {};
         foreach ai:ChatMessage message in messages {
             if message is ai:ChatUserMessage {
                 chatCompletionRequestMessages.push(check self.mapUserMessage(message));
@@ -365,14 +370,17 @@ public isolated client class OpenAiModelProvider {
                 AzureChatAssistantMessage assistantMessage = {};
                 ai:FunctionCall[]? toolCalls = message.toolCalls;
                 if toolCalls is ai:FunctionCall[] && toolCalls.length() > 0 {
-                    assistantMessage.tool_calls = from ai:FunctionCall tc in toolCalls
-                        select {
-                            id: tc.id ?: string `call_${tc.name}`,
+                    AzureChatToolCall[] requestToolCalls = [];
+                    foreach ai:FunctionCall tc in toolCalls {
+                        requestToolCalls.push({
+                            id: tc.id ?: nextToolCallId(tc.name, toolCallCounts),
                             'function: {
                                 name: tc.name,
                                 arguments: (tc.arguments ?: {}).toJsonString()
                             }
-                        };
+                        });
+                    }
+                    assistantMessage.tool_calls = requestToolCalls;
                 }
                 string? content = message?.content;
                 if content is string {
@@ -382,7 +390,7 @@ public isolated client class OpenAiModelProvider {
             } else if message is ai:ChatFunctionMessage {
                 AzureChatToolMessage toolMessage = {
                     content: message?.content ?: "",
-                    tool_call_id: message.id ?: string `call_${message.name}`
+                    tool_call_id: message.id ?: nextToolCallId(message.name, toolResultCounts)
                 };
                 chatCompletionRequestMessages.push(toolMessage);
             }
@@ -580,6 +588,21 @@ isolated function getChatMessageStringContent(ai:Prompt|string prompt) returns s
         promptStr += insertion.toString() + str;
     }
     return promptStr.trim();
+}
+
+# Synthesizes a tool call id for a tool call or a tool result that does not carry one.
+#
+# OpenAI requires every assistant `tool_calls` entry to have an id that is unique within the request and
+# to be answered by a result carrying the same id. Falling back to the tool name alone collides whenever
+# the same tool is called more than once in a turn, so the occurrence index is appended.
+#
+# + name - The tool name
+# + counts - Per-name occurrence counters, updated in place
+# + return - A generated tool call id, unique per occurrence of `name`
+isolated function nextToolCallId(string name, map<int> counts) returns string {
+    int occurrence = (counts[name] ?: 0) + 1;
+    counts[name] = occurrence;
+    return string `call_${name}_${occurrence}`;
 }
 
 isolated function convertMessageToJson(ai:ChatMessage[]|ai:ChatMessage messages) returns json|ai:Error {

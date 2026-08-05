@@ -17,7 +17,7 @@
 import ballerina/ai;
 import ballerina/ai.observe;
 import ballerina/http;
-import ballerinax/azure.openai.responses as responses;
+import ballerinax/azure.openai.responses;
 
 // ===== Responses API request item shapes =====
 // `azure.openai.responses` models input items, tools and tool choices as open records carrying only a
@@ -107,6 +107,11 @@ isolated function convertToResponsesInput(ai:ChatMessage[]|ai:ChatUserMessage me
 
     responses:OpenAIInputItem[] inputItems = [];
     string[] instructionParts = [];
+    // Per-tool-name occurrence counters used only when a message carries no id of its own. Counting
+    // calls and outputs separately keeps the nth call to a given tool paired with the nth output for
+    // that tool, while still giving each call its own `call_id`.
+    map<int> callIdCounts = {};
+    map<int> outputIdCounts = {};
 
     foreach ai:ChatMessage message in messages {
         if message is ai:ChatSystemMessage {
@@ -126,7 +131,7 @@ isolated function convertToResponsesInput(ai:ChatMessage[]|ai:ChatUserMessage me
                     inputItems.push(item);
                 }
                 foreach ai:FunctionCall tc in toolCalls {
-                    string callId = tc.id ?: string `call_${tc.name}`;
+                    string callId = tc.id ?: nextToolCallId(tc.name, callIdCounts);
                     // Only set `call_id` (the `call_...` correlation id). The optional item `id`
                     // must be a server-assigned `fc_...` id; sending the `call_...` value there
                     // makes Azure reject the turn ("Expected an ID that begins with 'fc'").
@@ -145,7 +150,7 @@ isolated function convertToResponsesInput(ai:ChatMessage[]|ai:ChatUserMessage me
             }
         } else if message is ai:ChatFunctionMessage {
             ResponsesFunctionCallOutput output = {
-                call_id: message.id ?: string `call_${message.name}`,
+                call_id: message.id ?: nextToolCallId(message.name, outputIdCounts),
                 output: message?.content ?: ""
             };
             inputItems.push(output);
