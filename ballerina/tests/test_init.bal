@@ -23,7 +23,7 @@ import ballerina/test;
 @test:Config
 function testLegacyServiceUrlWithEmptyApiVersionFails() {
     OpenAiModelProvider|ai:Error provider =
-        new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, "   ", apiType = CHAT_COMPLETION);
+        new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, "   ", apiType = CHAT_COMPLETIONS);
     test:assertTrue(provider is ai:Error, "a blank api-version must be rejected for a legacy URL");
     test:assertTrue((<ai:Error>provider).message().includes("'apiVersion' argument is required"));
 }
@@ -41,7 +41,7 @@ function testLegacyResponsesUrlWithoutApiVersionFails() {
 @test:Config
 function testV1ServiceUrlIgnoresDateApiVersion() returns ai:Error? {
     OpenAiModelProvider provider =
-        check new (SERVICE_URL_V1, API_KEY, DEPLOYMENT_ID, "2024-10-21", apiType = CHAT_COMPLETION);
+        check new (SERVICE_URL_V1, API_KEY, DEPLOYMENT_ID, "2024-10-21", apiType = CHAT_COMPLETIONS);
     ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
     ai:ChatAssistantMessage result = check provider->chat(userMsg, []);
     test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
@@ -51,7 +51,7 @@ function testV1ServiceUrlIgnoresDateApiVersion() returns ai:Error? {
 @test:Config
 function testV1ServiceUrlWithTrailingSlash() returns ai:Error? {
     OpenAiModelProvider provider =
-        check new (SERVICE_URL_V1 + "/", API_KEY, DEPLOYMENT_ID, apiType = CHAT_COMPLETION);
+        check new (SERVICE_URL_V1 + "/", API_KEY, DEPLOYMENT_ID, apiType = CHAT_COMPLETIONS);
     ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
     ai:ChatAssistantMessage result = check provider->chat(userMsg, []);
     test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
@@ -64,7 +64,7 @@ function testV1ServiceUrlWithTrailingSlash() returns ai:Error? {
 function testLegacyServiceUrlAlreadyEndingWithOpenai() returns ai:Error? {
     OpenAiModelProvider provider =
         check new ("http://localhost:8080/llm/azureopenai/openai", API_KEY, DEPLOYMENT_ID, API_VERSION,
-            apiType = CHAT_COMPLETION);
+            apiType = CHAT_COMPLETIONS);
     ai:ChatUserMessage userMsg = {role: "user", content: "Hello, how are you?"};
     ai:ChatAssistantMessage result = check provider->chat(userMsg, []);
     test:assertEquals(result.content, "This is a mock response for: Hello, how are you?");
@@ -77,7 +77,7 @@ function testLegacyServiceUrlAlreadyEndingWithOpenai() returns ai:Error? {
 @test:Config
 function testChatV1ClientInitFailure() {
     OpenAiModelProvider|ai:Error provider =
-        new ("http://invalid host/v1", API_KEY, DEPLOYMENT_ID, apiType = CHAT_COMPLETION);
+        new ("http://invalid host/v1", API_KEY, DEPLOYMENT_ID, apiType = CHAT_COMPLETIONS);
     test:assertTrue(provider is ai:Error);
     test:assertTrue((<ai:Error>provider).message().includes("Chat Completions (v1)"));
 }
@@ -85,7 +85,7 @@ function testChatV1ClientInitFailure() {
 @test:Config
 function testChatLegacyClientInitFailure() {
     OpenAiModelProvider|ai:Error provider =
-        new ("http://invalid host", API_KEY, DEPLOYMENT_ID, API_VERSION, apiType = CHAT_COMPLETION);
+        new ("http://invalid host", API_KEY, DEPLOYMENT_ID, API_VERSION, apiType = CHAT_COMPLETIONS);
     test:assertTrue(provider is ai:Error);
     test:assertTrue((<ai:Error>provider).message().includes("Chat Completions"));
 }

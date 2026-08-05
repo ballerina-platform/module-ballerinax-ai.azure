@@ -83,18 +83,18 @@ public type ConnectionConfig record {|
 #
 # | `apiType` | `serviceUrl` ends with `/v1` (v1 GA) | otherwise (legacy) |
 # | --- | --- | --- |
-# | `CHAT_COMPLETION` | `POST {serviceUrl}/chat/completions` via the `azure.openai.chat` connector | `POST {legacyBase}/deployments/{deploymentId}/chat/completions?api-version={apiVersion}` |
+# | `CHAT_COMPLETIONS` | `POST {serviceUrl}/chat/completions` via the `azure.openai.chat` connector | `POST {legacyBase}/deployments/{deploymentId}/chat/completions?api-version={apiVersion}` |
 # | `RESPONSES` | `POST {serviceUrl}/responses` via the `azure.openai.responses` connector | `POST {legacyBase}/responses?api-version={apiVersion}` |
 #
 # On the legacy surface `legacyBase` is the `serviceUrl` completed with `/openai` when it is a bare origin
 # (e.g. `https://<resource>.openai.azure.com`) and used verbatim when it already carries a path (e.g. an API
 # Management base path).
+@display {label: "OpenAI API Type"}
 public enum ApiType {
-    # Use the Azure OpenAI **Chat Completions API**. This is the default and preserves the behaviour of
-    # earlier releases of this module.
-    CHAT_COMPLETION,
-    # Use the Azure OpenAI **Responses API**.
-    RESPONSES
+    # Use the OpenAI Chat Completions API (`/chat/completions`)
+    CHAT_COMPLETIONS = "chat_completions",
+    # Use the OpenAI Responses API (`/responses`)
+    RESPONSES = "responses"
 }
 
 # Reasoning effort level for reasoning models (`gpt-5`/`o`-series).

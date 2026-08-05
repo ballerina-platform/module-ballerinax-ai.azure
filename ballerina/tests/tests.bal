@@ -32,7 +32,7 @@ const API_KEY = "not-a-real-api-key";
 const ERROR_MESSAGE = "Error occurred while attempting to parse the response from the LLM as the expected type. Retrying and/or validating the prompt could fix the response.";
 const RUNTIME_SCHEMA_NOT_SUPPORTED_ERROR_MESSAGE = "Runtime schema generation is not yet supported";
 
-// `OpenAiModelProvider` with the default `CHAT_COMPLETION` API type — exercises the Azure OpenAI Chat Completions
+// `OpenAiModelProvider` with the default `CHAT_COMPLETIONS` API type — exercises the Azure OpenAI Chat Completions
 // API via the legacy deployment-scoped route (the service URL does not end with `/v1`), which appends
 // `?api-version=...`. This is also the default path for existing (pre-`apiType`) callers.
 final OpenAiModelProvider openAiProvider = check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION);
@@ -45,22 +45,22 @@ final OpenAiModelProvider responsesProvider =
 final OpenAiModelProvider responsesV1Provider =
     check new (SERVICE_URL_V1, API_KEY, DEPLOYMENT_ID, apiType = RESPONSES);
 
-// `OpenAiModelProvider` with the `CHAT_COMPLETION` API type — exercises the Azure OpenAI Chat Completions API
+// `OpenAiModelProvider` with the `CHAT_COMPLETIONS` API type — exercises the Azure OpenAI Chat Completions API
 // via the legacy deployment-scoped route.
 final OpenAiModelProvider chatCompletionProvider =
-    check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION, apiType = CHAT_COMPLETION);
+    check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, API_VERSION, apiType = CHAT_COMPLETIONS);
 
 // `OpenAiModelProvider` targeting the Chat Completions v1 GA surface (`/v1`-suffixed service URL, no
 // `api-version`), routed through the generated `azure.openai.chat` connector (`POST {serviceUrl}/chat/completions`).
 final OpenAiModelProvider chatCompletionV1Provider =
-    check new (SERVICE_URL_V1, API_KEY, DEPLOYMENT_ID, apiType = CHAT_COMPLETION);
+    check new (SERVICE_URL_V1, API_KEY, DEPLOYMENT_ID, apiType = CHAT_COMPLETIONS);
 
-// `CHAT_COMPLETION` providers pinned to a new (post-threshold) and an old (pre-threshold) api-version, used to
+// `CHAT_COMPLETIONS` providers pinned to a new (post-threshold) and an old (pre-threshold) api-version, used to
 // verify the token-limit field selection end-to-end through the mock's `assertChatCompletionTokenField` guard.
 final OpenAiModelProvider chatCompletionNewApiVersionProvider =
-    check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, NEW_API_VERSION, apiType = CHAT_COMPLETION);
+    check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, NEW_API_VERSION, apiType = CHAT_COMPLETIONS);
 final OpenAiModelProvider chatCompletionOldApiVersionProvider =
-    check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, OLD_API_VERSION, apiType = CHAT_COMPLETION);
+    check new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, OLD_API_VERSION, apiType = CHAT_COMPLETIONS);
 
 string apiKey = "mock-api-key";
 // The embeddings deployment-scoped route is hosted by the legacy Azure OpenAI mock service.
@@ -774,7 +774,7 @@ function testResponsesV1ChatWithTools() returns ai:Error? {
     test:assertEquals((<ai:FunctionCall[]>toolCalls)[0].arguments, {"city": "London"});
 }
 
-// ===== Chat Completions API (`apiType = CHAT_COMPLETION`) tests =====
+// ===== Chat Completions API (`apiType = CHAT_COMPLETIONS`) tests =====
 // These hit the deployment-scoped Azure OpenAI Chat Completions endpoint:
 //   {legacyBase}/deployments/{deploymentId}/chat/completions?api-version=...
 
@@ -930,7 +930,7 @@ function testChatCompletionV1GenerateMethod() returns ai:Error? {
 @test:Config
 function testLegacyServiceUrlWithoutApiVersionFails() returns error? {
     OpenAiModelProvider|ai:Error provider =
-        new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, apiType = CHAT_COMPLETION);
+        new (SERVICE_URL, API_KEY, DEPLOYMENT_ID, apiType = CHAT_COMPLETIONS);
     test:assertTrue(provider is ai:Error, "expected init to fail when api-version is omitted for a legacy URL");
     test:assertTrue((<ai:Error>provider).message().includes("'apiVersion' argument is required"),
             "unexpected error message: " + (<ai:Error>provider).message());

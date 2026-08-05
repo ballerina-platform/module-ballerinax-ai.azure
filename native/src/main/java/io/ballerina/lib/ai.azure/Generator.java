@@ -28,7 +28,7 @@ import io.ballerina.runtime.api.values.BTypedesc;
  * This class provides the native function to generate a response from an Azure AI model.
  *
  * <p>The {@code OpenAiModelProvider} selects its API surface through the {@code apiType} field. When it is
- * {@code CHAT_COMPLETION} (the default), the request is routed to the Chat Completions API; otherwise it is
+ * {@code CHAT_COMPLETIONS} (the default), the request is routed to the Chat Completions API; otherwise it is
  * routed to the Responses API. Each path in turn selects the v1 GA connector or the legacy raw HTTP client based
  * on the {@code useV1} flag.
  *
@@ -37,7 +37,7 @@ import io.ballerina.runtime.api.values.BTypedesc;
 public class Generator {
     private static final Module MODULE = new Module("ballerinax", "ai.azure", "1");
 
-    private static final String CHAT_COMPLETION = "CHAT_COMPLETION";
+    private static final String CHAT_COMPLETIONS = "chat_completions";
 
     private static final String API_TYPE = "apiType";
     private static final String CHAT_CLIENT = "chatClient";
@@ -56,7 +56,7 @@ public class Generator {
     public static Object generate(Environment env, BObject modelProvider,
                                   BObject prompt, BTypedesc expectedResponseTypedesc) {
         Object apiType = modelProvider.get(StringUtils.fromString(API_TYPE));
-        if (apiType instanceof BString apiTypeStr && CHAT_COMPLETION.equals(apiTypeStr.getValue())) {
+        if (apiType instanceof BString apiTypeStr && CHAT_COMPLETIONS.equals(apiTypeStr.getValue())) {
             return generateViaChatCompletions(env, modelProvider, prompt, expectedResponseTypedesc);
         }
         return generateViaResponses(env, modelProvider, prompt, expectedResponseTypedesc);
