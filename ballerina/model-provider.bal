@@ -23,7 +23,6 @@ import ballerinax/azure.openai.chat;
 import ballerinax/azure.openai.responses;
 
 const DEFAULT_MAX_TOKEN_COUNT = 4096;
-const DEFAULT_TEMPERATURE = 0.7d;
 
 # `OpenAiModelProvider` is a client class that provides an interface for interacting with Azure-hosted OpenAI
 # language models.
@@ -90,7 +89,7 @@ public isolated client class OpenAiModelProvider {
             @display {label: "Deployment ID"} string deploymentId,
             @display {label: "API Version"} string? apiVersion = (),
             @display {label: "Maximum Tokens"} int maxTokens = DEFAULT_MAX_TOKEN_COUNT,
-            @display {label: "Temperature"} decimal? temperature = DEFAULT_TEMPERATURE,
+            @display {label: "Temperature"} decimal? temperature = (),
             @display {label: "Reasoning Effort"} ReasoningEffort? reasoningEffort = (),
             @display {label: "API Type"} ApiType apiType = CHAT_COMPLETION,
             @display {label: "Connection Configuration"} *ConnectionConfig connectionConfig) returns ai:Error? {
