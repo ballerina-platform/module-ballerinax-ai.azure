@@ -10,7 +10,7 @@ distribution-version = "2201.12.0"
 [[package]]
 org = "ballerina"
 name = "ai"
-version = "1.13.0"
+version = "1.15.0"
 dependencies = [
 	{org = "ballerina", name = "cache"},
 	{org = "ballerina", name = "constraint"},
@@ -110,7 +110,7 @@ dependencies = [
 [[package]]
 org = "ballerina"
 name = "file"
-version = "1.13.0"
+version = "1.13.1"
 dependencies = [
 	{org = "ballerina", name = "io"},
 	{org = "ballerina", name = "jballerina.java"},
@@ -426,7 +426,7 @@ dependencies = [
 [[package]]
 org = "ballerinax"
 name = "ai.azure"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
 	{org = "ballerina", name = "ai"},
 	{org = "ballerina", name = "constraint"},
