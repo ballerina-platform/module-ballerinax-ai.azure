@@ -1,8 +1,6 @@
 ## Overview
 
-Azure OpenAI Service provides access to OpenAI's powerful language models within the Microsoft Azure platform.
-
-The Azure OpenAI connector offers APIs for connecting with Azure OpenAI Large Language Models (LLMs), enabling the integration of advanced conversational AI, text generation, and language processing capabilities into applications.
+The `ai.azure` module provides Azure OpenAI-backed `ModelProvider` and `EmbeddingProvider` implementations for the [`ballerina/ai`](https://central.ballerina.io/ballerina/ai/latest) agent framework. Use it to drive Azure-hosted OpenAI chat models (GPT-4o, GPT-4, o-series) and embedding models from Ballerina AI agents and RAG pipelines, rather than calling the Azure OpenAI REST API directly (for which use `azure.openai.chat`).
 
 ### Key Features
 
