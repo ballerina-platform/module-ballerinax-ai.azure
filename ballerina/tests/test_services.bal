@@ -59,7 +59,7 @@ service /llm/azureopenai on mockListener {
 
     // Chat Completions — legacy deployment-scoped route. The `api-version` query parameter is REQUIRED here;
     // declaring it non-optional makes the mock reject (and the test fail) if the provider ever drops it.
-    // A `stream: true` body (used by `chatStream`/`generateStream`) is served as a canned SSE chunk sequence
+    // A `stream: true` body (used by `chatAsStream`/`generateAsStream`) is served as a canned SSE chunk sequence
     // instead of going through the non-streaming assertions below, which do not apply to the streaming wire body.
     resource function post deployments/[string deploymentId]/chat/completions(
             string api\-version, @http:Payload json payload)
@@ -83,7 +83,7 @@ service /llm/azureopenai on mockListener {
     }
 
     // Responses — legacy preview route. The `api-version` query parameter is REQUIRED here. A `stream: true`
-    // body (used by `chatStream` with `apiType = RESPONSES`) is served as a canned event sequence selected by
+    // body (used by `chatAsStream` with `apiType = RESPONSES`) is served as a canned event sequence selected by
     // the deployment, instead of going through the non-streaming assertions.
     resource function post responses(string api\-version, @http:Payload json payload)
             returns json|stream<http:SseEvent, error?>|http:Response|error {
@@ -236,7 +236,7 @@ service /llm/azureopenai/openai/v1 on mockListener {
 
     // Chat Completions — v1 GA route. The deployment is sent as `model` in the body. An `api-version` query
     // parameter is only present when the caller opted into a `preview`/`v1` surface; a date-based api-version must
-    // never reach this route. A `stream: true` body (used by `chatStream`/`generateStream`) is served as a canned
+    // never reach this route. A `stream: true` body (used by `chatAsStream`/`generateAsStream`) is served as a canned
     // SSE chunk sequence instead of going through the non-streaming assertions below.
     resource function post chat/completions(@http:Payload json payload, string? api\-version = ())
             returns json|stream<http:SseEvent, error?>|http:Response|error {

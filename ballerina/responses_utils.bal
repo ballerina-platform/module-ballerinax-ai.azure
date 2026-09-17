@@ -436,7 +436,7 @@ isolated function postResponsesStream(http:Client? v1ResponsesStreamClient, http
     return sseStream;
 }
 
-// ===== Streaming (`chatStream` via `apiType = RESPONSES`) wire types =====
+// ===== Streaming (`chatAsStream` via `apiType = RESPONSES`) wire types =====
 //
 // The Responses API streams a heterogeneous sequence of typed SSE events (`response.output_text.delta`,
 // `response.function_call_arguments.delta`, `response.completed`, ...) instead of repeated deltas of one
@@ -561,7 +561,9 @@ type ResponsesStreamErrorEvent record {
     string message;
 };
 
-# Maps a terminal Responses envelope onto the Chat-Completions-style finish reason.
+# Maps a terminal Responses envelope onto the Chat-Completions-style finish reason. Returns `ai:FinishReason`
+# rather than `ai:FinishReason?` because a terminal event always yields a definite outcome - falling back to
+# `STOP` when the envelope carries neither an incomplete reason nor a tool call.
 #
 # An `incomplete` response ended early for a reason Chat Completions reports as an ordinary finish reason
 # (`length`, `content_filter`) rather than as an error, so it is mapped the same way here: the partial output the
@@ -613,53 +615,30 @@ isolated function buildStreamTerminalError(ResponsesStreamTerminalResponse respo
     return error ai:LlmConnectionError("Response generation failed");
 }
 
-# Builds the final chunk for a `response.completed` / `response.incomplete` event: an empty delta carrying only
-# the finish reason and (if present) the token usage, matching the final usage-only chunk the Chat Completions
-# path sends.
+# Builds the final chunk for a `response.completed` / `response.incomplete` event: a content-less chunk carrying
+# only the finish reason, matching the final finish-only chunk the Chat Completions path sends. Token usage is not
+# carried onto the chunk - `ai:ChatMessageChunk` has no field for it - the iterator records it onto the span
+# directly from the raw terminal envelope instead.
 #
 # + response - The terminal Responses envelope
 # + return - The final normalized chunk
-isolated function buildResponsesTerminalChunk(ResponsesStreamTerminalResponse response) returns ai:ChatCompletionChunk {
-    ai:ChatCompletionChunk chunk = {
-        id: response.id,
-        choices: [{index: 0, delta: {}, finishReason: mapResponsesFinishReason(response)}]
-    };
-    ResponsesStreamUsage? usage = response?.usage;
-    if usage is ResponsesStreamUsage {
-        ai:CompletionTokenUsage tokenUsage = {};
-        int? inputTokens = usage.input_tokens;
-        if inputTokens is int {
-            tokenUsage.promptTokens = inputTokens;
-        }
-        int? outputTokens = usage.output_tokens;
-        if outputTokens is int {
-            tokenUsage.completionTokens = outputTokens;
-        }
-        int? totalTokens = usage.total_tokens;
-        if totalTokens is int {
-            tokenUsage.totalTokens = totalTokens;
-        }
-        chunk.usage = tokenUsage;
+isolated function buildResponsesTerminalChunk(ResponsesStreamTerminalResponse response) returns ai:ChatMessageChunk {
+    ai:ChatMessageChunk chunk = {role: ai:ASSISTANT, finishReason: mapResponsesFinishReason(response)};
+    string? id = response.id;
+    if id is string {
+        chunk.id = id;
     }
     return chunk;
 }
 
-# Builds a single-choice chunk carrying only the given delta (no finish reason or usage), used for every
-# intermediate Responses streaming event.
-#
-# + delta - The delta to wrap
-# + return - The normalized chunk
-isolated function buildResponsesDeltaChunk(ai:ChatCompletionChunkDelta delta) returns ai:ChatCompletionChunk =>
-    {choices: [{index: 0, delta}]};
-
 # Iterator that converts the Azure OpenAI Responses API's Server-Sent Event stream into a stream of normalized
-# `ai:ChatCompletionChunk` values.
+# `ai:ChatMessageChunk` values.
 #
 # Unlike Chat Completions (which repeats one envelope shape per chunk), the Responses API streams a sequence of
 # differently-shaped, `type`-discriminated events describing item lifecycle (`response.output_item.added`),
 # incremental text/reasoning/tool-argument fragments, and a terminal envelope (`response.completed` /
 # `.failed` / `.incomplete`). This iterator dispatches each event by its `type` and normalizes only the events
-# `chatStream`'s contract cares about; every other event type (`response.content_part.added`, the `.done`
+# `chatAsStream`'s contract cares about; every other event type (`response.content_part.added`, the `.done`
 # companion of each `.delta` event, keep-alive comments, ...) is skipped. Each streamed `function_call` output
 # item is assigned a stable `index` (keyed by its `item_id`) the first time it is seen, mirroring how Chat
 # Completions correlates streamed tool-call argument fragments.
@@ -669,22 +648,19 @@ isolated function buildResponsesDeltaChunk(ai:ChatCompletionChunkDelta delta) re
 # or make a whole tool call vanish with no error. Event types this module does not consume are still skipped
 # without inspecting their shape, so new Azure event types remain forward-compatible.
 class ResponsesChunkIterator {
-    private stream<http:SseEvent, error?> sseStream;
-    # The chat span opened by `chatStream`. The iterator owns it: a streaming request is not finished when
-    # `chatStream` returns, only when the last chunk has been read, so the span is closed here.
-    private observe:ChatSpan span;
+    private final stream<http:SseEvent, error?> sseStream;
+    # The chat span opened by `chatAsStream`. The iterator owns it: a streaming request is not finished when
+    # `chatAsStream` returns, only when the last chunk has been read, so the span is closed here.
+    private final observe:ChatSpan span;
     private map<int> toolCallIndexByItemId = {};
     private int nextToolCallIndex = 0;
     # `true` once the stream has terminated (via `[DONE]`, exhaustion, an error, or an explicit `close`), so a
     # later `next` returns `()` instead of resuming reads against a finished stream.
     private boolean done = false;
     # Response id captured from `response.created`, stamped onto every chunk so `id` is stable across the
-    # stream, as the `ai:ChatCompletionChunk` contract describes. The Responses API carries it only on the
+    # stream, as the `ai:ChatMessageChunk` contract describes. The Responses API carries it only on the
     # lifecycle events, not on the individual deltas.
     private string? responseId = ();
-    # `true` once a chunk carrying `role: ASSISTANT` has been emitted. Chat Completions opens every stream with
-    # a role-only delta; the Responses API has no equivalent event, so the role is stamped on the first chunk.
-    private boolean roleEmitted = false;
     # `true` once the response id has been recorded on the span; it repeats across the lifecycle events.
     private boolean responseIdRecorded = false;
 
@@ -693,7 +669,7 @@ class ResponsesChunkIterator {
         self.span = span;
     }
 
-    public isolated function next() returns record {|ai:ChatCompletionChunk value;|}|ai:Error? {
+    public isolated function next() returns record {|ai:ChatMessageChunk value;|}|ai:Error? {
         if self.done {
             return ();
         }
@@ -735,7 +711,7 @@ class ResponsesChunkIterator {
                 return err;
             }
 
-            record {|ai:ChatCompletionChunk value;|}|ai:Error? result = self.handleEvent(typed.'type, payload);
+            record {|ai:ChatMessageChunk value;|}|ai:Error? result = self.handleEvent(typed.'type, payload);
             if result is ai:Error {
                 self.finish(result);
                 return result;
@@ -743,16 +719,30 @@ class ResponsesChunkIterator {
             if result is () {
                 continue;
             }
-            recordChunkOnSpan(self.span, result.value, self.responseIdRecorded);
-            if result.value.id is string {
-                self.responseIdRecorded = true;
-            }
+            self.recordObservations(result.value);
             return result;
         }
     }
 
+    # Records the response id (once) and the finish reason carried by an emitted chunk. Token usage is recorded
+    # separately, directly off the raw terminal envelope, since `ai:ChatMessageChunk` has no field for it.
+    #
+    # + chunk - The chunk about to be returned to the caller
+    private isolated function recordObservations(ai:ChatMessageChunk chunk) {
+        string? id = chunk.id;
+        if !self.responseIdRecorded && id is string {
+            self.span.addResponseId(id);
+            self.responseIdRecorded = true;
+        }
+        ai:FinishReason? finishReason = chunk.finishReason;
+        if finishReason is ai:FinishReason {
+            self.span.addFinishReason(finishReason);
+            self.span.addOutputType(observe:TEXT);
+        }
+    }
+
     private isolated function handleEvent(string eventType, json payload)
-            returns record {|ai:ChatCompletionChunk value;|}|ai:Error? {
+            returns record {|ai:ChatMessageChunk value;|}|ai:Error? {
         if eventType == "response.created" {
             // Purely informational: the only thing taken from it is the response id stamped onto later chunks,
             // so a shape this module does not recognize is not worth failing the stream over.
@@ -776,7 +766,10 @@ class ResponsesChunkIterator {
                 return error ai:LlmInvalidResponseError(
                         "Unexpected shape for a 'response.output_text.delta' event", textDelta);
             }
-            return self.emit({content: textDelta.delta});
+            if textDelta.delta.length() == 0 {
+                return ();
+            }
+            return self.emit({role: ai:ASSISTANT, content: textDelta.delta});
         }
         if eventType == "response.reasoning_summary_text.delta" || eventType == "response.reasoning_text.delta" {
             ResponsesStreamReasoningDelta|error reasoningDelta = payload.cloneWithType();
@@ -784,7 +777,10 @@ class ResponsesChunkIterator {
                 return error ai:LlmInvalidResponseError(
                         string `Unexpected shape for a '${eventType}' event`, reasoningDelta);
             }
-            return self.emit({reasoning: reasoningDelta.delta});
+            if reasoningDelta.delta.length() == 0 {
+                return ();
+            }
+            return self.emit({role: ai:ASSISTANT, reasoning: reasoningDelta.delta});
         }
         if eventType == "response.function_call_arguments.delta" {
             ResponsesStreamFunctionCallArgumentsDelta|error argsDelta = payload.cloneWithType();
@@ -793,7 +789,7 @@ class ResponsesChunkIterator {
                         "Unexpected shape for a 'response.function_call_arguments.delta' event", argsDelta);
             }
             int index = self.indexForItemId(argsDelta.item_id);
-            return self.emit({toolCalls: [{index, 'function: {arguments: argsDelta.delta}}]});
+            return self.emit({role: ai:ASSISTANT, toolCalls: [{index, arguments: argsDelta.delta}]});
         }
         // `incomplete` is a normal early stop (token cap, content filter), not a failure: it is mapped onto a
         // terminal chunk carrying `LENGTH`/`CONTENT_FILTER` so the partial output already streamed stays usable,
@@ -804,7 +800,8 @@ class ResponsesChunkIterator {
                 return error ai:LlmInvalidResponseError(
                         string `Unexpected shape for a '${eventType}' event`, terminal);
             }
-            ai:ChatCompletionChunk chunk = buildResponsesTerminalChunk(terminal.response);
+            self.recordTerminalUsage(terminal.response);
+            ai:ChatMessageChunk chunk = buildResponsesTerminalChunk(terminal.response);
             return {value: self.stamp(chunk)};
         }
         if eventType == "response.failed" {
@@ -825,7 +822,7 @@ class ResponsesChunkIterator {
     }
 
     private isolated function handleOutputItemAdded(ResponsesStreamItem item)
-            returns record {|ai:ChatCompletionChunk value;|}|ai:Error? {
+            returns record {|ai:ChatMessageChunk value;|}|ai:Error? {
         if item.'type != "function_call" {
             return ();
         }
@@ -841,31 +838,43 @@ class ResponsesChunkIterator {
         }
         string? name = item?.name;
         if name is string {
-            toolCall.'function = {name};
+            toolCall.name = name;
         }
-        return self.emit({toolCalls: [toolCall]});
+        return self.emit({role: ai:ASSISTANT, toolCalls: [toolCall]});
     }
 
-    # Wraps a delta in a chunk, stamping the stream-wide response id and - on the first chunk only - the
-    # assistant role, so the Responses path produces the same chunk shape as the Chat Completions path.
+    # Records token usage carried by a terminal envelope onto the span, read directly off the raw response since
+    # `ai:ChatMessageChunk` has no field for it.
     #
-    # + delta - The delta to emit
-    # + return - The chunk record the stream yields
-    private isolated function emit(ai:ChatCompletionChunkDelta delta)
-            returns record {|ai:ChatCompletionChunk value;|} {
-        ai:ChatCompletionChunkDelta stampedDelta = delta;
-        if !self.roleEmitted {
-            stampedDelta.role = ai:ASSISTANT;
-            self.roleEmitted = true;
+    # + response - The terminal Responses envelope
+    private isolated function recordTerminalUsage(ResponsesStreamTerminalResponse response) {
+        ResponsesStreamUsage? usage = response?.usage;
+        if usage is () {
+            return;
         }
-        return {value: self.stamp(buildResponsesDeltaChunk(stampedDelta))};
+        int? inputTokens = usage.input_tokens;
+        if inputTokens is int {
+            self.span.addInputTokenCount(inputTokens);
+        }
+        int? outputTokens = usage.output_tokens;
+        if outputTokens is int {
+            self.span.addOutputTokenCount(outputTokens);
+        }
     }
+
+    # Wraps a chunk for return, stamping the stream-wide response id captured from `response.created` when the
+    # chunk does not already carry one.
+    #
+    # + chunk - The chunk to emit; already carries `role: ASSISTANT`, as required by `ai:ChatMessageChunk`
+    # + return - The chunk record the stream yields
+    private isolated function emit(ai:ChatMessageChunk chunk) returns record {|ai:ChatMessageChunk value;|} =>
+        {value: self.stamp(chunk)};
 
     # Stamps the captured response id onto a chunk that does not already carry one.
     #
     # + chunk - The chunk to stamp
     # + return - The same chunk, with `id` filled in where available
-    private isolated function stamp(ai:ChatCompletionChunk chunk) returns ai:ChatCompletionChunk {
+    private isolated function stamp(ai:ChatMessageChunk chunk) returns ai:ChatMessageChunk {
         if chunk.id is string {
             return chunk;
         }
