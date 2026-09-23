@@ -597,11 +597,13 @@ isolated function getChatMessageStringContent(ai:Prompt|string prompt) returns s
 #
 # + name - The tool name
 # + counts - Per-name occurrence counters, updated in place
+# + prefix - The id prefix. Defaults to the OpenAI-style `call`; the Anthropic Messages API path passes `toolu`,
+#          matching the ids that service issues itself.
 # + return - A generated tool call id, unique per occurrence of `name`
-isolated function nextToolCallId(string name, map<int> counts) returns string {
+isolated function nextToolCallId(string name, map<int> counts, string prefix = "call") returns string {
     int occurrence = (counts[name] ?: 0) + 1;
     counts[name] = occurrence;
-    return string `call_${name}_${occurrence}`;
+    return string `${prefix}_${name}_${occurrence}`;
 }
 
 isolated function convertMessageToJson(ai:ChatMessage[]|ai:ChatMessage messages) returns json|ai:Error {
