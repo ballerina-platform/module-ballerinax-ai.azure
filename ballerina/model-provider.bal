@@ -197,7 +197,7 @@ public isolated client class OpenAiModelProvider {
     # + tools - Tool definitions to be used for the tool call
     # + stop - Stop sequence to stop the completion
     # + return - A stream of assistant message chunks, or an error in case of failures
-    remote function chatAsStream(ai:ChatMessage[]|ai:ChatUserMessage messages,
+    isolated remote function chatAsStream(ai:ChatMessage[]|ai:ChatUserMessage messages,
             ai:ChatCompletionFunctions[] tools = [], string? stop = ())
             returns stream<ai:ChatMessageChunk, ai:Error?>|ai:Error {
         if self.apiType == CHAT_COMPLETIONS {
@@ -336,7 +336,7 @@ public isolated client class OpenAiModelProvider {
     #
     # + prompt - The prompt to use in the chat request
     # + return - A stream of text fragments, or an error if generation fails
-    remote function generateAsStream(ai:Prompt prompt) returns stream<string, ai:Error?>|ai:Error {
+    isolated remote function generateAsStream(ai:Prompt prompt) returns stream<string, ai:Error?>|ai:Error {
         stream<ai:ChatMessageChunk, ai:Error?> chunks = check self->chatAsStream({role: ai:USER, content: prompt});
         return new stream<string, ai:Error?>(new ChunkTextIterator(chunks));
     }
