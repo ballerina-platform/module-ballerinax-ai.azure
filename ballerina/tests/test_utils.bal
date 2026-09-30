@@ -14,6 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import ballerina/http;
+
 isolated function getExpectedParameterSchema(string message) returns map<json> {
     if message.startsWith("Evaluate this") {
         return expectedParameterSchemaStringForRateBlog6;
@@ -270,6 +272,230 @@ isolated function getTheMockLLMResult(string message) returns string {
 
     return "INVALID";
 }
+
+// Canned `chat.completion.chunk` SSE payload sequence for the streaming tests, modeled on a
+// reasoning ("thinking") model deployment: a role delta, two reasoning-content fragments, two
+// content fragments, a finish-reason chunk, and a final usage-only chunk. The `[DONE]` sentinel
+// terminates the stream, matching Azure's real wire format.
+const STREAMING_REASONING_TEXT = "Let me think about this.";
+const STREAMING_CONTENT_TEXT = "Hello world";
+
+isolated function getStreamingChunkEvents() returns http:SseEvent[] {
+    json[] chunks = [
+        {id: "chunk-1", 'object: "chat.completion.chunk", created: 1700000000, model: "gpt-4o",
+            choices: [{index: 0, delta: {role: "assistant"}}]},
+        {id: "chunk-1", 'object: "chat.completion.chunk", created: 1700000000, model: "gpt-4o",
+            choices: [{index: 0, delta: {reasoning_content: "Let me think"}}]},
+        {id: "chunk-1", 'object: "chat.completion.chunk", created: 1700000000, model: "gpt-4o",
+            choices: [{index: 0, delta: {reasoning_content: " about this."}}]},
+        {id: "chunk-1", 'object: "chat.completion.chunk", created: 1700000000, model: "gpt-4o",
+            choices: [{index: 0, delta: {content: "Hello"}}]},
+        {id: "chunk-1", 'object: "chat.completion.chunk", created: 1700000000, model: "gpt-4o",
+            choices: [{index: 0, delta: {content: " world"}}]},
+        {id: "chunk-1", 'object: "chat.completion.chunk", created: 1700000000, model: "gpt-4o",
+            choices: [{index: 0, delta: {}, finish_reason: "stop"}]},
+        {id: "chunk-1", 'object: "chat.completion.chunk", created: 1700000000, model: "gpt-4o",
+            choices: [], usage: {prompt_tokens: 5, completion_tokens: 3, total_tokens: 8}}
+    ];
+    http:SseEvent[] events = from json chunkPayload in chunks select {data: chunkPayload.toJsonString()};
+    events.push({data: "[DONE]"});
+    return events;
+}
+
+// A `chat.completion.chunk` sequence whose second event is not valid JSON. A malformed chunk must fail the
+// stream rather than being skipped: silently dropping it would truncate the answer with no error.
+isolated function getMalformedStreamingChunkEvents() returns http:SseEvent[] => [
+    {
+        data: {id: "chunk-1", 'object: "chat.completion.chunk", model: "gpt-4o",
+                choices: [{index: 0, delta: {content: "Hello"}}]}.toJsonString()
+    },
+    {data: "{\"choices\": [ this is not json"},
+    {data: "[DONE]"}
+];
+
+// A `chat.completion.chunk` tool-call sequence in Azure's real streamed shape: the first fragment carries the
+// call id, type and function name, and the fragments that follow carry only argument text - with `id`/`type`
+// sent as explicit JSON `null` rather than omitted, which is the shape the module's nilable wire mirrors exist
+// to tolerate.
+const STREAMING_TOOL_CALL_ID = "call_stream_1";
+const STREAMING_TOOL_ARGUMENTS = "{\"city\":\"Paris\"}";
+
+isolated function getStreamingToolCallEvents() returns http:SseEvent[] {
+    json[] chunks = [
+        {id: "chunk-1", model: "gpt-4o", choices: [{index: 0, delta: {role: "assistant"}}]},
+        {
+            id: "chunk-1",
+            model: "gpt-4o",
+            choices: [
+                {
+                    index: 0,
+                    delta: {
+                        content: (),
+                        tool_calls: [
+                            {
+                                index: 0,
+                                id: STREAMING_TOOL_CALL_ID,
+                                'type: "function",
+                                'function: {name: PARALLEL_TOOL_NAME, arguments: ""}
+                            }
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            id: "chunk-1",
+            model: "gpt-4o",
+            choices: [
+                {
+                    index: 0,
+                    delta: {
+                        content: (),
+                        tool_calls: [
+                            {index: 0, id: (), 'type: (), 'function: {name: (), arguments: "{\"city\":"}}
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            id: "chunk-1",
+            model: "gpt-4o",
+            choices: [
+                {
+                    index: 0,
+                    delta: {
+                        content: (),
+                        tool_calls: [
+                            {index: 0, id: (), 'type: (), 'function: {name: (), arguments: "\"Paris\"}"}}
+                        ]
+                    }
+                }
+            ]
+        },
+        {id: "chunk-1", model: "gpt-4o", choices: [{index: 0, delta: {}, finish_reason: "tool_calls"}]}
+    ];
+    http:SseEvent[] events = from json chunkPayload in chunks select {data: chunkPayload.toJsonString()};
+    events.push({data: "[DONE]"});
+    return events;
+}
+
+// ===== Responses API streaming fixtures =====
+//
+// The Responses API streams `type`-discriminated lifecycle events rather than repeated deltas of one envelope,
+// so each scenario below is a full event sequence. Deployment ids select the scenario (see the mock routes in
+// `test_services.bal`), which lets one test per scenario drive the real provider code path end to end.
+
+const RESPONSES_STREAM_DEPLOYMENT = "responses-streaming";
+const RESPONSES_STREAM_TOOLS_DEPLOYMENT = "responses-streaming-tools";
+const RESPONSES_STREAM_FAILED_DEPLOYMENT = "responses-streaming-failed";
+const RESPONSES_STREAM_INCOMPLETE_DEPLOYMENT = "responses-streaming-incomplete";
+const RESPONSES_STREAM_ERROR_DEPLOYMENT = "responses-streaming-error";
+
+const RESPONSES_STREAM_ID = "resp_stream_1";
+const RESPONSES_STREAM_FAILURE_MESSAGE = "The request was blocked by the content filter.";
+const RESPONSES_STREAM_ERROR_MESSAGE = "Rate limit exceeded while streaming.";
+
+// Text + reasoning: a `response.created` carrying the id, reasoning-summary fragments, answer-text fragments,
+// and a `response.completed` envelope with usage. `input_tokens_details`/`output_tokens_details` are deliberately
+// omitted - Azure does not always send them, and a well-formed stream must not fail on their absence.
+isolated function getResponsesStreamEvents() returns http:SseEvent[] => toSseEvents([
+    {'type: "response.created", response: {id: RESPONSES_STREAM_ID, status: "in_progress"}},
+    {'type: "response.in_progress", response: {id: RESPONSES_STREAM_ID, status: "in_progress"}},
+    {'type: "response.reasoning_summary_text.delta", item_id: "rs_1", delta: "Let me think"},
+    {'type: "response.reasoning_summary_text.delta", item_id: "rs_1", delta: " about this."},
+    {'type: "response.output_item.added", output_index: 0, item: {'type: "message", id: "msg_1"}},
+    {'type: "response.output_text.delta", item_id: "msg_1", delta: "Hello"},
+    {'type: "response.output_text.delta", item_id: "msg_1", delta: " world"},
+    {'type: "response.output_text.done", item_id: "msg_1", text: STREAMING_CONTENT_TEXT},
+    {
+        'type: "response.completed",
+        response: {
+            id: RESPONSES_STREAM_ID,
+            status: "completed",
+            'error: (),
+            incomplete_details: (),
+            output: [{'type: "message", id: "msg_1"}],
+            usage: {input_tokens: 5, output_tokens: 3, total_tokens: 8}
+        }
+    }
+]);
+
+// A streamed function call: the `output_item.added` opens the slot (call id + name) and the argument fragments
+// follow, keyed back to it by `item_id`.
+isolated function getResponsesStreamToolCallEvents() returns http:SseEvent[] => toSseEvents([
+    {'type: "response.created", response: {id: RESPONSES_STREAM_ID, status: "in_progress"}},
+    {
+        'type: "response.output_item.added",
+        output_index: 0,
+        item: {
+            'type: "function_call",
+            id: "fc_1",
+            call_id: STREAMING_TOOL_CALL_ID,
+            name: PARALLEL_TOOL_NAME,
+            arguments: ""
+        }
+    },
+    {'type: "response.function_call_arguments.delta", item_id: "fc_1", delta: "{\"city\":"},
+    {'type: "response.function_call_arguments.delta", item_id: "fc_1", delta: "\"Paris\"}"},
+    {'type: "response.function_call_arguments.done", item_id: "fc_1", arguments: STREAMING_TOOL_ARGUMENTS},
+    {
+        'type: "response.completed",
+        response: {
+            id: RESPONSES_STREAM_ID,
+            status: "completed",
+            'error: (),
+            incomplete_details: (),
+            output: [{'type: "function_call", id: "fc_1", call_id: STREAMING_TOOL_CALL_ID}],
+            usage: {input_tokens: 7, output_tokens: 5, total_tokens: 12}
+        }
+    }
+]);
+
+// A `response.failed` whose error code is outside the connector's closed `OpenAIResponseErrorCode` union. Azure's
+// own message must still reach the caller.
+isolated function getResponsesStreamFailedEvents() returns http:SseEvent[] => toSseEvents([
+    {'type: "response.created", response: {id: RESPONSES_STREAM_ID, status: "in_progress"}},
+    {'type: "response.output_text.delta", item_id: "msg_1", delta: "Hel"},
+    {
+        'type: "response.failed",
+        response: {
+            id: RESPONSES_STREAM_ID,
+            status: "failed",
+            incomplete_details: (),
+            'error: {code: "content_filter", message: RESPONSES_STREAM_FAILURE_MESSAGE}
+        }
+    }
+]);
+
+// A `response.incomplete` caused by the output-token cap. This is an ordinary early stop, not a failure: the
+// partial text already streamed must survive and the terminal chunk must report `LENGTH`.
+isolated function getResponsesStreamIncompleteEvents() returns http:SseEvent[] => toSseEvents([
+    {'type: "response.created", response: {id: RESPONSES_STREAM_ID, status: "in_progress"}},
+    {'type: "response.output_text.delta", item_id: "msg_1", delta: "Hello"},
+    {'type: "response.output_text.delta", item_id: "msg_1", delta: " world"},
+    {
+        'type: "response.incomplete",
+        response: {
+            id: RESPONSES_STREAM_ID,
+            status: "incomplete",
+            'error: (),
+            incomplete_details: {reason: "max_output_tokens"},
+            output: [{'type: "message", id: "msg_1"}],
+            usage: {input_tokens: 5, output_tokens: 3, total_tokens: 8}
+        }
+    }
+]);
+
+// A top-level stream `error` event, distinct from a `response.failed` terminal envelope.
+isolated function getResponsesStreamErrorEvents() returns http:SseEvent[] => toSseEvents([
+    {'type: "response.created", response: {id: RESPONSES_STREAM_ID, status: "in_progress"}},
+    {'type: "error", code: "rate_limit_exceeded", message: RESPONSES_STREAM_ERROR_MESSAGE}
+]);
+
+isolated function toSseEvents(json[] payloads) returns http:SseEvent[] =>
+    from json payload in payloads
+    select {data: payload.toJsonString()};
 
 isolated function getTestServiceResponse(string content) returns json =>
     {

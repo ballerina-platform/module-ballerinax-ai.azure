@@ -302,9 +302,33 @@ const string MAX_COMPLETION_TOKENS_MIN_API_VERSION = "2024-09-01";
 #
 # + apiVersion - The date-based api-version (e.g. `2024-09-01-preview`)
 # + return - `true` for api-versions `>= 2024-09-01`; `false` otherwise
-isolated function usesMaxCompletionTokens(string apiVersion) returns boolean {
+isolated function usesMaxCompletionTokens(string apiVersion) returns boolean =>
+    apiVersionAtLeast(apiVersion, MAX_COMPLETION_TOKENS_MIN_API_VERSION);
+
+// Azure added `stream_options` (and with it `stream_options.include_usage`, the only way to get token usage on a
+// streamed response) to the Chat Completions request schema in api-version 2024-08-01-preview. Older versions
+// reject the whole request with "Unrecognized request argument supplied: stream_options", so on those the field
+// must be omitted and the stream simply carries no usage chunk.
+const string STREAM_OPTIONS_MIN_API_VERSION = "2024-08-01";
+
+# Decides whether a legacy (date-based) api-version accepts `stream_options`.
+#
+# + apiVersion - The date-based api-version (e.g. `2024-08-01-preview`)
+# + return - `true` for api-versions `>= 2024-08-01`; `false` otherwise
+isolated function supportsStreamOptions(string apiVersion) returns boolean =>
+    apiVersionAtLeast(apiVersion, STREAM_OPTIONS_MIN_API_VERSION);
+
+# Compares a date-based api-version against a `YYYY-MM-DD` threshold. api-version values are date-prefixed
+# (`YYYY-MM-DD[-preview]`) and therefore sort lexicographically, so a prefix comparison is a reliable
+# "is this version >= threshold" test. A value too short to carry a date prefix is compared as-is, which puts
+# any malformed/degenerate input below every threshold.
+#
+# + apiVersion - The date-based api-version to test
+# + minApiVersion - The `YYYY-MM-DD` threshold
+# + return - `true` when `apiVersion` is at or after the threshold
+isolated function apiVersionAtLeast(string apiVersion, string minApiVersion) returns boolean {
     string datePrefix = apiVersion.length() >= 10 ? apiVersion.substring(0, 10) : apiVersion;
-    return datePrefix >= MAX_COMPLETION_TOKENS_MIN_API_VERSION;
+    return datePrefix >= minApiVersion;
 }
 
 # Sets the correct token-limit field on a Chat Completions request.
@@ -384,6 +408,147 @@ isolated function postChatCompletion(chat:Client? chatClient, http:Client? legac
             string `/deployments/${deploymentId}/chat/completions?api-version=${apiVersion ?: ""}`,
             body, {"api-key": apiKey});
     return result;
+}
+
+# Serializes a Chat Completions request for the v1 GA route.
+#
+# Unlike the legacy route, the v1 GA surface carries the deployment as `model` in the body (there is no
+# deployment path segment in the URL), so `model` is kept.
+#
+# + request - The Chat Completions request (with the token-limit field already selected)
+# + return - The wire body, or an `ai:Error` on serialization failure
+isolated function buildV1ChatBody(chat:ChatCompletionsBody request) returns map<json>|ai:Error {
+    do {
+        return check jsondata:toJson(request).ensureType();
+    } on fail error e {
+        return error ai:Error("Failed to build the Chat Completions request body", e);
+    }
+}
+
+# Opens a streaming (`stream: true`) Chat Completions request against the configured surface and returns the raw
+# Server-Sent Event stream.
+#
+# The generated `chat:Client` (used for the non-streaming v1 GA path) binds its response to a single value and
+# cannot consume Server-Sent Events, so both surfaces stream through a raw HTTP client:
+#
+# - **v1 GA** (`useV1` is `true`): `v1StreamClient` posts `{serviceUrl}/chat/completions` (`model` kept in the
+#   body). `api-version` is only sent when the caller opted into `preview`/`v1` (`v1ApiVersion`).
+# - **Legacy** (otherwise): `legacyChatClient` (already a raw client) posts
+#   `{legacyBase}/deployments/{deploymentId}/chat/completions?api-version={apiVersion}`, `model` dropped from the
+#   body.
+#
+# Both routes send the `api-key` header and set `stream: true` on the request before serializing it.
+# `stream_options.include_usage` is added only where the target surface accepts it: always on v1 GA, and on the
+# legacy surface only from api-version `2024-08-01-preview` onward. Older legacy api-versions reject the whole
+# request with "Unrecognized request argument supplied: stream_options", so there the stream is opened without
+# it and simply carries no usage chunk.
+#
+# + v1StreamClient - The raw HTTP client for the v1 GA surface (`()` on the legacy path)
+# + legacyChatClient - The raw HTTP client for the legacy route (`()` on the v1 path)
+# + useV1 - `true` to target the v1 GA surface; `false` for the legacy route
+# + apiKey - The Azure OpenAI API key (sent as the `api-key` header on both routes)
+# + deploymentId - The Azure deployment ID
+# + apiVersion - The date-based `api-version` used on the legacy route
+# + v1ApiVersion - The `preview`/`v1` api-version to forward on the v1 route, if any
+# + request - The prepared Chat Completions request
+# + return - The opened Server-Sent Event stream, or an `ai:Error` on failure
+isolated function postChatCompletionStream(http:Client? v1StreamClient, http:Client? legacyChatClient,
+        boolean useV1, string apiKey, string deploymentId, string? apiVersion, string? v1ApiVersion,
+        chat:ChatCompletionsBody request) returns stream<http:SseEvent, error?>|ai:Error {
+    request.'stream = true;
+    if useV1 || supportsStreamOptions(apiVersion ?: "") {
+        request.stream_options = {include_usage: true};
+    }
+
+    http:Response|error response;
+    if useV1 {
+        http:Client? streamClient = v1StreamClient;
+        if streamClient is () {
+            return error ai:Error("Chat Completions (v1) streaming client is not initialized");
+        }
+        map<json> body = check buildV1ChatBody(request);
+        string path = "/chat/completions";
+        if v1ApiVersion is string {
+            path += "?api-version=" + v1ApiVersion;
+        }
+        response = streamClient->post(path, body, {"api-key": apiKey});
+    } else {
+        http:Client? streamClient = legacyChatClient;
+        if streamClient is () {
+            return error ai:Error("Chat Completions (legacy) streaming client is not initialized");
+        }
+        map<json> body = check buildLegacyChatBody(request);
+        string path = string `/deployments/${deploymentId}/chat/completions?api-version=${apiVersion ?: ""}`;
+        response = streamClient->post(path, body, {"api-key": apiKey});
+    }
+    if response is error {
+        return error ai:LlmConnectionError("Error while connecting to the model for streaming", response);
+    }
+    // A non-2xx status still binds to `http:Response` rather than erroring (the target type here is the raw
+    // response, not a typed payload), so it must be checked explicitly before treating the body as an SSE
+    // stream; otherwise `getSseEventStream()` fails on Azure's JSON error body with an opaque parse error that
+    // hides what Azure actually rejected.
+    if response.statusCode != http:STATUS_OK {
+        return error ai:Error(buildStreamingRejectionMessage(deploymentId, response));
+    }
+    stream<http:SseEvent, error?>|error sseStream = response.getSseEventStream();
+    if sseStream is error {
+        return error ai:Error("Failed to open the SSE stream from the model", sseStream);
+    }
+    return sseStream;
+}
+
+# Builds a clear error message for a streaming Chat Completions request that Azure rejected (non-2xx response).
+#
+# Surfaces Azure's own error message rather than guessing the cause up front, and appends a hint pointing at the
+# Responses API when the rejection looks like the known case where a deployment refuses to stream over Chat
+# Completions while the Responses API surface streams it successfully (GPT-5-series reasoning deployments).
+#
+# The hint triggers on Azure's own message mentioning streaming, rather than on the deployment id alone:
+# deployment names are caller-chosen, so `gpt-5` is present in neither every affected deployment (`prod-reasoning`)
+# nor only affected ones. The deployment-id check is kept as a secondary trigger for the case where Azure returns
+# a rejection whose text does not name the streaming parameter.
+#
+# + deploymentId - The Azure deployment id that was streamed against
+# + response - The non-2xx HTTP response returned by the streaming request
+# + return - The composed error message
+isolated function buildStreamingRejectionMessage(string deploymentId, http:Response response) returns string {
+    string azureMessage = extractAzureErrorMessage(response);
+    string message = string `Azure OpenAI rejected the streaming request for deployment '${deploymentId}' ` +
+        string `(HTTP ${response.statusCode}): ${azureMessage}`;
+    if azureMessage.toLowerAscii().includes("stream") || deploymentId.toLowerAscii().includes("gpt-5") {
+        message += ". This deployment may not support streaming via the Chat Completions API — set " +
+            "apiType = RESPONSES to stream from it instead.";
+    }
+    return message;
+}
+
+# Extracts a human-readable error message from a non-2xx Azure OpenAI response: the standard
+# `{"error": {"message": ...}}` shape first, then the raw text body, then the bare status code.
+#
+# The body is read exactly once, as text, and parsed from that string. Reading it as JSON first and falling back
+# to `getTextPayload` does not work: the first accessor consumes the entity's data source, so once a non-JSON
+# body has failed to parse the text fallback errors too and Azure's actual message is lost.
+#
+# + response - The non-2xx HTTP response to extract the message from
+# + return - The best-effort error message
+isolated function extractAzureErrorMessage(http:Response response) returns string {
+    string|error text = response.getTextPayload();
+    if text is error {
+        return string `HTTP ${response.statusCode}`;
+    }
+    string body = text.trim();
+    if body.length() == 0 {
+        return string `HTTP ${response.statusCode}`;
+    }
+    json|error payload = body.fromJsonString();
+    if payload is json {
+        json|error message = payload.'error.message;
+        if message is string {
+            return message;
+        }
+    }
+    return body;
 }
 
 # Generates a structured value from the LLM via the Chat Completions API (the `generate` method's chat path).
