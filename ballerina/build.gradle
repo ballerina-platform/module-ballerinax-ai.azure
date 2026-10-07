@@ -111,6 +111,7 @@ clean {
 }
 
 build.dependsOn ':ai.azure-native:build'
+test.dependsOn ':ai.azure-native:build'
 build.dependsOn ":ai.azure-compiler-plugin:build"
 build.dependsOn "generatePomFileForMavenPublication"
 publishToMavenLocal.dependsOn build
