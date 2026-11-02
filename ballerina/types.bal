@@ -117,3 +117,60 @@ public enum ReasoningEffort {
     # The largest amount of reasoning; supported by `gpt-5.1-codex-max` and later.
     XHIGH = "xhigh"
 }
+
+// ===== Anthropic (Claude) types =====
+
+# The default `anthropic-version` header value: the version documented for Claude models in Microsoft Foundry.
+public const DEFAULT_ANTHROPIC_VERSION = "2023-06-01";
+
+// `Effort`, `ThinkingType` and `ThinkingDisplay` are string unions rather than enums (unlike `ApiType` and
+// `ReasoningEffort` above) because enum members are module-level constants: an `Effort` enum could not declare
+// `LOW`/`MEDIUM`/`HIGH`/`XHIGH`, which `ReasoningEffort` already owns. A closed string union keeps the values
+// type-checked without prefixed member names.
+
+# The effort level for Claude models, forwarded as `output_config.effort` on the Anthropic Messages API.
+#
+# Effort controls how much thinking and overall token spend the model uses. The service default is `"high"`.
+# Support is per model: Claude Sonnet 4.5 and Claude Haiku 4.5 reject the parameter, Claude Opus 4.5 accepts
+# only `"low"`, `"medium"` and `"high"`, and `"xhigh"` arrived with Claude Opus 4.7. Passing an unsupported
+# value for the target deployment results in an error from the service.
+public type Effort "low"|"medium"|"high"|"xhigh"|"max";
+
+# The thinking mode requested from a Claude model.
+#
+# - `"adaptive"` - the model decides whether and how much to think per request. Available on Claude Opus 4.6 /
+#   Sonnet 4.6 and later, and the only *on* mode from Claude Opus 4.7 onwards.
+# - `"enabled"` - manual extended thinking against a fixed `budgetTokens` budget. The only thinking mode on
+#   Claude Sonnet 4.5, Claude Opus 4.5 and Claude Haiku 4.5, deprecated on the 4.6 models, and **rejected** by
+#   Claude Opus 4.7 and later.
+# - `"disabled"` - no thinking. Accepted by most models, but Claude Opus 5 accepts it only at an effort of
+#   `"high"` or lower.
+#
+# The Messages API rejects a `temperature` while thinking is on, so the two cannot be configured together.
+public type ThinkingType "adaptive"|"enabled"|"disabled";
+
+# Controls whether the model's reasoning is returned in the response.
+#
+# This module does not surface thinking content on `ai:ChatAssistantMessage`, so the value only affects the
+# tokens spent on rendering a summary.
+public type ThinkingDisplay "summarized"|"omitted";
+
+# Thinking configuration for a Claude model, forwarded as the `thinking` field of the Anthropic Messages API
+# request.
+#
+# Leave the provider's `thinking` argument as `()` to omit the field entirely and let the deployed model apply
+# its own default: no thinking on Claude Opus 4.8 and earlier, adaptive thinking on Claude Opus 5 and Claude
+# Sonnet 5, and always-on thinking on Claude Fable 5.
+@display {label: "Thinking Configuration"}
+public type Thinking record {|
+    # The thinking mode. Defaults to `"adaptive"`.
+    @display {label: "Thinking Type"}
+    ThinkingType 'type = "adaptive";
+    # The thinking token budget, sent as `budget_tokens`. **Required** when `type` is `"enabled"` and invalid
+    # otherwise. Must be at least 1024 and less than the provider's `maxTokens`.
+    @display {label: "Budget Tokens"}
+    int budgetTokens?;
+    # Whether a summary of the model's reasoning is returned.
+    @display {label: "Thinking Display"}
+    ThinkingDisplay display?;
+|};
