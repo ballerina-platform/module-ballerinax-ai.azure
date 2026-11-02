@@ -9,6 +9,12 @@ org = "ballerinax"
 repository = "https://github.com/ballerina-platform/module-ballerinax-ai.azure"
 version = "1.5.1"
 
+[[dependency]]
+org = "ballerina"
+name = "ai"
+version = "1.13.0"
+repository = "local"
+
 [platform.java21]
 graalvmCompatible = true
 
