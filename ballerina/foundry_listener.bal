@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/http;
+import ballerina/os;
 
 # A listener that runs a `FoundryInvocationService` as a Microsoft Foundry hosted agent.
 #
@@ -24,6 +25,7 @@ import ballerina/http;
 # headers and classifies errors, so the attached service contains only agent logic.
 public isolated class FoundryListener {
     private final http:Listener httpListener;
+    private final readonly & FoundryDispatcherConfig dispatcherConfig;
 
     # Initializes the listener.
     #
@@ -31,33 +33,66 @@ public isolated class FoundryListener {
     # given, the `PORT` environment variable is used, then port 8088
     # + config - The listener configuration. The `http:ListenerConfiguration` fields apply only when
     # the listener creates its own `http:Listener`
-    # + return - An error if the listener cannot be created
+    # + return - An error if the port is not valid or the listener cannot be created
     public isolated function init(int|http:Listener? listenOn = (), *FoundryListenerConfiguration config)
             returns error? {
         if listenOn is http:Listener {
             self.httpListener = listenOn;
         } else {
-            self.httpListener = check new (listenOn ?: DEFAULT_PORT);
+            int port = check resolveFoundryPort(listenOn, os:getEnv(ENV_PORT));
+            self.httpListener = check new (port, toHttpListenerConfiguration(config));
         }
+        self.dispatcherConfig = toDispatcherConfig(config);
     }
 
     # Attaches a Foundry service to the listener.
     #
     # + foundryService - The service to attach
-    # + name - The base path of the service. Leave it empty so the routes are served at the root,
-    # as Foundry expects
-    # + return - An error if the service cannot be attached
+    # + name - The base path of the service. Only the root base path (`()`, `"/"` or empty) is
+    # accepted, because Foundry probes `/readiness` and calls `/invocations` at the root
+    # + return - An error if the base path is not the root, the service is already attached to this
+    # listener, or the service cannot be attached
     public isolated function attach(FoundryInvocationService foundryService, string[]|string? name = ())
             returns error? {
-        return error("FoundryListener is not implemented yet");
+        if !isRootBasePath(name) {
+            return error(string `A FoundryInvocationService must be attached at the root base path, `
+                + string `because Foundry calls /readiness and /invocations there: got '${basePathToString(name)}'`);
+        }
+        // Attach an internal dispatcher in place of the user's service. It serves the platform routes,
+        // sets the platform headers and forwards protocol requests to the user's service. The link is
+        // made before the dispatcher is attached, so it never serves a request without it.
+        FoundryDispatcherService dispatcher = new (self.dispatcherConfig);
+        setFoundryService(dispatcher, foundryService);
+        if !registerFoundryDispatcher(foundryService, self, dispatcher) {
+            unlinkFoundryService(dispatcher);
+            return error("The FoundryInvocationService is already attached to this FoundryListener");
+        }
+        error? result = self.httpListener.attach(dispatcher, name);
+        if result is error {
+            _ = removeFoundryDispatcher(foundryService, self);
+            unlinkFoundryService(dispatcher);
+            return result;
+        }
     }
 
-    # Detaches a Foundry service from the listener.
+    # Detaches a Foundry service from the listener. Detaching a service that is not attached to this
+    # listener does nothing.
     #
     # + foundryService - The service to detach
     # + return - An error if the service cannot be detached
     public isolated function detach(FoundryInvocationService foundryService) returns error? {
-        return error("FoundryListener is not implemented yet");
+        // Only the dispatcher this listener attached for the service is detached, so the same service
+        // attached to another FoundryListener keeps working.
+        FoundryDispatcherService? dispatcher = removeFoundryDispatcher(foundryService, self);
+        if dispatcher is () {
+            return;
+        }
+        error? result = self.httpListener.detach(dispatcher);
+        if result is error {
+            _ = registerFoundryDispatcher(foundryService, self, dispatcher);
+            return result;
+        }
+        unlinkFoundryService(dispatcher);
     }
 
     # Starts the listener.
@@ -81,4 +116,97 @@ public isolated class FoundryListener {
     public isolated function immediateStop() returns error? {
         check self.httpListener.immediateStop();
     }
+
+    # Returns the underlying `http:Listener`.
+    #
+    # + return - The `http:Listener` the dispatcher is attached to
+    isolated function getHttpListener() returns http:Listener => self.httpListener;
 }
+
+# Returns whether an attach name is the root base path: `()`, a string made only of `/`, or path
+# segments that are all empty.
+#
+# + name - The attach name
+# + return - `true` for the root base path
+isolated function isRootBasePath(string[]|string? name) returns boolean {
+    if name is () {
+        return true;
+    }
+    if name is string {
+        return re `/*`.isFullMatch(name.trim());
+    }
+    foreach string segment in name {
+        if !re `/*`.isFullMatch(segment.trim()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+isolated function basePathToString(string[]|string? name) returns string {
+    if name is string[] {
+        return "/" + string:'join("/", ...name);
+    }
+    return name ?: "";
+}
+
+# Resolves the listening port: the explicit port, else the `PORT` environment variable, else 8088
+# (`core/_config.py:220-236`).
+#
+# + explicitPort - The port passed to the listener, if any
+# + portEnv - The raw value of the `PORT` environment variable; `""` when it is not set
+# + return - The port, or an error when the chosen value is not an integer in 1-65535
+isolated function resolveFoundryPort(int? explicitPort, string portEnv) returns int|error {
+    if explicitPort is int {
+        return validatePort(explicitPort, "port");
+    }
+    string value = portEnv.trim();
+    if value == "" {
+        return DEFAULT_PORT;
+    }
+    int|error port = int:fromString(value);
+    if port is error {
+        return error(string `Invalid value for ${ENV_PORT}: '${portEnv}' (expected an integer)`);
+    }
+    return validatePort(port, ENV_PORT);
+}
+
+isolated function validatePort(int port, string sourceName) returns int|error {
+    if port < 1 || port > 65535 {
+        return error(string `Invalid value for ${sourceName}: ${port} (expected 1-65535)`);
+    }
+    return port;
+}
+
+# Builds the configuration of the `http:Listener` the Foundry listener creates. The Foundry
+# `gracefulStopTimeout` replaces the http default.
+#
+# + config - The Foundry listener configuration
+# + return - The `http:Listener` configuration
+isolated function toHttpListenerConfiguration(FoundryListenerConfiguration config)
+        returns http:ListenerConfiguration => {
+    host: config.host,
+    http1Settings: config.http1Settings,
+    secureSocket: config.secureSocket,
+    httpVersion: config.httpVersion,
+    timeout: config.timeout,
+    server: config.server,
+    requestLimits: config.requestLimits,
+    gracefulStopTimeout: config.gracefulStopTimeout,
+    socketConfig: config.socketConfig,
+    http2InitialWindowSize: config.http2InitialWindowSize,
+    http2MaxActiveStreams: config.http2MaxActiveStreams,
+    minIdleTimeInStaleState: config.minIdleTimeInStaleState,
+    timeBetweenStaleEviction: config.timeBetweenStaleEviction
+};
+
+# Extracts what the dispatcher needs from the Foundry listener configuration, as read-only data.
+#
+# + config - The Foundry listener configuration
+# + return - The dispatcher configuration
+isolated function toDispatcherConfig(FoundryListenerConfiguration config) returns readonly & FoundryDispatcherConfig
+    => {
+    agent: config.agent.cloneReadOnly(),
+    sseKeepAliveInterval: config.sseKeepAliveInterval,
+    openApiSpec: config.openApiSpec.cloneReadOnly()
+};

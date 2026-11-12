@@ -142,8 +142,14 @@ The compiler plugin enforces this table (Milestone 6).
 
 - `FoundryListener.attach` creates an internal `FoundryDispatcherService` (an `isolated service
   class`) and attaches *it* to the `http:Listener`. The user's service and the dispatcher are
-  linked as native data in both directions (same as `ai:Listener`), so the dispatcher holds no
-  Ballerina state and requests run concurrently.
+  linked as native data (same as `ai:Listener`), so the dispatcher holds no Ballerina state and
+  requests run concurrently. The link is made before the dispatcher is attached, so it never
+  serves a request without it. The user's service records one dispatcher per `FoundryListener`,
+  so the same service can be attached to several listeners and `detach` on one listener removes
+  only that listener's dispatcher. Attaching a service twice to the same listener is an error.
+- `attach` accepts only the root base path (`()`, `"/"` or empty): Foundry calls `/readiness` and
+  `/invocations` at the root (`core/_base.py:482`), and only a dispatcher at the root also gets the
+  platform headers onto unmatched paths.
 - **Decision: a new native adaptor in `ai.azure`** (`NativeFoundryServiceAdaptor`), not reuse of
   the `ballerina/ai` one. The `ai` adaptor is internal Java (not exported) and hard-codes the
   `chat`/`decision` resources and a fixed payload type. The Foundry adaptor must instead:
@@ -157,7 +163,9 @@ The compiler plugin enforces this table (Milestone 6).
   It keeps the observability handling from the `ai` adaptor, so traces name the user's service
   as the entrypoint.
 - The dispatcher declares a catch-all `default [string... path]` resource, so unknown paths
-  (`404`) and wrong methods on known paths (`405`) also get the platform headers.
+  (`404`) and wrong methods on known paths (`405`) also get the platform headers. Their body is the
+  error envelope (codes `not_found` and `method_not_allowed`), not Starlette's plain-text
+  `Not Found` / `Method Not Allowed`; see the deviations below.
 - **SSE keep-alive is native.** Ballerina cannot wait on a stream's `next()` with a timeout, so a
   native wrapper runs the user stream's `next()` on its own thread and waits on a future with the
   keep-alive interval as timeout. A timeout emits a comment event and keeps the pending future,
@@ -171,8 +179,8 @@ The compiler plugin enforces this table (Milestone 6).
 | Listen on all interfaces, HTTP/1.1, no TLS | `http:Listener` default host | deploy-hosted-agent docs |
 | Accept an existing `http:Listener` | `init(http:Listener)` | `ai:Listener`, `websocket:Listener`, `mcp:Listener` |
 | `GET /readiness` → `200 {"status":"healthy"}`, `application/json`, no model calls | dispatcher `get readiness` | `core/_base.py:46`, `482`, `1200-1210` |
-| `x-platform-server` on every response, format `<sdk>/<version> (<runtime>/<version>)` | dispatcher + catch-all resource; value `ballerinax-ai.azure/<pkg version> (ballerina/<runtime version>)` | `core/_base.py:180-202`, `662-693`; `core/_server_version.py:11-33` |
-| `x-request-id` on every response: incoming header, else a generated UUID | dispatcher | `core/_request_id.py:51-120` (**not in the prompt; included**) |
+| `x-platform-server` on every response, format `<sdk>/<version> (<runtime>/<version>)` | dispatcher + catch-all resource; value `ballerinax-ai.azure/<pkg version> (ballerina/<runtime version>)`. The runtime version is the distribution the package was built with: the program JVM carries no Ballerina version under `bal run` or `java -jar` (the `ballerina.version` system property is used when set) | `core/_base.py:180-202`, `662-693`; `core/_server_version.py:11-33` |
+| `x-request-id` on every response: the trace ID of a valid incoming `traceparent` (32 chars, not all zeros), else the incoming `x-request-id`, else a generated UUID (32 hex digits) | dispatcher | `core/_request_id.py:51-120`, `core/_middleware.py:97-142` (**not in the prompt; included**). The reference asks OpenTelemetry for an active span first; none is active where it resolves the ID, so it parses `traceparent` |
 | Graceful stop with timeout; `AGENTSERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS`, default 30 | `gracefulStopTimeout` | `core/_config.py:239-266`, `core/_base.py:404-429` |
 | Routes: `POST /invocations`, `GET /invocations/{id}`, `POST /invocations/{id}/cancel`, `GET /invocations/docs/openapi.json` | dispatcher resources | `inv/_invocation.py:277-316` |
 | Session ID on invoke: `agent_session_id` query → `FOUNDRY_AGENT_SESSION_ID` → UUID; invalid → UUID | `resolveSessionId` | `inv/_invocation.py:547-551`, `135-152` |
@@ -217,7 +225,7 @@ public API.
 | Reference behaviour | Included? |
 |---|---|
 | `x-request-id` response header on every response (`core/_request_id.py`) | **Yes** |
-| `405` for a known path with the wrong method (Starlette routing) | **Yes**, via the catch-all resource |
+| `405` for a known path with the wrong method (Starlette routing) | **Yes**, via the catch-all resource, with the `Allow` header and `HEAD` served on `GET` routes. The `404`/`405` body is the error envelope instead of Starlette's plain text, so all listener errors have one shape |
 | Custom readiness handler (`core/_base.py:1208`) | No: the prompt fixes the allowed resources; can be added later |
 | `/invocations/docs/asyncapi.json` and `.yaml` (`inv/_invocation.py:284-295`) | No: these describe the WebSocket transport, which is out of scope |
 | OpenTelemetry baggage entries `azure.ai.agentserver.invocation_id` / `session_id` (`inv/_invocation.py:564-575`) | No: Ballerina observability is configured separately; the IDs are on `FoundryContext` |
