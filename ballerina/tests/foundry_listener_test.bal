@@ -68,10 +68,6 @@ final regexp:RegExp GENERATED_REQUEST_ID_PATTERN = re `[0-9a-f]{32}`;
 
 // ===== Readiness and the catch-all route =====
 
-// Client settings for tests that leave a listener with no attached service: such a listener answers with
-// its own 404, and a kept-alive connection to it would hold up a graceful stop until its timeout.
-final http:ClientConfiguration noKeepAlive = {http1Settings: {keepAlive: http:KEEPALIVE_NEVER}};
-
 @test:Config {groups: ["foundry"]}
 function testFoundryReadiness() returns error? {
     http:Response response = check foundryClient->get("/readiness");
@@ -333,9 +329,14 @@ function testFoundryOnSharedHttpListener() returns error? {
 // A plain `http:Listener` defaults to `gracefulStopTimeout = 0`, which cuts in-flight requests, so
 // these tests also show that the listener applies the Foundry timeout to the `http:Listener` it
 // creates, and uses a given `http:Listener` as it is.
+//
+// The http transport's graceful stop always waits the whole timeout, even with no request in flight
+// (it closes the server channel and then sleeps `gracefulStopTimeout`), so every gracefully stopped
+// listener in these tests uses a short timeout: 5 seconds where a 2-second request must finish, and 0
+// where nothing is in flight. The 30-second default would add 30 seconds per stop.
 @test:Config {groups: ["foundry"]}
 function testFoundryGracefulStopLetsInFlightRequestFinish() returns error? {
-    FoundryListener foundryListener = check new (FOUNDRY_GRACEFUL_PORT, gracefulStopTimeout = 10);
+    FoundryListener foundryListener = check new (FOUNDRY_GRACEFUL_PORT, gracefulStopTimeout = 5);
     check foundryListener.attach(new TestFoundryService());
     check foundryListener.getHttpListener().attach(plainService, "/plain");
     check foundryListener.'start();
@@ -363,7 +364,7 @@ function testFoundryGracefulStopTimeoutIsApplied() returns error? {
 
 @test:Config {groups: ["foundry"]}
 function testFoundryGracefulStopOnSharedHttpListener() returns error? {
-    http:Listener httpListener = check new (FOUNDRY_GRACEFUL_SHARED_PORT, gracefulStopTimeout = 10);
+    http:Listener httpListener = check new (FOUNDRY_GRACEFUL_SHARED_PORT, gracefulStopTimeout = 5);
     // The Foundry timeout doesn't replace the configuration of a given http:Listener.
     FoundryListener foundryListener = check new (httpListener, gracefulStopTimeout = 0);
     check foundryListener.attach(new TestFoundryService());
@@ -381,14 +382,13 @@ function testFoundryGracefulStopOnSharedHttpListener() returns error? {
 
 @test:Config {groups: ["foundry"]}
 function testFoundryDetach() returns error? {
-    FoundryListener foundryListener = check new (FOUNDRY_DETACH_PORT);
+    // Nothing is in flight when the listener stops, so no graceful-stop timeout is needed.
+    FoundryListener foundryListener = check new (FOUNDRY_DETACH_PORT, gracefulStopTimeout = 0);
     TestFoundryService foundryService = new;
     check foundryListener.attach(foundryService);
     check foundryListener.'start();
     do {
-        // No keep-alive: after detach the listener answers with its own 404, and a kept-alive connection
-        // would make the graceful stop below wait out its whole timeout.
-        http:Client 'client = check new (string `http://localhost:${FOUNDRY_DETACH_PORT}`, noKeepAlive);
+        http:Client 'client = check new (string `http://localhost:${FOUNDRY_DETACH_PORT}`);
         http:Response response = check 'client->get("/readiness");
         test:assertEquals(response.statusCode, 200);
         test:assertTrue(getFoundryDispatcher(foundryService, foundryListener) is FoundryDispatcherService);
@@ -474,8 +474,9 @@ function testFoundryAttachTwiceIsRejected() returns error? {
 
 @test:Config {groups: ["foundry"]}
 function testFoundryServiceOnTwoListeners() returns error? {
-    FoundryListener first = check new (FOUNDRY_TWO_FIRST_PORT);
-    FoundryListener second = check new (FOUNDRY_TWO_SECOND_PORT);
+    // Nothing is in flight when the listeners stop, so no graceful-stop timeout is needed.
+    FoundryListener first = check new (FOUNDRY_TWO_FIRST_PORT, gracefulStopTimeout = 0);
+    FoundryListener second = check new (FOUNDRY_TWO_SECOND_PORT, gracefulStopTimeout = 0);
     TestFoundryService foundryService = new;
     check first.attach(foundryService);
     check second.attach(foundryService);
@@ -489,8 +490,8 @@ function testFoundryServiceOnTwoListeners() returns error? {
         }
         test:assertFalse(firstDispatcher === secondDispatcher);
 
-        http:Client firstClient = check new (string `http://localhost:${FOUNDRY_TWO_FIRST_PORT}`, noKeepAlive);
-        http:Client secondClient = check new (string `http://localhost:${FOUNDRY_TWO_SECOND_PORT}`, noKeepAlive);
+        http:Client firstClient = check new (string `http://localhost:${FOUNDRY_TWO_FIRST_PORT}`);
+        http:Client secondClient = check new (string `http://localhost:${FOUNDRY_TWO_SECOND_PORT}`);
 
         // Detaching from the first listener leaves the second one fully working.
         check first.detach(foundryService);

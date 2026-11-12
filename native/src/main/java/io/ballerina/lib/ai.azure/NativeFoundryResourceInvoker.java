@@ -27,6 +27,8 @@ import io.ballerina.runtime.api.types.RecordType;
 import io.ballerina.runtime.api.types.ResourceMethodType;
 import io.ballerina.runtime.api.types.ServiceType;
 import io.ballerina.runtime.api.types.Type;
+import io.ballerina.runtime.api.types.TypeTags;
+import io.ballerina.runtime.api.types.UnionType;
 import io.ballerina.runtime.api.utils.StringUtils;
 import io.ballerina.runtime.api.utils.TypeUtils;
 import io.ballerina.runtime.api.values.BArray;
@@ -38,6 +40,8 @@ import io.ballerina.runtime.observability.ObservabilityConstants;
 import io.ballerina.runtime.observability.ObserveUtils;
 import io.ballerina.runtime.observability.ObserverContext;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Locale;
@@ -55,6 +59,12 @@ import java.util.concurrent.ExecutionException;
  * resource's parameter list; every other parameter must be either the {@code @http:Payload} parameter or the
  * {@code azure:FoundryContext} parameter, each at most once and in any order.
  *
+ * <p>An error the resource returns or panics with, and a resource declared with a parameter the dispatcher can't
+ * supply, are the agent's errors and come back as they are (the dispatcher classifies them as {@code upstream}).
+ * A failure of the listener itself, such as a dispatcher with no linked service, comes back as an
+ * {@code azure:FoundryPlatformError} (classified as {@code platform}), whose message is fixed text because it is
+ * sent in the {@code x-platform-error-detail} response header.
+ *
  * <p>The observability handling is the one {@code ballerina/ai} uses for its chat dispatcher, so traces name the
  * user's service, not the internal dispatcher, as the entrypoint.
  *
@@ -71,6 +81,9 @@ public final class NativeFoundryResourceInvoker {
     private static final String PAYLOAD_ANNOTATION_SUFFIX = ":Payload";
     private static final String FOUNDRY_CONTEXT_TYPE = "FoundryContext";
     private static final String RESOURCE_SIGNATURE_TYPE = "FoundryResourceSignature";
+    // A failure of the listener itself, which the dispatcher classifies as a platform error. Its message ends up in
+    // the x-platform-error-detail response header, so it is always fixed text: never request content.
+    private static final String PLATFORM_ERROR_TYPE = "FoundryPlatformError";
     private static final String PAYLOAD_TYPE_FIELD = "payloadType";
     private static final String HTTP_HEADERS_TYPE = "Headers";
     private static final BString HTTP_HEADERS_REQUEST_FIELD = StringUtils.fromString("request");
@@ -90,12 +103,13 @@ public final class NativeFoundryResourceInvoker {
      * @param accessor   the resource accessor, for example {@code post}
      * @param path       the path shape, with {@code ^} for a path parameter segment
      * @return a {@code FoundryResourceSignature}; {@code null} (Ballerina nil) when the service declares no such
-     *         resource; or an error when the resource declares a parameter the dispatcher can't supply
+     *         resource; an error when the resource declares a parameter the dispatcher can't supply; or a
+     *         {@code FoundryPlatformError} when no service is linked with the dispatcher
      */
     public static Object getFoundryResourceSignature(Environment env, BObject dispatcher, BString accessor,
                                                      BArray path) {
         try {
-            BObject userService = userService(dispatcher);
+            BObject userService = userService(dispatcher, env.getCurrentModule());
             ResourceMethodType resource = findResource(userService, accessor.getValue(), path.getStringArray());
             if (resource == null) {
                 return null;
@@ -125,21 +139,24 @@ public final class NativeFoundryResourceInvoker {
      * @param payload    the payload, already converted to the declared payload type; ignored when the resource
      *                   declares no payload parameter
      * @param context    the {@code azure:FoundryContext} of the request
-     * @return the resource's return value, or an error when the resource can't be called or panics
+     * @return the resource's return value; the error the resource returns or panics with; an error when the
+     *         resource declares a parameter the dispatcher can't supply; or a {@code FoundryPlatformError} when the
+     *         listener fails to call it
      */
     public static Object invokeFoundryResource(Environment env, BObject dispatcher, BString accessor, BArray path,
                                                BArray pathArgs, Object payload, BMap<BString, Object> context) {
+        Module module = env.getCurrentModule();
         Object[] args;
         BObject userService;
         ResourceMethodType resource;
         try {
-            userService = userService(dispatcher);
+            userService = userService(dispatcher, module);
             resource = findResource(userService, accessor.getValue(), path.getStringArray());
             if (resource == null) {
-                return ErrorCreator.createError(StringUtils.fromString("the FoundryInvocationService declares no '"
-                        + describe(accessor.getValue(), path.getStringArray()) + "' resource"));
+                return platformError(module, "the FoundryInvocationService declares no '"
+                        + describe(accessor.getValue(), path.getStringArray()) + "' resource");
             }
-            args = ResourceParams.of(resource, env.getCurrentModule()).arguments(pathArgs, payload, context);
+            args = ResourceParams.of(resource, module).arguments(pathArgs, payload, context, module);
         } catch (BError error) {
             return error;
         }
@@ -152,7 +169,8 @@ public final class NativeFoundryResourceInvoker {
         try {
             return env.yieldAndRun(() -> concurrentSafe
                     ? callOnCurrentStrand(env.getRuntime(), userService, methodName, args)
-                    : callOnNonIsolatedStrand(env.getRuntime(), userService, methodName, args, userContext));
+                    : callOnNonIsolatedStrand(env.getRuntime(), module, userService, methodName, args,
+                            userContext));
         } finally {
             if (userContext != null) {
                 restoreDispatcherContext(env, dispatcherContext, userContext);
@@ -183,8 +201,8 @@ public final class NativeFoundryResourceInvoker {
     // the global lock while it runs and releases it while it waits. The user context travels in the strand's
     // properties, as http passes its observer context. The dispatcher's thread waits for the result; it is inside
     // yieldAndRun, so its own strand is not running meanwhile.
-    private static Object callOnNonIsolatedStrand(Runtime runtime, BObject userService, String methodName,
-                                                  Object[] args, ObserverContext userContext) {
+    private static Object callOnNonIsolatedStrand(Runtime runtime, Module module, BObject userService,
+                                                  String methodName, Object[] args, ObserverContext userContext) {
         Map<String, Object> properties = new HashMap<>();
         if (userContext != null) {
             properties.put(ObservabilityConstants.KEY_OBSERVER_CONTEXT, userContext);
@@ -198,19 +216,21 @@ public final class NativeFoundryResourceInvoker {
                 // A panic in the user's resource; see callOnCurrentStrand.
                 result.complete(error);
             } catch (Throwable throwable) {
-                // Nothing would report a failure on this thread, so it is returned as an error too.
-                result.complete(ErrorCreator.createError(throwable));
+                // The runtime turns a failure of the user's code into a BError, so anything else is a failure of the
+                // call itself. Nothing would report it on this thread, so it is returned as a platform error. Only
+                // its class is named: its message could quote anything.
+                result.complete(platformError(module, "calling the FoundryInvocationService resource failed with "
+                        + throwable.getClass().getName()));
             }
         });
         try {
             return result.get();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return ErrorCreator.createError(StringUtils.fromString(
-                    "interrupted while waiting for the FoundryInvocationService resource"));
+            return platformError(module, "interrupted while waiting for the FoundryInvocationService resource");
         } catch (ExecutionException e) {
             // Not reached: the future is only ever completed normally.
-            return ErrorCreator.createError(e.getCause());
+            return platformError(module, "waiting for the FoundryInvocationService resource failed");
         }
     }
 
@@ -238,13 +258,65 @@ public final class NativeFoundryResourceInvoker {
         return StringUtils.fromString(TypeUtils.getType(error).getName());
     }
 
-    private static BObject userService(BObject dispatcher) {
+    /**
+     * Percent-decodes one raw path segment once, as Python's {@code urllib.parse.unquote} (which the reference's
+     * ASGI server applies to the path) does: each run of {@code %XX} escapes is decoded as UTF-8, with invalid
+     * byte sequences replaced by U+FFFD; {@code +} stays {@code +}; a {@code %} that doesn't start a two-hex-digit
+     * escape is kept as it is.
+     *
+     * @param segment the raw path segment
+     * @return the decoded segment
+     */
+    public static BString decodePathSegment(BString segment) {
+        String value = segment.getValue();
+        if (value.indexOf('%') < 0) {
+            return segment;
+        }
+        StringBuilder decoded = new StringBuilder(value.length());
+        ByteArrayOutputStream escaped = new ByteArrayOutputStream();
+        int length = value.length();
+        int i = 0;
+        while (i < length) {
+            char c = value.charAt(i);
+            if (c == '%' && i + 2 < length && isHexDigit(value.charAt(i + 1)) && isHexDigit(value.charAt(i + 2))) {
+                int high = Character.digit(value.charAt(i + 1), 16);
+                int low = Character.digit(value.charAt(i + 2), 16);
+                escaped.write((high << 4) | low);
+                i += 3;
+                continue;
+            }
+            flushEscaped(escaped, decoded);
+            decoded.append(c);
+            i++;
+        }
+        flushEscaped(escaped, decoded);
+        return StringUtils.fromString(decoded.toString());
+    }
+
+    private static void flushEscaped(ByteArrayOutputStream escaped, StringBuilder decoded) {
+        if (escaped.size() > 0) {
+            decoded.append(new String(escaped.toByteArray(), StandardCharsets.UTF_8));
+            escaped.reset();
+        }
+    }
+
+    private static boolean isHexDigit(char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    }
+
+    // The user's service linked with the dispatcher. A missing link is a failure of the listener (for example a
+    // request that raced a detach), not of the user's code.
+    private static BObject userService(BObject dispatcher, Module module) {
         Object userService = NativeFoundryServiceAdaptor.getFoundryService(dispatcher);
         if (userService instanceof BObject service) {
             return service;
         }
-        throw ErrorCreator.createError(StringUtils.fromString(
-                "no FoundryInvocationService is attached to the Foundry dispatcher"));
+        throw platformError(module, "no FoundryInvocationService is linked with the Foundry dispatcher");
+    }
+
+    // Creates a FoundryPlatformError. The message must be fixed text, since it is sent in a response header.
+    static BError platformError(Module module, String message) {
+        return ErrorCreator.createError(module, PLATFORM_ERROR_TYPE, StringUtils.fromString(message), null, null);
     }
 
     static ResourceMethodType findResource(BObject userService, String accessor, String[] path) {
@@ -290,6 +362,13 @@ public final class NativeFoundryResourceInvoker {
             }
             Parameter[] parameters = resource.getParameters();
             ResourceParams params = new ResourceParams(parameters.length, pathParamCount);
+            for (int i = 0; i < pathParamCount && i < parameters.length; i++) {
+                // The dispatcher passes every path value as a string, so a path parameter must accept any string.
+                if (!acceptsAnyString(parameters[i].type)) {
+                    throw unsupported(resourceName, "the type of its path parameter '" + parameters[i].name
+                            + "' is not 'string'");
+                }
+            }
             for (int i = pathParamCount; i < parameters.length; i++) {
                 Parameter parameter = parameters[i];
                 if (hasPayloadAnnotation(resource, parameter.name)) {
@@ -315,10 +394,11 @@ public final class NativeFoundryResourceInvoker {
             return params;
         }
 
-        Object[] arguments(BArray pathArgs, Object payload, BMap<BString, Object> context) {
+        Object[] arguments(BArray pathArgs, Object payload, BMap<BString, Object> context, Module module) {
             if (pathArgs.size() != pathParamCount) {
-                throw ErrorCreator.createError(StringUtils.fromString("expected " + pathParamCount
-                        + " path argument(s), got " + pathArgs.size()));
+                // The dispatcher passes the path arguments, so a mismatch is a failure of the listener.
+                throw platformError(module, "expected " + pathParamCount + " path argument(s), got "
+                        + pathArgs.size());
             }
             Object[] args = new Object[parameterCount];
             for (int i = 0; i < pathParamCount; i++) {
@@ -345,6 +425,29 @@ public final class NativeFoundryResourceInvoker {
                 }
             }
             return false;
+        }
+
+        // Whether every string value belongs to the type: `string`, a supertype such as `anydata`, or a union with
+        // such a member. A finite type or `string:Char` does not qualify.
+        private static boolean acceptsAnyString(Type type) {
+            Type implied = TypeUtils.getImpliedType(type);
+            switch (implied.getTag()) {
+                case TypeTags.STRING_TAG:
+                case TypeTags.ANYDATA_TAG:
+                case TypeTags.ANY_TAG:
+                case TypeTags.JSON_TAG:
+                case TypeTags.READONLY_TAG:
+                    return true;
+                case TypeTags.UNION_TAG:
+                    for (Type member : ((UnionType) implied).getMemberTypes()) {
+                        if (acceptsAnyString(member)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                default:
+                    return false;
+            }
         }
 
         private static boolean isFoundryContext(Type type, Module foundryModule) {

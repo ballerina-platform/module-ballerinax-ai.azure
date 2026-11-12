@@ -26,8 +26,6 @@ const HEADER_PLATFORM_SERVER = "x-platform-server";
 const HEADER_REQUEST_ID = "x-request-id";
 const HEADER_TRACEPARENT = "traceparent";
 const ZERO_TRACE_ID = "00000000000000000000000000000000";
-// The `http:RequestContext` key under which the request interceptor stores the resolved request ID.
-const REQUEST_ID_CONTEXT_KEY = "ballerinax.ai.azure.foundry.requestId";
 // The `http:RequestContext` keys under which a protocol resource stores the resolved invocation and
 // session IDs, so the response interceptor sets them on every response to the request, including the
 // error responses.
@@ -39,10 +37,18 @@ const HEADER_ERROR_SOURCE = "x-platform-error-source";
 const HEADER_ERROR_DETAIL = "x-platform-error-detail";
 const ERROR_SOURCE_USER = "user";
 const ERROR_SOURCE_PLATFORM = "platform";
+const ERROR_SOURCE_UPSTREAM = "upstream";
 const ERROR_DETAIL_INVALID_ORIGINAL_SUBJECT = "invalid_original_subject";
 const INVALID_ORIGINAL_SUBJECT_MESSAGE = "Invalid original-subject platform header.";
 
 const READINESS_PATH = "readiness";
+// The path segments of the get, cancel and OpenAPI routes (`inv/_invocation.py:277-316`).
+const CANCEL_PATH = "cancel";
+const DOCS_PATH = "docs";
+const OPENAPI_PATH = "openapi.json";
+// A path parameter segment in a resource path shape, as `ResourceMethodType.getResourcePath()` reports it.
+const PATH_PARAM_SEGMENT = "^";
+const NO_OPENAPI_SPEC_MESSAGE = "No OpenAPI spec registered";
 // The readiness body, byte-for-byte as the reference sends it (`core/_base.py:46`).
 const READINESS_BODY = "{\"status\":\"healthy\"}";
 const APPLICATION_JSON = "application/json";
@@ -77,6 +83,44 @@ type FoundryDispatcherConfig record {|
     map<json>? openApiSpec;
 |};
 
+# One of the optional routes that address an existing invocation by its ID.
+#
+# + accessor - The accessor of the user's resource
+# + path - The path shape of the user's resource, with `^` for the `invocationId` path parameter
+# + operation - The reference's name for the operation, used in the `404` message and in logs
+# + resourceName - The user's resource as it is declared, for messages
+# + acceptsPayload - Whether the user's resource may declare an `@http:Payload` parameter
+type FoundryInvocationRoute record {|
+    string accessor;
+    string[] path;
+    string operation;
+    string resourceName;
+    boolean acceptsPayload;
+|};
+
+# `GET /invocations/{invocationId}`, served by the user's optional
+# `get invocations/[string invocationId]` resource. A GET request carries no body, so the resource
+# can't declare an `@http:Payload` parameter.
+final readonly & FoundryInvocationRoute GET_INVOCATION_ROUTE = {
+    accessor: http:HTTP_GET,
+    path: [INVOCATIONS_PATH, PATH_PARAM_SEGMENT],
+    operation: "get_invocation",
+    resourceName: "get invocations/[string invocationId]",
+    acceptsPayload: false
+};
+
+# `POST /invocations/{invocationId}/cancel`, served by the user's optional
+# `post invocations/[string invocationId]/cancel` resource. The reference hands the handler the raw
+# request, so a cancel request may carry a body (for example a reason); the resource may declare an
+# optional `@http:Payload` parameter, bound as for `post invocations`.
+final readonly & FoundryInvocationRoute CANCEL_INVOCATION_ROUTE = {
+    accessor: http:HTTP_POST,
+    path: [INVOCATIONS_PATH, PATH_PARAM_SEGMENT, CANCEL_PATH],
+    operation: "cancel_invocation",
+    resourceName: "post invocations/[string invocationId]/cancel",
+    acceptsPayload: true
+};
+
 # Internal service that `FoundryListener` attaches to the `http:Listener` in place of the user's
 # `FoundryInvocationService`.
 #
@@ -103,11 +147,14 @@ isolated service class FoundryDispatcherService {
 
     # Returns the interceptor pipeline of the dispatcher.
     #
-    # + return - The request-ID interceptor, the response-header interceptor and the error interceptor.
-    # The error interceptor comes last so it sees errors first; the response it builds then passes
-    # through the response-header interceptor
+    # There is deliberately no request interceptor: http 2.18 never answers a request whose path a
+    # request interceptor's `[string... path]` can't decode (for example `/x/%zz`), which leaves the
+    # connection hanging. The response interceptor resolves the request ID instead.
+    #
+    # + return - The response-header interceptor and the error interceptor. The error interceptor comes
+    # last so it sees errors first; the response it builds then passes through the response-header
+    # interceptor
     public isolated function createInterceptors() returns http:Interceptor[] => [
-        new FoundryRequestIdInterceptor(),
         new FoundryResponseHeaderInterceptor(),
         new FoundryResponseErrorInterceptor()
     ];
@@ -121,18 +168,17 @@ isolated service class FoundryDispatcherService {
     # calls the user's `post invocations` resource (`_create_invocation_endpoint`,
     # `inv/_invocation.py:541-617`).
     #
-    # The user's return value is returned as it is, so the http module turns it into the response
-    # exactly as it does for a `post` resource of its own (for example `201` for `anydata` and `202`
-    # for `()`). The response interceptor adds `x-agent-invocation-id` and `x-agent-session-id` to that
-    # response and to every error response.
+    # The user's result is mapped by `toFoundryResourceResponse`. The response interceptor adds
+    # `x-agent-invocation-id` and `x-agent-session-id` to every response, including the error responses.
     #
     # + ctx - The request context
     # + request - The request
     # + return - The user's result; a `400` when the original-subject header or the payload is
-    # invalid; a `501` when the service declares no `post invocations` resource; or an error, which
-    # the error interceptor turns into a response
+    # invalid; a `501` when the service declares no `post invocations` resource; or a classified error
+    # response
     isolated resource function post invocations(http:RequestContext ctx, http:Request request)
-            returns FoundryResourceResponse|error {
+            returns FoundryResourceResponse {
+        ctx.set(PROTOCOL_CONTEXT_KEY, true);
         string invocationId = resolveInvokeInvocationId(firstHeaderValue(request, HEADER_INVOCATION_ID));
         string sessionId = resolveInvokeSessionId(lastQueryParamValue(request, QUERY_AGENT_SESSION_ID),
                 self.config.agent.sessionId);
@@ -146,13 +192,18 @@ isolated service class FoundryDispatcherService {
             log:printWarn("Request rejected: invalid original-subject platform header.", invocationId = invocationId);
             return invalidOriginalSubjectResponse();
         }
-        FoundryResourceSignature? signature = check getFoundryResourceSignature(self, http:HTTP_POST,
+        FoundryResourceSignature|error? signature = getFoundryResourceSignature(self, http:HTTP_POST,
                 [INVOCATIONS_PATH]);
+        if signature is error {
+            return foundryErrorResponse(signature, request);
+        }
         if signature is () {
             log:printError("The FoundryInvocationService declares no 'post invocations' resource",
                     invocationId = invocationId);
-            return errorResponse(http:STATUS_NOT_IMPLEMENTED, ERROR_CODE_NOT_IMPLEMENTED,
+            http:Response response = errorResponse(http:STATUS_NOT_IMPLEMENTED, ERROR_CODE_NOT_IMPLEMENTED,
                     "The FoundryInvocationService declares no 'post invocations' resource.");
+            setErrorSource(response, ERROR_SOURCE_UPSTREAM);
+            return response;
         }
         anydata payload = ();
         typedesc<anydata>? payloadType = signature.payloadType;
@@ -165,28 +216,70 @@ isolated service class FoundryDispatcherService {
         }
         any|error result = invokeFoundryResource(self, http:HTTP_POST, [INVOCATIONS_PATH], [], payload,
                 foundryContext);
-        return toFoundryResourceResponse(result, invocationId);
+        return toFoundryResourceResponse(result, request, invocationId, true);
+    }
+
+    # `GET /invocations/{invocationId}`: calls the user's optional `get invocations/[string invocationId]`
+    # resource (`_get_invocation_endpoint`, `inv/_invocation.py:695-696`).
+    #
+    # The literal route `GET /invocations/docs/openapi.json` takes precedence, as in the reference's
+    # route order; `GET /invocations/docs` is a get-invocation request for the ID `docs`.
+    #
+    # + invocationId - The decoded `invocationId` path segment
+    # + ctx - The request context
+    # + request - The request
+    # + return - The user's result, a `404` when the service declares no such resource, or a classified
+    # error response
+    isolated resource function get invocations/[string invocationId](http:RequestContext ctx,
+            http:Request request) returns FoundryResourceResponse =>
+        self.dispatchInvocationRoute(GET_INVOCATION_ROUTE, invocationId, ctx, request);
+
+    # `POST /invocations/{invocationId}/cancel`: calls the user's optional
+    # `post invocations/[string invocationId]/cancel` resource (`_cancel_invocation_endpoint`,
+    # `inv/_invocation.py:698-699`).
+    #
+    # + invocationId - The decoded `invocationId` path segment
+    # + ctx - The request context
+    # + request - The request
+    # + return - The user's result, a `404` when the service declares no such resource, or a classified
+    # error response
+    isolated resource function post invocations/[string invocationId]/cancel(http:RequestContext ctx,
+            http:Request request) returns FoundryResourceResponse =>
+        self.dispatchInvocationRoute(CANCEL_INVOCATION_ROUTE, invocationId, ctx, request);
+
+    # `GET /invocations/docs/openapi.json`: the OpenAPI document of the agent
+    # (`_get_openapi_spec_endpoint`, `inv/_invocation.py:446-455`).
+    #
+    # + ctx - The request context
+    # + return - `200` with the configured `openApiSpec` as JSON, or a `404` when none is configured
+    isolated resource function get invocations/docs/'openapi\.json(http:RequestContext ctx) returns http:Response {
+        ctx.set(PROTOCOL_CONTEXT_KEY, true);
+        return self.openApiResponse();
     }
 
     # Catch-all for every path and method that no other resource serves.
     #
     # The status codes and the `Allow` header match the reference (Starlette routing). The body is the
     # Foundry error envelope rather than Starlette's plain-text `Not Found` / `Method Not Allowed`, so
-    # every error the listener produces has the same shape (a deliberate deviation).
+    # every error the listener produces has the same shape (a deliberate deviation). These responses are
+    # not classified (no `x-platform-error-source`), as in the reference, where Starlette produces them.
     #
     # + path - The request path segments
+    # + ctx - The request context
     # + request - The request
     # + return - `405` for a known path with a method it doesn't allow, otherwise `404`, both with
-    # the error envelope
-    isolated resource function default [string... path](http:Request request) returns http:Response {
+    # the error envelope; for `HEAD` on a `GET` route, the `GET` response
+    isolated resource function default [string... path](http:RequestContext ctx, http:Request request)
+            returns FoundryResourceResponse {
         string method = request.method.toUpperAscii();
         string[]? allowed = allowedMethods(path);
         if allowed is () {
             return errorResponse(http:STATUS_NOT_FOUND, ERROR_CODE_NOT_FOUND, "Not Found");
         }
         if method == http:HTTP_HEAD && allowed.indexOf(http:HTTP_HEAD) !is () {
-            // HEAD on a GET route, as Starlette serves it: the GET response without a body.
-            return headResponse(path);
+            // HEAD on a GET route, as Starlette serves it: the GET response, whose body the HTTP
+            // transport doesn't send for a HEAD request.
+            return self.headResponse(path, ctx, request);
         }
         http:Response response = errorResponse(http:STATUS_METHOD_NOT_ALLOWED, ERROR_CODE_METHOD_NOT_ALLOWED,
                 "Method Not Allowed");
@@ -198,33 +291,149 @@ isolated service class FoundryDispatcherService {
     #
     # + return - The read-only dispatcher configuration
     isolated function getConfig() returns readonly & FoundryDispatcherConfig => self.config;
+
+    # Serves a get or cancel request, as the reference's `_traced_invocation_endpoint`
+    # (`inv/_invocation.py:637-693`) does:
+    # - the invocation ID is the path value, percent-decoded once as the reference's ASGI server
+    # decodes it (see `invocationIdFromRawPath`), kept even when it is not a valid ID;
+    # - the session ID is the `agent_session_id` query parameter, else the configured session ID, else
+    # `""`, and an invalid value becomes `""`;
+    # - every response carries `x-agent-invocation-id` (and no `x-agent-session-id`), including the
+    # error responses. When the path value can't be sent as a header value (control characters,
+    # CR or LF, non-ASCII text, leading or trailing whitespace), the header is left out instead, so a
+    # value can't inject a header; the resource still gets the value unchanged.
+    #
+    # + route - The route
+    # + decodedValue - The `invocationId` path segment as `http` decoded it, used only when the raw
+    # request path can't be read
+    # + ctx - The request context
+    # + request - The request
+    # + return - The user's result; a `400` when the ID can't be decoded; a `404` when the service
+    # declares no such resource; or a classified error response
+    isolated function dispatchInvocationRoute(FoundryInvocationRoute route, string decodedValue,
+            http:RequestContext ctx, http:Request request) returns FoundryResourceResponse {
+        ctx.set(PROTOCOL_CONTEXT_KEY, true);
+        string pathValue = invocationIdFromRawPath(request, decodedValue);
+        if hasMalformedPercentEncoding(pathValue) {
+            // `http` decodes a path parameter twice, so it rejects a `GET` or cancel request whose ID
+            // still holds a malformed escape after one decoding (for example `%25zz`) before the
+            // resource runs (see `httpModuleErrorResponse`). Only `HEAD`, served by the catch-all
+            // resource, gets here with such an ID; it is answered as the `GET` request is.
+            return invalidPathResponse();
+        }
+        string invocationId = resolveGetOrCancelInvocationId(pathValue);
+        // The ID is logged only when it is header-safe, so a value can't forge a log line either.
+        string? loggedId = ();
+        if isHeaderSafe(invocationId) {
+            ctx.set(INVOCATION_ID_CONTEXT_KEY, invocationId);
+            loggedId = invocationId;
+        } else {
+            log:printWarn(string `The ${route.operation} invocation ID can't be sent as a header value, so the `
+                + "response carries no x-agent-invocation-id header");
+        }
+        string sessionId = resolveGetOrCancelSessionId(lastQueryParamValue(request, QUERY_AGENT_SESSION_ID),
+                self.config.agent.sessionId);
+
+        FoundryContext|FoundryOriginalSubjectError foundryContext =
+            foundryContextFromRequest(request, sessionId, invocationId, self.config.agent);
+        if foundryContext is FoundryOriginalSubjectError {
+            log:printWarn("Request rejected: invalid original-subject platform header.", invocationId = loggedId);
+            return invalidOriginalSubjectResponse();
+        }
+        FoundryResourceSignature|error? signature = getFoundryResourceSignature(self, route.accessor, route.path);
+        if signature is error {
+            return foundryErrorResponse(signature, request);
+        }
+        if signature is () {
+            // `_dispatch_get_invocation` / `_dispatch_cancel_invocation`, `inv/_invocation.py:406-424`.
+            http:Response response = errorResponse(http:STATUS_NOT_FOUND, ERROR_CODE_NOT_FOUND,
+                    route.operation + " not implemented");
+            setErrorSource(response, ERROR_SOURCE_UPSTREAM);
+            return response;
+        }
+        anydata payload = ();
+        typedesc<anydata>? payloadType = signature.payloadType;
+        if payloadType is typedesc<anydata> {
+            if !route.acceptsPayload {
+                return foundryErrorResponse(error(string `the '${route.resourceName}' resource of the `
+                    + "FoundryInvocationService is not supported: it declares an '@http:Payload' parameter, "
+                    + "but the request has no body to bind"), request);
+            }
+            anydata|FoundryPayloadBindingError bound = bindFoundryPayload(request, payloadType);
+            if bound is FoundryPayloadBindingError {
+                return payloadBindingErrorResponse(bound);
+            }
+            payload = bound;
+        }
+        any|error result = invokeFoundryResource(self, route.accessor, route.path, [pathValue], payload,
+                foundryContext);
+        return toFoundryResourceResponse(result, request, loggedId, false);
+    }
+
+    # Builds the `GET /invocations/docs/openapi.json` response.
+    #
+    # + return - `200` with the configured `openApiSpec` as JSON, or a `404` classified as `upstream`
+    # when none is configured
+    isolated function openApiResponse() returns http:Response {
+        map<json>? spec = self.config.openApiSpec;
+        if spec is () {
+            http:Response response = errorResponse(http:STATUS_NOT_FOUND, ERROR_CODE_NOT_FOUND,
+                    NO_OPENAPI_SPEC_MESSAGE);
+            setErrorSource(response, ERROR_SOURCE_UPSTREAM);
+            return response;
+        }
+        http:Response response = new;
+        response.setJsonPayload(spec);
+        return response;
+    }
+
+    # Builds the response to a `HEAD` request on a `GET` route: the `GET` response. As Starlette does,
+    # `HEAD /invocations/{invocationId}` calls the user's get resource.
+    #
+    # + path - The request path segments
+    # + ctx - The request context
+    # + request - The request
+    # + return - The `GET` response
+    isolated function headResponse(string[] path, http:RequestContext ctx, http:Request request)
+            returns FoundryResourceResponse {
+        if path == [READINESS_PATH] {
+            http:Response response = new;
+            response.setHeader("content-type", APPLICATION_JSON);
+            return response;
+        }
+        if path == [INVOCATIONS_PATH, DOCS_PATH, OPENAPI_PATH] {
+            ctx.set(PROTOCOL_CONTEXT_KEY, true);
+            return self.openApiResponse();
+        }
+        return self.dispatchInvocationRoute(GET_INVOCATION_ROUTE, path[1], ctx, request);
+    }
 }
 
-# Returns the methods a known platform path allows, or `()` for an unknown path. Protocol routes are
-# added here with their resources, so a wrong method on them gets `405` instead of `404`.
+# Returns the methods a known platform path allows, or `()` for an unknown path, as Starlette's routes
+# do (`core/_base.py:482`, `inv/_invocation.py:277-316`). A route with `GET` also allows `HEAD`.
 #
-# + path - The request path segments
+# + path - The decoded request path segments
 # + return - The allowed methods, or `()` when the path is unknown
 isolated function allowedMethods(string[] path) returns string[]? {
     if path == [READINESS_PATH] {
         return [http:HTTP_GET, http:HTTP_HEAD];
     }
-    if path == [INVOCATIONS_PATH] {
+    if path.length() == 0 || path.length() > 3 || path[0] != INVOCATIONS_PATH {
+        return ();
+    }
+    if path.length() == 1 {
+        return [http:HTTP_POST];
+    }
+    if path.length() == 2 {
+        return [http:HTTP_GET, http:HTTP_HEAD];
+    }
+    if path[1] == DOCS_PATH && path[2] == OPENAPI_PATH {
+        return [http:HTTP_GET, http:HTTP_HEAD];
+    }
+    if path[2] == CANCEL_PATH {
         return [http:HTTP_POST];
     }
     return ();
-}
-
-# Builds the response to a `HEAD` request on a known `GET` path.
-#
-# + path - The request path segments
-# + return - The `GET` response's status and headers, without a body
-isolated function headResponse(string[] path) returns http:Response {
-    http:Response response = new;
-    if path == [READINESS_PATH] {
-        response.setHeader("content-type", APPLICATION_JSON);
-    }
-    return response;
 }
 
 # Builds the readiness response.
@@ -280,17 +489,25 @@ isolated function payloadBindingErrorResponse(FoundryPayloadBindingError err) re
 # instead of the `201 Created` the http module uses for a `post` resource; the media type is
 # inferred as http does (JSON, `text/plain` for `string`, `application/xml` for `xml`,
 # `application/octet-stream` for `byte[]`). `()` stays `202 Accepted` with no body. An
-# `http:Response`, a status-code record and an error are returned as they are, so the http module
-# and the error interceptor map them as they would for the user's own resource. A stream is handed
-# to `streamToFoundryResponse`.
+# `http:Response` and a status-code record are returned as they are, so the http module maps them as
+# it would for the user's own resource; the response interceptor then marks a 4xx/5xx one as
+# `upstream` unless the user set `x-platform-error-source`. An error (returned, or a panic) is
+# classified by `foundryErrorResponse`. A stream is handed to `streamToFoundryResponse`.
+#
+# Any other value (an object that is not an `http:Response`, or a stream from the get or cancel
+# resource, for example) is outside the resource contract the compiler plugin enforces: the agent's
+# code is at fault, as for an unsupported parameter, so it is a `500` classified as `upstream`, as the
+# reference classifies a handler that returns something other than a `Response`.
 #
 # + result - The user's return value
-# + invocationId - The invocation ID, for logging
+# + request - The request, for logging
+# + invocationId - The invocation ID, for logging; `()` when it is not safe to log
+# + streamsAllowed - Whether the resource contract allows a stream (only `post invocations` does)
 # + return - The dispatcher resource's return value
-isolated function toFoundryResourceResponse(any|error result, string invocationId)
-        returns FoundryResourceResponse|error {
+isolated function toFoundryResourceResponse(any|error result, http:Request request, string? invocationId,
+        boolean streamsAllowed) returns FoundryResourceResponse {
     if result is error {
-        return result;
+        return foundryErrorResponse(result, request);
     }
     if result is anydata && result !is () {
         http:Ok ok = {body: result};
@@ -300,28 +517,66 @@ isolated function toFoundryResourceResponse(any|error result, string invocationI
         return result;
     }
     if result is stream<any|error, error?> {
-        return streamToFoundryResponse(result, invocationId);
+        if streamsAllowed {
+            return streamToFoundryResponse(result, invocationId);
+        }
+        closeUnsentStream(result);
     }
     log:printError("The FoundryInvocationService resource returned a value the listener can't send",
             invocationId = invocationId);
-    return errorResponse(http:STATUS_INTERNAL_SERVER_ERROR, ERROR_CODE_INTERNAL_ERROR, "Internal server error");
+    http:Response response = errorResponse(http:STATUS_INTERNAL_SERVER_ERROR, ERROR_CODE_INTERNAL_ERROR,
+            "Internal server error");
+    setErrorSource(response, ERROR_SOURCE_UPSTREAM);
+    return response;
 }
 
-# Sends a stream returned by the user's resource. Server-sent event streaming is not supported yet,
-# so the request fails with a `500` and a log entry that says why.
+# Sends a stream returned by the user's resource. This version of the listener can't send streaming
+# (server-sent event) responses, which the resource contract allows, so the listener is the part that
+# fails: the request gets a `500` classified as a `platform` error, with a detail that says why.
 #
 # + result - The stream the user's resource returned
-# + invocationId - The invocation ID, for logging
+# + invocationId - The invocation ID, for logging; `()` when it is not safe to log
 # + return - The `500` error response
-isolated function streamToFoundryResponse(stream<any|error, error?> result, string invocationId)
+isolated function streamToFoundryResponse(stream<any|error, error?> result, string? invocationId)
         returns http:Response {
-    log:printError("The FoundryInvocationService resource returned a stream, but this version of the Foundry "
-            + "listener can't send streaming (server-sent event) responses", invocationId = invocationId);
+    FoundryPlatformError err = error FoundryPlatformError(
+        "this version of the Foundry listener can't send streaming (server-sent event) responses");
+    log:printError("The FoundryInvocationService resource returned a stream the listener can't send", err,
+            invocationId = invocationId);
+    closeUnsentStream(result);
+    return platformErrorResponse(err);
+}
+
+# Closes a stream the listener doesn't send, so the user's stream can release what it holds.
+#
+# + result - The stream
+isolated function closeUnsentStream(stream<any|error, error?> result) {
     error? closed = result.close();
     if closed is error {
         log:printDebug("Closing the unsent stream failed", closed);
     }
-    return errorResponse(http:STATUS_INTERNAL_SERVER_ERROR, ERROR_CODE_INTERNAL_ERROR, "Internal server error");
+}
+
+# Returns the invocation ID of a get or cancel request: the second segment of the raw request path,
+# percent-decoded once, as the reference's ASGI server decodes the path (`+` stays `+`). `http`
+# decodes a path parameter twice (so `abc%2541` would become `abcA`) and turns `+` into a space, and
+# the catch-all resource that serves `HEAD` decodes it once; reading the raw path gives `GET`, `HEAD`
+# and cancel the same value as the reference.
+#
+# + request - The request
+# + decodedValue - The path segment as `http` decoded it, returned when the raw path doesn't have the
+# expected shape
+# + return - The invocation ID
+isolated function invocationIdFromRawPath(http:Request request, string decodedValue) returns string {
+    string path = pathOf(request.rawPath);
+    if !path.startsWith("/") {
+        return decodedValue;
+    }
+    string[] segments = re `/`.split(path.substring(1));
+    if segments.length() < 2 || segments[0] != INVOCATIONS_PATH || segments[1] == "" {
+        return decodedValue;
+    }
+    return decodePathSegment(segments[1]);
 }
 
 # Resolves the `x-request-id` of a request, in the reference's order (`core/_request_id.py:100-120`):
@@ -376,13 +631,6 @@ isolated function setPlatformHeaders(http:Response response, string requestId) {
     response.setHeader(HEADER_REQUEST_ID, requestId);
 }
 
-# Reads the request ID that `FoundryRequestIdInterceptor` stored in the request context.
-#
-# + ctx - The request context
-# + return - The stored request ID, or `()` when none is stored
-isolated function requestIdFromContext(http:RequestContext ctx) returns string? =>
-    stringFromContext(ctx, REQUEST_ID_CONTEXT_KEY);
-
 # Reads a string stored in the request context.
 #
 # + ctx - The request context
@@ -413,44 +661,49 @@ isolated function setInvocationHeaders(http:Response response, http:RequestConte
     }
 }
 
-# Resolves the request ID once per request and stores it in the request context, so the response
-# interceptors set the same value on the response.
-isolated service class FoundryRequestIdInterceptor {
-    *http:RequestInterceptor;
-
-    isolated resource function default [string... path](http:RequestContext ctx, http:Request request)
-            returns http:NextService|error? {
-        ctx.set(REQUEST_ID_CONTEXT_KEY, resolveRequestId(request));
-        return ctx.next();
-    }
-}
-
 # Sets `x-platform-server` and `x-request-id` on every response of the dispatcher, and the invocation
 # and session IDs on every response to a protocol request, including the responses built by
 # `FoundryResponseErrorInterceptor`.
+#
+# It also classifies a 4xx/5xx response to a protocol request that carries no
+# `x-platform-error-source` yet as `upstream`: the listener sets the header on every error response
+# it builds, so such a response is one the agent's resource returned itself (an `http:Response` or a
+# status-code record). A header the agent set is kept.
 isolated service class FoundryResponseHeaderInterceptor {
     *http:ResponseInterceptor;
 
-    isolated remote function interceptResponse(http:RequestContext ctx, http:Response response)
-            returns http:NextService|error? {
-        setPlatformHeaders(response, requestIdFromContext(ctx) ?: newRequestId());
+    isolated remote function interceptResponse(http:RequestContext ctx, http:Request request,
+            http:Response response) returns http:NextService|error? {
+        // Resolved here, once per request: this interceptor runs exactly once for every response.
+        setPlatformHeaders(response, resolveRequestId(request));
         setInvocationHeaders(response, ctx);
+        if response.statusCode >= 400 && ctx.hasKey(PROTOCOL_CONTEXT_KEY) && !response.hasHeader(HEADER_ERROR_SOURCE) {
+            response.setHeader(HEADER_ERROR_SOURCE, ERROR_SOURCE_UPSTREAM);
+        }
         return ctx.next();
     }
 }
 
-# Turns an error that reaches the http module (for example a payload-binding failure, or an error a
-# resource returns) into a response with the Foundry error envelope, instead of leaving it to the
-# listener's default error interceptor, whose response would skip the dispatcher's response
-# interceptor and so lack the platform headers.
+# Turns an error that reaches the http module into a response with the Foundry error envelope, instead
+# of leaving it to the listener's default error interceptor, whose response would skip the
+# dispatcher's response interceptor and so lack the platform headers.
+#
+# The dispatcher's protocol resources classify every error of the user's resource themselves, so an
+# error that reaches this interceptor for a protocol request comes from the http module (for example a
+# path segment it can't decode): a 4xx is classified as `user`, a 5xx as `platform`. Errors of other
+# requests are not classified, as in the reference; a path the http module can't decode there is
+# answered `404`, as the catch-all resource answers an unknown path (no other route has a path
+# parameter, so such a path can't name one).
 isolated service class FoundryResponseErrorInterceptor {
     *http:ResponseErrorInterceptor;
 
     isolated remote function interceptResponseError(error err, http:RequestContext ctx, http:Request request)
             returns http:Response {
-        if requestIdFromContext(ctx) is () {
-            // The error happened before the request interceptor ran.
-            ctx.set(REQUEST_ID_CONTEXT_KEY, resolveRequestId(request));
+        if isProtocolRequest(ctx, request) {
+            return httpModuleErrorResponse(err, request);
+        }
+        if err is http:PathParameterBindingError || hasMalformedPercentEncoding(pathOf(request.rawPath)) {
+            return errorResponse(http:STATUS_NOT_FOUND, ERROR_CODE_NOT_FOUND, "Not Found");
         }
         return errorToResponse(err, request);
     }

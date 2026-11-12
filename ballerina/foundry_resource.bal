@@ -155,14 +155,25 @@ isolated function errorTypeName(error err) returns string = @java:Method {
     'class: "io.ballerina.lib.ai.azure.NativeFoundryResourceInvoker"
 } external;
 
+# Percent-decodes one raw path segment once, as the reference's ASGI server does (Python's
+# `urllib.parse.unquote`): `+` stays `+`, a malformed escape is kept as it is, and invalid UTF-8 is
+# replaced with U+FFFD.
+#
+# + segment - The raw path segment
+# + return - The decoded segment
+isolated function decodePathSegment(string segment) returns string = @java:Method {
+    'class: "io.ballerina.lib.ai.azure.NativeFoundryResourceInvoker"
+} external;
+
 # Describes the resource of the user's service with the given accessor and path shape.
 #
 # + dispatcher - The dispatcher linked with the user's service
 # + accessor - The resource accessor, for example `post`
 # + path - The resource path shape, with `^` for a path parameter segment
-# + return - The resource signature; `()` when the service declares no such resource; or an error
+# + return - The resource signature; `()` when the service declares no such resource; an error
 # when the resource declares a parameter that is neither the `@http:Payload` parameter nor an
-# `azure:FoundryContext` parameter
+# `azure:FoundryContext` parameter; or a `FoundryPlatformError` when no service is linked with the
+# dispatcher
 isolated function getFoundryResourceSignature(FoundryDispatcherService dispatcher, string accessor,
         string[] path) returns FoundryResourceSignature|error? = @java:Method {
     'class: "io.ballerina.lib.ai.azure.NativeFoundryResourceInvoker"
@@ -178,8 +189,9 @@ isolated function getFoundryResourceSignature(FoundryDispatcherService dispatche
 # + pathArgs - The values of the path parameters, in order
 # + payload - The bound payload; ignored when the resource declares no payload parameter
 # + context - The platform context of the request
-# + return - The resource's return value, or an error when the resource returns or panics with one, or
-# can't be called
+# + return - The resource's return value; the error the resource returns or panics with; an error when
+# the resource declares a parameter the dispatcher can't supply; or a `FoundryPlatformError` when the
+# listener fails to call it
 isolated function invokeFoundryResource(FoundryDispatcherService dispatcher, string accessor, string[] path,
         string[] pathArgs, anydata payload, FoundryContext context) returns any|error = @java:Method {
     'class: "io.ballerina.lib.ai.azure.NativeFoundryResourceInvoker"

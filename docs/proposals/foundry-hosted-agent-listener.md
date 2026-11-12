@@ -134,9 +134,14 @@ Naming notes:
 |---|---|---|
 | `post invocations` (required) | optional `@http:Payload` of `json`, `string`, `byte[]`, `xml` or any `anydata` subtype (records, arrays, maps); optional `azure:FoundryContext` | `anydata`, `http:Response`, any `http:StatusCodeResponse`, `stream<http:SseEvent, error?>`, `stream<anydata, error?>`, `error`, `()`, or a union of these |
 | `get invocations/[string invocationId]` (optional) | path parameter; optional `azure:FoundryContext` | same, without streams |
-| `post invocations/[string invocationId]/cancel` (optional) | path parameter; optional `azure:FoundryContext` | same, without streams |
+| `post invocations/[string invocationId]/cancel` (optional) | path parameter; optional `@http:Payload` (bound as for `post invocations`); optional `azure:FoundryContext` | same, without streams |
 
-The compiler plugin enforces this table (Milestone 6).
+The compiler plugin enforces this table (Milestone 6). Until then, a resource that breaks it is
+answered at run time with a `500` classified as `upstream` (the agent author's mistake): an
+unsupported parameter (including a path parameter whose type doesn't accept every `string`), an
+`@http:Payload` parameter on the get resource (a GET request has no body to bind), or a return value
+outside the table (including a stream from the get or cancel resource). The cancel resource may declare a payload because the
+reference hands its handler the raw request, so a cancel request can carry a body such as a reason.
 
 ## Dispatcher design
 
@@ -194,7 +199,48 @@ The compiler plugin enforces this table (Milestone 6).
 - The dispatcher declares a catch-all `default [string... path]` resource, so unknown paths
   (`404`) and wrong methods on known paths (`405`) also get the platform headers. Their body is the
   error envelope (codes `not_found` and `method_not_allowed`), not Starlette's plain-text
-  `Not Found` / `Method Not Allowed`; see the deviations below.
+  `Not Found` / `Method Not Allowed`; see the deviations below. `HEAD` on a `GET` route is served
+  there with the `GET` response, as Starlette does (so `HEAD /invocations/{id}` calls the get
+  resource); the HTTP transport doesn't send the body of a `HEAD` response.
+- The dispatcher's interceptors are a response interceptor (platform headers, ID headers, `upstream`
+  for a user's 4xx/5xx) and an error interceptor. There is deliberately no request interceptor:
+  http 2.18 never answers a request whose path a request interceptor's `[string... path]` can't
+  decode (for example `/x/%zz`), so the connection would hang. The response interceptor takes the
+  `http:Request` and resolves `x-request-id` itself.
+- **Error classification.** Every protocol resource (`/invocations` and the routes under it) turns
+  the errors it meets into responses itself, so it can classify them (`foundry_errors.bal`):
+  - an error the user's resource returns or panics with is `upstream`: a `500` with the generic
+    `Internal server error` message, or the status of an `httpscerr` status-code error (or an
+    `http:ApplicationResponseError`), with no detail header. The headers an `httpscerr` error carries
+    are the agent's choice and are kept, like those of an `http:Response` (so an
+    `x-platform-error-source` the agent set wins). The headers of an `http:ApplicationResponseError`
+    come from another service's response (possibly another Foundry agent's), so the ones the listener
+    owns (`x-platform-error-source`, `x-platform-error-detail`, `x-agent-invocation-id`,
+    `x-agent-session-id`) are dropped and the others (for example `retry-after`) kept;
+  - a failure of the listener itself is an internal `FoundryPlatformError`, the counterpart of the
+    reference's `PLATFORM_ERROR_TAG`: a `500` with `platform` and `x-platform-error-detail` =
+    `"<type>: <message>"`, truncated as the reference does (`detail[:2048 - len(suffix)] + suffix`,
+    suffix `...[truncated]`). Its message is always text the listener writes, never request content
+    or a secret. The response interceptor marks a protocol request with a request-context flag and
+    adds `upstream` to any 4xx/5xx response of such a request that has no `x-platform-error-source`
+    yet, which is exactly the responses the user's resource returned itself;
+  - the error interceptor only sees errors the http module raises for a protocol request before the
+    resource runs (for example a path segment it can't decode): a 4xx is `user`, a 5xx `platform`
+    with a detail that names only the error type.
+
+  Which existing failure paths are which:
+
+  | Failure | Source | Why |
+  |---|---|---|
+  | The user's resource returns an error or panics | `upstream` | The agent's code (`_classify_error` without the platform tag) |
+  | The user's resource returns an `httpscerr` error, a 4xx/5xx `http:Response` or status-code record | `upstream` (unless the user set the header) | The agent chose the status |
+  | `post invocations` missing (`501`), get/cancel missing (`404`), no OpenAPI document (`404`) | `upstream` | As the reference |
+  | A resource with an unsupported parameter (including a non-`string` path parameter), a payload parameter on get, or a return value outside the contract (including a stream from get or cancel) | `upstream` | The agent author's mistake; the reference also classifies a handler returning a non-`Response` as `upstream` (the `AttributeError` it raises is untagged) |
+  | A stream from `post invocations` the listener can't send yet (until SSE support lands) | `platform` | The contract allows it there; the listener is the part that fails |
+  | No service linked with the dispatcher (a request racing a detach), a resource that disappears between lookup and call, a path-argument count mismatch, an interrupted or failed call of the resource outside the user's code | `platform` | Listener failures; the message names only fixed text (for an unexpected Java exception, only its class) |
+  | A body that can't be bound, a 4xx the http module raises for a protocol request (a protocol path that can't be decoded is answered `400`) | `user` | The caller's request |
+  | An invalid `x-ms-original-subject` | `platform`, detail `invalid_original_subject` | As the reference |
+  | Readiness, the catch-all `404`/`405` (including `405` on `/invocations`) | none | Starlette produces these in the reference |
 - **SSE keep-alive is native.** Ballerina cannot wait on a stream's `next()` with a timeout, so a
   native wrapper runs the user stream's `next()` on its own thread and waits on a future with the
   keep-alive interval as timeout. A timeout emits a comment event and keeps the pending future,
@@ -213,9 +259,10 @@ The compiler plugin enforces this table (Milestone 6).
 | Graceful stop with timeout; `AGENTSERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS`, default 30 | `gracefulStopTimeout` | `core/_config.py:239-266`, `core/_base.py:404-429` |
 | Routes: `POST /invocations`, `GET /invocations/{id}`, `POST /invocations/{id}/cancel`, `GET /invocations/docs/openapi.json` | dispatcher resources | `inv/_invocation.py:277-316` |
 | Session ID on invoke: `agent_session_id` query → `FOUNDRY_AGENT_SESSION_ID` → UUID; empty counts as absent; invalid → UUID; a repeated query parameter resolves to its last value (Starlette `query_params.get`). The raw query is parsed as `parse_qsl(keep_blank_values=True)` does (split on `&`, `+` → space, name and value percent-decoded), not through `http:Request.getQueryParamValues`, which splits values on commas, trims them and doesn't decode names, so `agent_session_id=a,b` is invalid (→ UUID) rather than `b` | `resolveInvokeSessionId`, `lastQueryParamValue`, `lastRawQueryParamValue` | `inv/_invocation.py:547-551`, `135-152` |
-| Session ID on get/cancel: query → env → `""`; invalid → `""` (no UUID is generated) | same | `inv/_invocation.py:647-662` |
+| Session ID on get/cancel: query → env → `""`; empty counts as absent; invalid → `""` (no UUID is generated, and no fallback to the env value) | `resolveGetOrCancelSessionId` | `inv/_invocation.py:647-662` |
 | Invocation ID on invoke: `x-agent-invocation-id` header (first value) if valid, else UUID (`str(uuid4())`, with dashes) | `resolveInvokeInvocationId` | `inv/_invocation.py:542-545` |
-| Invocation ID on get/cancel: the path value, kept even when it fails validation | `sanitizeFoundryId(raw, fallback = raw)` | `inv/_invocation.py:643-645` |
+| Invocation ID on get/cancel: the raw path segment percent-decoded once, as the reference's ASGI server decodes it (`+` stays `+`, `abc%2541` → `abc%41`), for `GET`, `HEAD` and cancel alike, kept even when it fails validation, passed to the resource and in `FoundryContext.invocationId` unchanged. It is sent back in `x-agent-invocation-id` only when it is a valid header value (visible ASCII, inner spaces or tabs); otherwise (CR/LF or other control characters, non-ASCII text, leading or trailing whitespace) the header is left out and a warning is logged without the value, so it can't inject a header or break the response | `invocationIdFromRawPath`, `decodePathSegment`, `resolveGetOrCancelInvocationId`, `isHeaderSafe` | `inv/_invocation.py:643-645`. The reference writes the raw value into the header: h11 then rejects CR/LF and a non-Latin-1 value raises, so such requests end in a bare `500` there |
+| Get/cancel route precedence: `GET /invocations/docs/openapi.json` is the OpenAPI route, `GET /invocations/docs` and `POST /invocations/docs/cancel` are get/cancel for the ID `docs`; wrong methods get `405` with `Allow: GET, HEAD` (get, OpenAPI) or `Allow: POST` (cancel) | literal path segments win in `http`; `allowedMethods` | `inv/_invocation.py:277-316` (Starlette tries routes in order) |
 | ID rule: 1–256 chars, `^[a-zA-Z0-9\-_.:]+$`, matched against the whole value (Python's `re.match` with `$` also accepts a trailing newline; we don't, so an ID can't break a response header) | `sanitizeFoundryId` | `inv/_invocation.py:95-97` |
 | `x-agent-user-id`, `x-agent-foundry-call-id` read as optional; empty → `()` | `FoundryContext.userId`, `callId` | `inv/_invocation.py:155-175`; `core/_platform_headers.py:56-76` |
 | `x-client-*` pass-through headers, keyed by lower-case name; a repeated header keeps all values joined with `", "` (RFC 9110 field combination; the reference has no rule) | `clientHeaders` | `core/_platform_headers.py:80-85` |
@@ -223,13 +270,14 @@ The compiler plugin enforces this table (Milestone 6).
 | `x-ms-original-subject`: RFC 9651 dictionary profile with unique `oid`/`tid`/`idtype` string members; exactly one header field; empty dictionary rejected | `parseOriginalSubject` (a hand-written scanner equivalent to the reference's member regex) | `core/_request_context.py:46-52`, `76-111` |
 | Invalid original subject → `400`, `x-platform-error-source: platform`, `x-platform-error-detail: invalid_original_subject`, both ID headers; the resource is not called and the value is never echoed or logged | dispatcher | `inv/_invocation.py:178-192`, `553-559` |
 | `x-agent-invocation-id` and `x-agent-session-id` on invoke responses, including errors and streams | dispatcher | `inv/_invocation.py:585-617` |
-| `x-agent-invocation-id` only (no session header) on get/cancel responses | dispatcher | `inv/_invocation.py:673-689` |
+| `x-agent-invocation-id` only (no session header) on get/cancel responses, including the `404`s, the `400` for an invalid original subject and every error response | dispatcher | `inv/_invocation.py:664-689` |
 | Error envelope `{"error":{"code","message"}}` | `errorResponse` | `core/_errors.py:28-63` |
-| Invoke resource missing → `501` `not_implemented`, `upstream` (the error-source header is added with the other classification) | dispatcher | `inv/_invocation.py:401-404`, `588-601` |
-| Get/cancel not implemented → `404`, `upstream` | dispatcher | `inv/_invocation.py:406-424` |
-| No OpenAPI spec → `404`, `upstream`; otherwise the spec as JSON | dispatcher | `inv/_invocation.py:446-455` |
-| Error from the user's code → `500 "Internal server error"`, `upstream`, no detail | dispatcher | `inv/_invocation.py:78-92`, `602-617` |
-| Platform (framework) failure → `500`, `platform`, detail `"<type>: <message>"` truncated to 2048 chars with `...[truncated]` | `classifyError` | `inv/_invocation.py:78-92`; `core/_platform_headers.py:121-130` |
+| Invoke resource missing → `501` `not_implemented`, `upstream`, both ID headers | dispatcher | `inv/_invocation.py:401-404`, `588-601` |
+| Get/cancel not implemented → `404` `{"error":{"code":"not_found","message":"get_invocation not implemented"}}` (`cancel_invocation` for cancel), `upstream` | dispatcher | `inv/_invocation.py:406-424` |
+| No OpenAPI spec → `404` `No OpenAPI spec registered`, `upstream`; otherwise `200` with the spec as JSON (`application/json`), no ID headers | dispatcher | `inv/_invocation.py:446-455` |
+| Error from the user's code → `500 "Internal server error"`, `upstream`, no detail; an `httpscerr` status-code error keeps its status | `foundryErrorResponse` | `inv/_invocation.py:78-92`, `602-617`, `676-689` |
+| A 4xx/5xx `http:Response` or status-code record from the user's code → `upstream` added unless the user set the header | response interceptor | deviation, see below |
+| Platform (framework) failure → `500`, `platform`, detail `"<type>: <message>"` truncated to 2048 chars with `...[truncated]` | `FoundryPlatformError`, `classifyFoundryError`, `truncateErrorDetail` | `inv/_invocation.py:78-92`; `core/_platform_headers.py:106-130` |
 | SSE: `text/event-stream`; keep-alive comment `: keep-alive` after each idle interval; `SSE_KEEPALIVE_INTERVAL`, default 15, `0` disables | native keep-alive stream | `inv/_sse.py:10-77`; `core/_config.py:445-461`; `inv/_invocation.py:530-539` |
 | Error raised mid-stream → logged, stream terminated (no synthetic event) | dispatcher stream wrapper | `inv/_invocation.py:502-528` |
 | Client disconnect → source stream closed | native wrapper closes the user stream | `inv/_sse.py:49-52`, `73-77` |
@@ -246,9 +294,17 @@ public API.
 | Prompt port order: `PORT`, then 8088, then explicit | explicit → `PORT` → 8088 (`core/_config.py:223`) | An explicit argument wins, as in the reference. |
 | Both ID headers on every protocol response | invoke: both; get/cancel: **`x-agent-invocation-id` only** (`inv/_invocation.py:673-689`) | |
 | Session and invocation IDs on get/cancel validated and replaced like invoke | invocation ID: the raw path value is **kept** when invalid (`_sanitize_id(raw, raw)`); session ID: invalid or missing → `""`, never a new UUID | Replacing the path ID with a UUID would look up the wrong invocation. `FoundryContext.sessionId` is `""` when unknown. |
-| `x-platform-error-source` on every 4xx/5xx from protocol endpoints | the reference adds it only to responses the framework builds; a 4xx/5xx the handler returns itself has none | We follow the platform contract doc instead and add `upstream` to any 4xx/5xx the user returns (`http:Response`, status-code record, `httpscerr` error), unless the user already set the header. |
+| `x-platform-error-source` on every 4xx/5xx from protocol endpoints | the reference adds it only to responses the framework builds; a 4xx/5xx the handler returns itself has none | We follow the platform contract doc instead and add `upstream` to any 4xx/5xx the user returns (`http:Response`, status-code record, `httpscerr` error), unless the user already set the header. Responses that are not from a protocol route (readiness, the catch-all `404`/`405`) are not classified, as in the reference. |
+| 4xx generated by the HTTP stack itself → `user` | only what reaches the listener can be classified | A 4xx the http module raises after routing (for example a `%` escape it can't decode, which it would answer with a `500`, is answered `400 invalid_request`) is `user`. The transport's own request limits (`413` body too large, `414` URI too long, `431` headers too large) are answered by the HTTP transport before any service or interceptor runs, so they carry neither `x-platform-error-source` nor `x-platform-server`. |
 | "Detail when there is diagnostic detail" | detail only on `platform` errors (and `invalid_original_subject`) | User error messages never reach the header, so user content and secrets can't leak. |
 | Result mapping follows `ballerina/http`, except `anydata` → `200` | the reference sends whatever `Response` the handler builds (its samples send `200`) | A `post invocations` returning `anydata` gets `200 OK`, matching the reference, not the `201 Created` of a plain Ballerina `post` resource; `()` gets `202 Accepted`; return `http:Created` (or an `http:Response`) for a `201`. Annotations on the user's return type (`@http:Payload {mediaType}`, `@http:Cache`) are not applied, because `http` sees the dispatcher's resource; use a status-code record's `mediaType` or an `http:Response` instead. |
+
+## Other differences from the reference
+
+| Reference | Here | Why |
+|---|---|---|
+| The path is decoded once by the ASGI server before routing (`unquote`): `+` stays `+`, `%2F` splits the path, a malformed `%` escape is kept as it is | The get/cancel ID is the raw path segment decoded once the same way (`+` stays `+`), but `%2F` stays inside the ID (as `/`). `http` decodes a path parameter twice before the resource runs, so a malformed escape (`%zz`), or an ID that still holds one after one decoding (`%25zz`), is rejected: `400 invalid_request` "The request path could not be decoded.", `user`, for `GET`, `HEAD` and cancel alike. Any other path that can't be decoded gets the catch-all `404` | `http` routes on raw segments and decodes path parameters itself (twice); reading the raw path gives the reference's value wherever `http` lets the request through. Only IDs that are invalid anyway are affected |
+| Hypercorn's graceful shutdown returns as soon as in-flight requests finish | `http:Listener.gracefulStop` closes the server socket and then always waits the whole `gracefulStopTimeout` (the transport sleeps for it), even when nothing is in flight | A hosted agent's graceful stop takes `AGENTSERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS` (30 s by default). The tests use short timeouts for this reason. Fixing it needs the `http` module |
 
 ## Reference behaviour the prompt doesn't mention
 

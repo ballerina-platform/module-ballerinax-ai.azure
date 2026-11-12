@@ -80,6 +80,52 @@ isolated function resolveInvokeInvocationId(string? header) returns string => sa
 isolated function resolveInvokeSessionId(string? queryValue, string? configured) returns string =>
     sanitizeFoundryId(firstNonEmpty(queryValue, configured));
 
+# Resolves the invocation ID of a `GET /invocations/{invocationId}` or
+# `POST /invocations/{invocationId}/cancel` request: the path value, kept as it is even when it is not a
+# valid ID (`_sanitize_id(raw, raw)`, `inv/_invocation.py:643-645`). Replacing an invalid value would
+# look up or cancel a different invocation.
+#
+# + pathValue - The decoded `invocationId` path segment
+# + return - The invocation ID
+isolated function resolveGetOrCancelInvocationId(string pathValue) returns string =>
+    sanitizeFoundryId(pathValue, pathValue);
+
+# Resolves the session ID of a `GET /invocations/{invocationId}` or
+# `POST /invocations/{invocationId}/cancel` request (`inv/_invocation.py:647-662`): the
+# `agent_session_id` query parameter, else the agent's configured session ID, else `""`. An empty
+# value counts as absent, and an invalid value becomes `""`; no UUID is generated, since a new session
+# ID would never match the invocation's session.
+#
+# + queryValue - The `agent_session_id` query parameter, if any
+# + configured - The configured session ID, if any
+# + return - The session ID, or `""` when none is known
+isolated function resolveGetOrCancelSessionId(string? queryValue, string? configured) returns string {
+    string? value = firstNonEmpty(queryValue, configured);
+    return value is () ? "" : sanitizeFoundryId(value, "");
+}
+
+# Returns whether a value can be sent unchanged as a response header value: it is not empty, every
+# character is visible ASCII (`0x21`-`0x7E`), a space or a tab, and it neither starts nor ends with a
+# space or a tab (a receiver would strip those, so the value would arrive changed).
+#
+# A get or cancel invocation ID is the raw path value, which may hold any character after
+# percent-decoding (`%0D%0A`, other control characters, non-ASCII text). Such a value is never written
+# to a header, so it can't inject a header or make the response fail.
+#
+# + value - The value
+# + return - `true` when the value is safe to send as a header value
+isolated function isHeaderSafe(string value) returns boolean {
+    if value == "" || isSpaceOrTab(value[0]) || isSpaceOrTab(value[value.length() - 1]) {
+        return false;
+    }
+    foreach int c in value.toCodePointInts() {
+        if (c < 0x20 && c != 0x09) || c > 0x7e {
+            return false;
+        }
+    }
+    return true;
+}
+
 isolated function firstNonEmpty(string? first, string? second) returns string? {
     if first is string && first != "" {
         return first;

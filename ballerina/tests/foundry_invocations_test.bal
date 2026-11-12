@@ -922,7 +922,8 @@ function postNonIsolatedInvocation(int i) returns http:Response|error {
 
 @test:Config {groups: ["foundry"]}
 function testFoundryGracefulStopLetsInFlightInvocationFinish() returns error? {
-    FoundryListener foundryListener = check new (FOUNDRY_INV_GRACEFUL_PORT, gracefulStopTimeout = 10, agent = {});
+    // A short timeout: the http transport's graceful stop always waits the whole timeout.
+    FoundryListener foundryListener = check new (FOUNDRY_INV_GRACEFUL_PORT, gracefulStopTimeout = 5, agent = {});
     check foundryListener.attach(new SlowFoundryInvocationService());
     check foundryListener.'start();
 
