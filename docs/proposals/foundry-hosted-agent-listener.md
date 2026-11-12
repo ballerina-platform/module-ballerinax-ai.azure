@@ -9,8 +9,7 @@
 A Ballerina developer runs an agent as a Microsoft Foundry hosted agent by attaching a
 `azure:FoundryInvocationService` to an `azure:FoundryListener`. The listener implements the
 container contract Foundry expects (port, readiness probe, routes, session and invocation IDs,
-platform request headers, response headers, error classification, SSE streaming and graceful
-shutdown), so the service contains only agent logic.
+platform request headers, response headers, error classification and graceful shutdown), so the service contains only agent logic.
 
 The design copies `ai:Listener` / `ai:ChatService` from `ballerina/ai`: the listener wraps an
 `http:Listener` and attaches an internal, isolated **dispatcher service** in place of the user's
@@ -70,7 +69,6 @@ public type FoundryInvocationService distinct service object {
 public type FoundryListenerConfiguration record {|
     *http:ListenerConfiguration;          // used only when the listener creates the http:Listener
     decimal gracefulStopTimeout = ...;    // AGENTSERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS, else 30
-    int sseKeepAliveInterval = ...;       // SSE_KEEPALIVE_INTERVAL, else 15; 0 disables
     FoundryAgentInfo agent = ...;         // FOUNDRY_* environment variables
     map<json>? openApiSpec = ();          // served at GET /invocations/docs/openapi.json when set
 |};
@@ -132,15 +130,15 @@ Naming notes:
 
 | Resource | Parameters (any order) | Return types |
 |---|---|---|
-| `post invocations` (required) | optional `@http:Payload` of `json`, `string`, `byte[]`, `xml` or any `anydata` subtype (records, arrays, maps); optional `azure:FoundryContext` | `anydata`, `http:Response`, any `http:StatusCodeResponse`, `stream<http:SseEvent, error?>`, `stream<anydata, error?>`, `error`, `()`, or a union of these |
-| `get invocations/[string invocationId]` (optional) | path parameter; optional `azure:FoundryContext` | same, without streams |
-| `post invocations/[string invocationId]/cancel` (optional) | path parameter; optional `@http:Payload` (bound as for `post invocations`); optional `azure:FoundryContext` | same, without streams |
+| `post invocations` (required) | optional `@http:Payload` of `json`, `string`, `byte[]`, `xml` or any `anydata` subtype (records, arrays, maps); optional `azure:FoundryContext` | `anydata`, `http:Response`, any `http:StatusCodeResponse`, `error`, `()`, or a union of these. No streams: the listener doesn't send server-sent events |
+| `get invocations/[string invocationId]` (optional) | path parameter; optional `azure:FoundryContext` | same |
+| `post invocations/[string invocationId]/cancel` (optional) | path parameter; optional `@http:Payload` (bound as for `post invocations`); optional `azure:FoundryContext` | same |
 
 The compiler plugin enforces this table (Milestone 6). Until then, a resource that breaks it is
 answered at run time with a `500` classified as `upstream` (the agent author's mistake): an
 unsupported parameter (including a path parameter whose type doesn't accept every `string`), an
 `@http:Payload` parameter on the get resource (a GET request has no body to bind), or a return value
-outside the table (including a stream from the get or cancel resource). The cancel resource may declare a payload because the
+outside the table (including a stream). The cancel resource may declare a payload because the
 reference hands its handler the raw request, so a cancel request can carry a body such as a reason.
 
 ## Dispatcher design
@@ -195,7 +193,7 @@ reference hands its handler the raw request, so a cancel request can carry a bod
   the error interceptor. The resolved IDs are stored in the `http:RequestContext`, and the response
   interceptor adds `x-agent-invocation-id` / `x-agent-session-id` to every response of the request,
   including error-interceptor responses, replacing any value the user set. A returned stream is
-  handed to `streamToFoundryResponse`, which answers `500` until SSE support lands.
+  outside the contract: it is closed and answered with a `500` classified as `upstream`.
 - The dispatcher declares a catch-all `default [string... path]` resource, so unknown paths
   (`404`) and wrong methods on known paths (`405`) also get the platform headers. Their body is the
   error envelope (codes `not_found` and `method_not_allowed`), not Starlette's plain-text
@@ -235,16 +233,11 @@ reference hands its handler the raw request, so a cancel request can carry a bod
   | The user's resource returns an error or panics | `upstream` | The agent's code (`_classify_error` without the platform tag) |
   | The user's resource returns an `httpscerr` error, a 4xx/5xx `http:Response` or status-code record | `upstream` (unless the user set the header) | The agent chose the status |
   | `post invocations` missing (`501`), get/cancel missing (`404`), no OpenAPI document (`404`) | `upstream` | As the reference |
-  | A resource with an unsupported parameter (including a non-`string` path parameter), a payload parameter on get, or a return value outside the contract (including a stream from get or cancel) | `upstream` | The agent author's mistake; the reference also classifies a handler returning a non-`Response` as `upstream` (the `AttributeError` it raises is untagged) |
-  | A stream from `post invocations` the listener can't send yet (until SSE support lands) | `platform` | The contract allows it there; the listener is the part that fails |
+  | A resource with an unsupported parameter (including a non-`string` path parameter), a payload parameter on get, or a return value outside the contract (including a stream) | `upstream` | The agent author's mistake; the reference also classifies a handler returning a non-`Response` as `upstream` (the `AttributeError` it raises is untagged) |
   | No service linked with the dispatcher (a request racing a detach), a resource that disappears between lookup and call, a path-argument count mismatch, an interrupted or failed call of the resource outside the user's code | `platform` | Listener failures; the message names only fixed text (for an unexpected Java exception, only its class) |
   | A body that can't be bound, a 4xx the http module raises for a protocol request (a protocol path that can't be decoded is answered `400`) | `user` | The caller's request |
   | An invalid `x-ms-original-subject` | `platform`, detail `invalid_original_subject` | As the reference |
   | Readiness, the catch-all `404`/`405` (including `405` on `/invocations`) | none | Starlette produces these in the reference |
-- **SSE keep-alive is native.** Ballerina cannot wait on a stream's `next()` with a timeout, so a
-  native wrapper runs the user stream's `next()` on its own thread and waits on a future with the
-  keep-alive interval as timeout. A timeout emits a comment event and keeps the pending future,
-  which is what `inv/_sse.py:13-77` does with `asyncio.wait_for(asyncio.shield(...))`.
 
 ## Behaviour and its source
 
@@ -269,7 +262,7 @@ reference hands its handler the raw request, so a cancel request can carry a bod
 | `traceparent`, `x-ms-client-request-id`, `x-request-id` (plus `tracestate`, `baggage`); first value, empty → `()` | `FoundryTraceContext` | `core/_platform_headers.py:35-41`, `89-97` |
 | `x-ms-original-subject`: RFC 9651 dictionary profile with unique `oid`/`tid`/`idtype` string members; exactly one header field; empty dictionary rejected | `parseOriginalSubject` (a hand-written scanner equivalent to the reference's member regex) | `core/_request_context.py:46-52`, `76-111` |
 | Invalid original subject → `400`, `x-platform-error-source: platform`, `x-platform-error-detail: invalid_original_subject`, both ID headers; the resource is not called and the value is never echoed or logged | dispatcher | `inv/_invocation.py:178-192`, `553-559` |
-| `x-agent-invocation-id` and `x-agent-session-id` on invoke responses, including errors and streams | dispatcher | `inv/_invocation.py:585-617` |
+| `x-agent-invocation-id` and `x-agent-session-id` on invoke responses, including errors | dispatcher | `inv/_invocation.py:585-617` |
 | `x-agent-invocation-id` only (no session header) on get/cancel responses, including the `404`s, the `400` for an invalid original subject and every error response | dispatcher | `inv/_invocation.py:664-689` |
 | Error envelope `{"error":{"code","message"}}` | `errorResponse` | `core/_errors.py:28-63` |
 | Invoke resource missing → `501` `not_implemented`, `upstream`, both ID headers | dispatcher | `inv/_invocation.py:401-404`, `588-601` |
@@ -278,9 +271,6 @@ reference hands its handler the raw request, so a cancel request can carry a bod
 | Error from the user's code → `500 "Internal server error"`, `upstream`, no detail; an `httpscerr` status-code error keeps its status | `foundryErrorResponse` | `inv/_invocation.py:78-92`, `602-617`, `676-689` |
 | A 4xx/5xx `http:Response` or status-code record from the user's code → `upstream` added unless the user set the header | response interceptor | deviation, see below |
 | Platform (framework) failure → `500`, `platform`, detail `"<type>: <message>"` truncated to 2048 chars with `...[truncated]` | `FoundryPlatformError`, `classifyFoundryError`, `truncateErrorDetail` | `inv/_invocation.py:78-92`; `core/_platform_headers.py:106-130` |
-| SSE: `text/event-stream`; keep-alive comment `: keep-alive` after each idle interval; `SSE_KEEPALIVE_INTERVAL`, default 15, `0` disables | native keep-alive stream | `inv/_sse.py:10-77`; `core/_config.py:445-461`; `inv/_invocation.py:530-539` |
-| Error raised mid-stream → logged, stream terminated (no synthetic event) | dispatcher stream wrapper | `inv/_invocation.py:502-528` |
-| Client disconnect → source stream closed | native wrapper closes the user stream | `inv/_sse.py:49-52`, `73-77` |
 | `FOUNDRY_*` environment exposed read-only | `FoundryAgentInfo` | `core/_constants.py:9-14`, `31-33`; `core/_config.py:130-160` |
 
 ## Where the implementation differs from the prompt (and why)
@@ -319,13 +309,13 @@ public API.
 | `model_attribution_headers()` / `x-ms-foundry-baggage` (`core/_request_context.py:148-219`) | No: outbound, experimental, out of scope. `originalSubject` is exposed so it can be added later. |
 | Shutdown handler hook (`core/_base.py:760`) | No: Ballerina code can use a module-level `listener`'s lifecycle or `runtime:onGracefulStop` |
 | Resilient task manager, WebSocket, Responses, snapshot/restore | No: out of scope per the prompt |
+| SSE streaming responses with keep-alive comments (`inv/_sse.py`, `SSE_KEEPALIVE_INTERVAL`) | No: dropped from scope. A resource that returns a stream gets a `500` classified as `upstream`, and the compiler plugin rejects stream return types |
 
 ## Ballerina distribution
 
 This release moves the package from `2201.12.0` (`java21`) to `2201.14.1` (`java25`), matching
 `ballerina/ai` and `ballerina/mcp`, which are already on 2201.14 / `java25`. The listener itself
-doesn't need the bump: everything it uses (`http:SseEvent`, `stream<http:SseEvent, error?>`
-returns, `http:Response.setSseEventStream`, `http:ListenerConfiguration.gracefulStopTimeout`,
+doesn't need the bump: everything it uses (`http:ListenerConfiguration.gracefulStopTimeout`,
 status-code response records, `http.httpscerr`) also exists in `ballerina/http` 2.14.x on 2201.12.
 The bump keeps `ai.azure` on the same distribution and Java platform as the `ballerina/ai` it
 depends on. As a result, users of 1.6.0 need Swan Lake Update 14 or later.

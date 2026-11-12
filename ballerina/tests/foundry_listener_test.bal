@@ -47,8 +47,7 @@ final readonly & FoundryAgentInfo testAgentInfo = {
 
 // A Foundry listener on an explicit port, with every platform value injected instead of read from
 // the environment.
-listener FoundryListener foundryTestListener = new (FOUNDRY_PORT, agent = testAgentInfo, sseKeepAliveInterval = 5,
-    gracefulStopTimeout = 2);
+listener FoundryListener foundryTestListener = new (FOUNDRY_PORT, agent = testAgentInfo, gracefulStopTimeout = 2);
 
 service FoundryInvocationService on foundryTestListener {
     resource function post invocations(@http:Payload json payload) returns json => payload;
@@ -412,7 +411,7 @@ function testFoundryDetach() returns error? {
 
 @test:Config {groups: ["foundry"]}
 function testFoundryAttachLinksServiceAndDispatcher() returns error? {
-    FoundryListener foundryListener = check new (FOUNDRY_CONFIG_PORT, agent = testAgentInfo, sseKeepAliveInterval = 0,
+    FoundryListener foundryListener = check new (FOUNDRY_CONFIG_PORT, agent = testAgentInfo,
         openApiSpec = {openapi: "3.0.1"});
     TestFoundryService foundryService = new;
     check foundryListener.attach(foundryService);
@@ -421,7 +420,7 @@ function testFoundryAttachLinksServiceAndDispatcher() returns error? {
         test:assertFail("the dispatcher is not linked with the attached service");
     }
     test:assertTrue(getFoundryService(dispatcher) === foundryService);
-    FoundryDispatcherConfig expected = {agent: testAgentInfo, sseKeepAliveInterval: 0, openApiSpec: {openapi: "3.0.1"}};
+    FoundryDispatcherConfig expected = {agent: testAgentInfo, openApiSpec: {openapi: "3.0.1"}};
     test:assertEquals(dispatcher.getConfig(), expected);
     check foundryListener.detach(foundryService);
     test:assertTrue(getFoundryService(dispatcher) is ());

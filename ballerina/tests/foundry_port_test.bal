@@ -84,7 +84,6 @@ function testFoundryConfigOverrides() {
     FoundryAgentInfo agent = {name: "configured-agent", version: "3", sessionId: "s-1"};
     FoundryListenerConfiguration config = {
         gracefulStopTimeout: 0,
-        sseKeepAliveInterval: 0,
         agent,
         openApiSpec: {openapi: "3.0.1", info: {title: "agent"}}
     };
@@ -92,7 +91,6 @@ function testFoundryConfigOverrides() {
     readonly & FoundryDispatcherConfig dispatcherConfig = toDispatcherConfig(config);
     FoundryDispatcherConfig expected = {
         agent: {name: "configured-agent", version: "3", sessionId: "s-1"},
-        sseKeepAliveInterval: 0,
         openApiSpec: {openapi: "3.0.1", info: {title: "agent"}}
     };
     test:assertEquals(dispatcherConfig, expected);

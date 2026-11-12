@@ -74,12 +74,9 @@ final string FOUNDRY_SERVER_VERSION = foundryServerVersion();
 # dispatcher stays isolated.
 #
 # + agent - Information about the hosted agent
-# + sseKeepAliveInterval - Seconds of inactivity on a server-sent event stream before a keep-alive
-# comment is sent; `0` disables keep-alive comments
 # + openApiSpec - The OpenAPI document served at `GET /invocations/docs/openapi.json`, if any
 type FoundryDispatcherConfig record {|
     FoundryAgentInfo agent;
-    int sseKeepAliveInterval;
     map<json>? openApiSpec;
 |};
 
@@ -216,7 +213,7 @@ isolated service class FoundryDispatcherService {
         }
         any|error result = invokeFoundryResource(self, http:HTTP_POST, [INVOCATIONS_PATH], [], payload,
                 foundryContext);
-        return toFoundryResourceResponse(result, request, invocationId, true);
+        return toFoundryResourceResponse(result, request, invocationId);
     }
 
     # `GET /invocations/{invocationId}`: calls the user's optional `get invocations/[string invocationId]`
@@ -367,7 +364,7 @@ isolated service class FoundryDispatcherService {
         }
         any|error result = invokeFoundryResource(self, route.accessor, route.path, [pathValue], payload,
                 foundryContext);
-        return toFoundryResourceResponse(result, request, loggedId, false);
+        return toFoundryResourceResponse(result, request, loggedId);
     }
 
     # Builds the `GET /invocations/docs/openapi.json` response.
@@ -492,20 +489,20 @@ isolated function payloadBindingErrorResponse(FoundryPayloadBindingError err) re
 # `http:Response` and a status-code record are returned as they are, so the http module maps them as
 # it would for the user's own resource; the response interceptor then marks a 4xx/5xx one as
 # `upstream` unless the user set `x-platform-error-source`. An error (returned, or a panic) is
-# classified by `foundryErrorResponse`. A stream is handed to `streamToFoundryResponse`.
+# classified by `foundryErrorResponse`.
 #
-# Any other value (an object that is not an `http:Response`, or a stream from the get or cancel
-# resource, for example) is outside the resource contract the compiler plugin enforces: the agent's
-# code is at fault, as for an unsupported parameter, so it is a `500` classified as `upstream`, as the
-# reference classifies a handler that returns something other than a `Response`.
+# Any other value (a stream, or an object that is not an `http:Response`, for example) is outside the
+# resource contract the compiler plugin enforces; the listener does not send streaming responses. The
+# agent's code is at fault, as for an unsupported parameter, so it is a `500` classified as
+# `upstream`, as the reference classifies a handler that returns something other than a `Response`. A
+# stream is closed so it can release what it holds.
 #
 # + result - The user's return value
 # + request - The request, for logging
 # + invocationId - The invocation ID, for logging; `()` when it is not safe to log
-# + streamsAllowed - Whether the resource contract allows a stream (only `post invocations` does)
 # + return - The dispatcher resource's return value
-isolated function toFoundryResourceResponse(any|error result, http:Request request, string? invocationId,
-        boolean streamsAllowed) returns FoundryResourceResponse {
+isolated function toFoundryResourceResponse(any|error result, http:Request request, string? invocationId)
+        returns FoundryResourceResponse {
     if result is error {
         return foundryErrorResponse(result, request);
     }
@@ -517,9 +514,6 @@ isolated function toFoundryResourceResponse(any|error result, http:Request reque
         return result;
     }
     if result is stream<any|error, error?> {
-        if streamsAllowed {
-            return streamToFoundryResponse(result, invocationId);
-        }
         closeUnsentStream(result);
     }
     log:printError("The FoundryInvocationService resource returned a value the listener can't send",
@@ -528,23 +522,6 @@ isolated function toFoundryResourceResponse(any|error result, http:Request reque
             "Internal server error");
     setErrorSource(response, ERROR_SOURCE_UPSTREAM);
     return response;
-}
-
-# Sends a stream returned by the user's resource. This version of the listener can't send streaming
-# (server-sent event) responses, which the resource contract allows, so the listener is the part that
-# fails: the request gets a `500` classified as a `platform` error, with a detail that says why.
-#
-# + result - The stream the user's resource returned
-# + invocationId - The invocation ID, for logging; `()` when it is not safe to log
-# + return - The `500` error response
-isolated function streamToFoundryResponse(stream<any|error, error?> result, string? invocationId)
-        returns http:Response {
-    FoundryPlatformError err = error FoundryPlatformError(
-        "this version of the Foundry listener can't send streaming (server-sent event) responses");
-    log:printError("The FoundryInvocationService resource returned a stream the listener can't send", err,
-            invocationId = invocationId);
-    closeUnsentStream(result);
-    return platformErrorResponse(err);
 }
 
 # Closes a stream the listener doesn't send, so the user's stream can release what it holds.

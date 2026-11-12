@@ -24,7 +24,7 @@ import ballerina/os;
 # `resource function get invocations/[string invocationId]` and
 # `resource function post invocations/[string invocationId]/cancel`. The listener handles the
 # platform contract (readiness, session and invocation IDs, platform headers, error
-# classification and streaming), so the resources contain only agent logic.
+# classification), so the resources contain only agent logic.
 public type FoundryInvocationService distinct service object {
     *http:Service;
 };
@@ -38,16 +38,12 @@ public type FoundryInvocationService distinct service object {
 # + gracefulStopTimeout - Seconds to let in-flight requests finish when the listener stops
 # gracefully. Defaults to the `AGENTSERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS` environment
 # variable, or 30
-# + sseKeepAliveInterval - Seconds of inactivity on a server-sent event stream before a
-# keep-alive comment is sent. `0` disables keep-alive comments. Defaults to the
-# `SSE_KEEPALIVE_INTERVAL` environment variable, or 15
 # + agent - Information about the hosted agent. Defaults to the `FOUNDRY_*` environment variables
 # + openApiSpec - An OpenAPI document served at `GET /invocations/docs/openapi.json`. When it is
 # not set, that path returns `404`
 public type FoundryListenerConfiguration record {|
     *http:ListenerConfiguration;
     decimal gracefulStopTimeout = foundryGracefulStopTimeoutFromEnv();
-    int sseKeepAliveInterval = foundrySseKeepAliveIntervalFromEnv();
     FoundryAgentInfo agent = foundryAgentInfoFromEnv();
     map<json>? openApiSpec = ();
 |};
@@ -129,22 +125,14 @@ public type FoundryContext record {|
 |};
 
 const ENV_GRACEFUL_SHUTDOWN_TIMEOUT = "AGENTSERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS";
-const ENV_SSE_KEEPALIVE_INTERVAL = "SSE_KEEPALIVE_INTERVAL";
 const ENV_PORT = "PORT";
 const decimal DEFAULT_GRACEFUL_STOP_TIMEOUT = 30;
-const int DEFAULT_SSE_KEEPALIVE_INTERVAL = 15;
 const int DEFAULT_PORT = 8088;
 
 isolated function foundryGracefulStopTimeoutFromEnv() returns decimal {
     string value = os:getEnv(ENV_GRACEFUL_SHUTDOWN_TIMEOUT).trim();
     int|error timeout = int:fromString(value);
     return timeout is int ? <decimal>(timeout < 0 ? 0 : timeout) : DEFAULT_GRACEFUL_STOP_TIMEOUT;
-}
-
-isolated function foundrySseKeepAliveIntervalFromEnv() returns int {
-    string value = os:getEnv(ENV_SSE_KEEPALIVE_INTERVAL).trim();
-    int|error interval = int:fromString(value);
-    return interval is int ? (interval < 0 ? 0 : interval) : DEFAULT_SSE_KEEPALIVE_INTERVAL;
 }
 
 isolated function foundryAgentInfoFromEnv() returns FoundryAgentInfo => {

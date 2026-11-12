@@ -207,6 +207,5 @@ isolated function toHttpListenerConfiguration(FoundryListenerConfiguration confi
 isolated function toDispatcherConfig(FoundryListenerConfiguration config) returns readonly & FoundryDispatcherConfig
     => {
     agent: config.agent.cloneReadOnly(),
-    sseKeepAliveInterval: config.sseKeepAliveInterval,
     openApiSpec: config.openApiSpec.cloneReadOnly()
 };

@@ -27,8 +27,6 @@ const FOUNDRY_ROUTES_UNLINKED_PORT = 9354;
 const FOUNDRY_ROUTES_INT_PATH_PORT = 9355;
 
 const ROUTES_CONFIG_SESSION = "routes-config-session";
-const STREAM_PLATFORM_DETAIL =
-    "FoundryPlatformError: this version of the Foundry listener can't send streaming (server-sent event) responses";
 const UNLINKED_PLATFORM_DETAIL = "FoundryPlatformError: no FoundryInvocationService is linked with the Foundry dispatcher";
 const INVALID_PATH_BODY_MESSAGE = "The request path could not be decoded.";
 
@@ -657,17 +655,16 @@ function testFoundryUnsupportedParameterIsUpstream() returns error? {
 }
 
 @test:Config {groups: ["foundry"]}
-function testFoundryStreamIsPlatformError() returns error? {
-    // This version of the listener can't send a stream, which the resource contract allows.
-    // `postKind` also checks both ID headers.
+function testFoundryStreamIsUpstreamError() returns error? {
+    // The listener sends no streaming responses, so a stream is outside the resource contract: the
+    // agent's mistake. `postKind` also checks both ID headers.
     http:Response response = check postKind("stream");
     test:assertEquals(response.statusCode, 500);
     test:assertEquals(check response.getJsonPayload(),
             {'error: {code: "internal_error", message: "Internal server error"}});
-    test:assertEquals(check response.getHeader("x-platform-error-source"), "platform");
-    test:assertEquals(check response.getHeader("x-platform-error-detail"), STREAM_PLATFORM_DETAIL);
+    assertUpstreamError(response);
 
-    // The contract allows no stream from the get or cancel resource, so there it is the agent's mistake.
+    // The same on the get resource.
     response = check foundryRoutesClient->get("/invocations/stream");
     test:assertEquals(response.statusCode, 500);
     test:assertEquals(check response.getJsonPayload(),
