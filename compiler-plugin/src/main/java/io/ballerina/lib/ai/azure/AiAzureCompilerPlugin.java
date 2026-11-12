@@ -31,5 +31,6 @@ public class AiAzureCompilerPlugin extends CompilerPlugin {
     @Override
     public void init(CompilerPluginContext context) {
         context.addCodeModifier(new AiAzureCodeModifier());
+        context.addCodeAnalyzer(new AiAzureCodeAnalyzer());
     }
 }

@@ -1,0 +1,5 @@
+[package]
+org = "foundry_tests"
+name = "untyped_service_declaration"
+version = "0.1.0"
+distribution = "2201.14.1"

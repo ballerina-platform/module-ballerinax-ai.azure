@@ -64,6 +64,7 @@ tasks.named('build') {
     dependsOn(':ai.azure-compiler-plugin:build')
     dependsOn(':ai.azure-native:build')
     dependsOn(':ai.azure-ballerina:build')
+    dependsOn(':ai.azure-compiler-plugin-tests:build')
 }
 
 tasks.findByPath(':ai.azure-ballerina:build').mustRunAfter(':ai.azure-native:build')

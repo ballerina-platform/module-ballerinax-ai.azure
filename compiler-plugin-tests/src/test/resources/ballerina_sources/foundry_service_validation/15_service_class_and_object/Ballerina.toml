@@ -1,0 +1,5 @@
+[package]
+org = "foundry_tests"
+name = "service_class_and_object"
+version = "0.1.0"
+distribution = "2201.14.1"

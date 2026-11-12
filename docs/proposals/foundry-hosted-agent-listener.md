@@ -134,12 +134,13 @@ Naming notes:
 | `get invocations/[string invocationId]` (optional) | path parameter; optional `azure:FoundryContext` | same |
 | `post invocations/[string invocationId]/cancel` (optional) | path parameter; optional `@http:Payload` (bound as for `post invocations`); optional `azure:FoundryContext` | same |
 
-The compiler plugin enforces this table (Milestone 6). Until then, a resource that breaks it is
-answered at run time with a `500` classified as `upstream` (the agent author's mistake): an
-unsupported parameter (including a path parameter whose type doesn't accept every `string`), an
-`@http:Payload` parameter on the get resource (a GET request has no body to bind), or a return value
-outside the table (including a stream). The cancel resource may declare a payload because the
-reference hands its handler the raw request, so a cancel request can carry a body such as a reason.
+The compiler plugin enforces this table at compile time (see [Compiler plugin](#compiler-plugin)).
+The dispatcher still checks it at run time, as a safety net: a resource that breaks it is answered
+with a `500` classified as `upstream` (the agent author's mistake): an unsupported parameter
+(including a path parameter whose type doesn't accept every `string`), an `@http:Payload` parameter
+on the get resource (a GET request has no body to bind), or a return value outside the table
+(including a stream). The cancel resource may declare a payload because the reference hands its
+handler the raw request, so a cancel request can carry a body such as a reason.
 
 ## Dispatcher design
 
@@ -162,8 +163,8 @@ reference hands its handler the raw request, so a cancel request can carry a bod
     `^` for a path parameter as `getResourcePath()` reports it);
   - works out each parameter's role (path parameters first, then the `@http:Payload` parameter and
     the `azure:FoundryContext` parameter, each optional and in any order) and builds the argument
-    list in declared order. Any other parameter is an error (a `500` until the compiler plugin
-    rejects it at compile time);
+    list in declared order. Any other parameter is an error (rejected at compile time by the
+    compiler plugin, and a `500` if it is ever reached at run time);
   - reports the declared payload type to the dispatcher, which binds the body in Ballerina: a
     `string`, `byte[]` or `xml` subtype is read as UTF-8 text, bytes or XML; any other `anydata`
     type is parsed with `data.jsondata`'s `parseBytes` straight to the declared type, with no data
@@ -310,6 +311,86 @@ public API.
 | Shutdown handler hook (`core/_base.py:760`) | No: Ballerina code can use a module-level `listener`'s lifecycle or `runtime:onGracefulStop` |
 | Resilient task manager, WebSocket, Responses, snapshot/restore | No: out of scope per the prompt |
 | SSE streaming responses with keep-alive comments (`inv/_sse.py`, `SSE_KEEPALIVE_INTERVAL`) | No: dropped from scope. A resource that returns a stream gets a `500` classified as `upstream`, and the compiler plugin rejects stream return types |
+
+## Compiler plugin
+
+`AiAzureCodeAnalyzer` registers `FoundryServiceValidationTask`
+(`compiler-plugin/src/main/java/io/ballerina/lib/ai/azure/FoundryServiceValidationTask.java`) next to
+the existing code modifier. It validates every service whose type is a subtype of
+`azure:FoundryInvocationService`: service declarations (`service azure:FoundryInvocationService on
+...`), service classes (`service class S { *azure:FoundryInvocationService; ... }`) and service object
+constructors whose type is the Foundry service type. A service declaration without a type descriptor
+(`service on foundryListener { ... }`, `service on new azure:FoundryListener(8088) { ... }`) takes its type
+from the listener's `attach`, so it is validated when one of its listeners is an `azure:FoundryListener`
+(a listener expression typed `azure:FoundryListener|error` counts). Types are resolved through the semantic model, not
+by text, so import prefixes (`import ballerinax/ai.azure as foundry;`, `import ballerina/http as h;`)
+and type aliases (`type Ctx azure:FoundryContext;`) work, and plain `http:Service` services in the same
+package are ignored. Like `ballerina/ai`'s `ChatResourceValidationTask`, the task skips a module that
+already has compilation errors.
+
+Every diagnostic is an error. The codes are defined in
+`compiler-plugin/src/main/java/io/ballerina/lib/ai/azure/diagnostics/FoundryDiagnostic.java`; `{n}` is a
+placeholder.
+
+| Code | Rule | Message | Points at |
+|---|---|---|---|
+| `AI_AZURE_FOUNDRY_101` | The service declares `post invocations` | an `` `azure:FoundryInvocationService` `` must declare a `` `resource function post invocations` ``, which serves `` `POST /invocations` ``. | The service type of a declaration (the `service` keyword when it has none), the class name, or `service object` |
+| `AI_AZURE_FOUNDRY_102` | The only resources are `post invocations`, `get invocations/[string invocationId]` and `post invocations/[string invocationId]/cancel` (any other accessor or path, `default`, a rest path parameter or `.` is rejected) | the resource '{0}' is not supported in an `` `azure:FoundryInvocationService` ``, which serves only `` `post invocations` ``, `` `get invocations/[string invocationId]` `` and `` `post invocations/[string invocationId]/cancel` ``. | The accessor and resource path |
+| `AI_AZURE_FOUNDRY_103` | No remote functions | the remote function '{0}' is not allowed in an `` `azure:FoundryInvocationService` ``; declare resource functions instead. | The function name |
+| `AI_AZURE_FOUNDRY_104` | A parameter is either the `@http:Payload` parameter or an `azure:FoundryContext` parameter (an un-annotated parameter of another type, `http:Request`, `http:Caller`, `http:Headers`, a query parameter, `azure:FoundryContext?`, a defaultable non-payload parameter, a rest or included-record parameter are rejected) | the parameter '{1}' of the resource '{0}' is not supported. Declare only {2}. (`{2}` is "an `` `azure:FoundryContext` `` parameter" on the get resource, otherwise "an `` `@http:Payload` `` parameter and an `` `azure:FoundryContext` `` parameter") | The parameter |
+| `AI_AZURE_FOUNDRY_105` | At most one `@http:Payload` parameter | the resource '{0}' declares more than one `` `@http:Payload` `` parameter. | The second payload parameter |
+| `AI_AZURE_FOUNDRY_106` | At most one `azure:FoundryContext` parameter | the resource '{0}' declares more than one `` `azure:FoundryContext` `` parameter. | The second context parameter |
+| `AI_AZURE_FOUNDRY_107` | The payload type is a subtype of `anydata` (`json`, `string`, `byte[]`, `xml`, records, arrays, maps, unions of these) | the `` `@http:Payload` `` parameter '{1}' of the resource '{0}' must be a subtype of `` `anydata` `` (for example `` `json` ``, `` `string` ``, `` `byte[]` ``, `` `xml` `` or a record), found '{2}'. | The parameter type |
+| `AI_AZURE_FOUNDRY_108` | No payload on the get resource | the resource '{0}' can't declare an `` `@http:Payload` `` parameter, because a `` `GET` `` request has no body to bind. | The parameter |
+| `AI_AZURE_FOUNDRY_109` | The path parameter of get and cancel is `string` | the path parameter '{1}' of the resource '{0}' must be of type `` `string` ``, found '{2}'. | The path parameter type |
+| `AI_AZURE_FOUNDRY_110` | The return type is a subtype of `anydata\|http:Response\|http:StatusCodeResponse\|error` (nil is allowed through `anydata`; no return type means `()`; the whole type is checked, so an intersection such as `readonly & (json\|error)` is accepted) | the resource '{0}' must return a subtype of `` `anydata\|http:Response\|http:StatusCodeResponse\|error` ``, found '{1}'. | The return type |
+| `AI_AZURE_FOUNDRY_111` | The return type contains no stream | the resource '{0}' returns a stream ('{1}'), but streaming responses are not supported by `` `azure:FoundryListener` ``; return the complete response instead. | The return type |
+| `AI_AZURE_FOUNDRY_112` | A service declaration has no base path other than `/` (or a string whose value, after trimming, is made only of `/`; escapes such as `"\u{2F}"` are decoded first, as the listener sees the value) | an `` `azure:FoundryInvocationService` `` must be attached at the root base path, because Foundry calls `` `/readiness` `` and `` `/invocations` `` at the root; remove the base path '{0}'. | The base path |
+
+Types in messages are shown as written in the source (for example `azure:FoundryContext`). A return
+type that holds a stream gets only `111`, not also `110`. A client object (such as `http:Caller`) or a
+function type in a resource's return type is already a compiler error (`BCE4033`), so the plugin never
+sees it.
+
+### Compile time versus run time
+
+The rules were checked against `NativeFoundryResourceInvoker` (`ResourceParams`, `findResource`) and the
+dispatcher (`dispatchInvocationRoute`, `toFoundryResourceResponse`) and `FoundryListener.attach`.
+Everything the runtime serves compiles, and everything the runtime answers with a `500` classified as
+`upstream` (or rejects at attach) is a compile error. No runtime change was needed. Where the two differ,
+the compiler is deliberately the stricter side:
+
+| Shape | Runtime | Compiler plugin |
+|---|---|---|
+| Path parameter of a type that accepts every string but isn't `string`, such as `string\|int` | Served | `109`: the documented contract is `[string invocationId]` |
+| No `post invocations` | `501 not_implemented` | `101` |
+| Another resource, a remote function | Never called (the catch-all answers `404`/`405`) | `102`, `103` |
+| `*azure:FoundryContext` included-record parameter | Passed the context | `104` |
+| A Foundry service on a listener other than `azure:FoundryListener` | Not dispatched by the Foundry listener | Still validated, because the type is what is checked |
+
+## Testing the compiler plugin
+
+The `compiler-plugin-tests` Gradle project (`:ai.azure-compiler-plugin-tests`), modelled on
+`ballerina/ai`'s, compiles one small Ballerina package per case under
+`src/test/resources/ballerina_sources/foundry_service_validation/` and asserts the exact Foundry
+diagnostics (code, severity, message, line and column). The expected codes and messages are written out
+in the test, not formatted from the plugin's templates, so a broken template fails the tests.
+`01_valid_service` uses every allowed shape (including untyped declarations on a Foundry listener, an
+intersection return type and an escaped `"/"` base path) and must have no errors; one package per
+diagnostic follows, plus an import alias, a service class and object constructor, non-Foundry HTTP
+services in the same package (which must be ignored), and untyped service declarations on a Foundry
+listener (`17_untyped_service_declaration`).
+
+The package is built on Docker (`connector = true`), so the Ballerina Gradle plugin unpacks no
+distribution. The test project's `prepareBallerinaDistribution` task builds one instead: the
+`org.ballerinalang:jballerina-tools` distribution of `ballerinaLangVersion`, plus `ballerinai/observe`
+(`io.ballerina:observe-ballerina`, which jballerina-tools lacks and the dependency graph needs), plus the
+`ballerinax/ai.azure` bala that `:ai.azure-ballerina:build` just packed (it carries the freshly built
+compiler plugin jar). The bala's version is the `Ballerina.toml` version (computed as
+`ballerina/build.gradle` does, so timestamped builds work), and its platform directory is taken from the
+bala's file name. Other dependencies come from Ballerina Central, as with `bal build`. The tests get
+the distribution's path through the `ai.azure.test.distribution` system property, so nothing depends on
+a local Ballerina installation. The root `build` task runs the tests.
 
 ## Ballerina distribution
 
