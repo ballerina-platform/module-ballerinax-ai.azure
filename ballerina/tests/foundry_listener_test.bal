@@ -68,6 +68,10 @@ final regexp:RegExp GENERATED_REQUEST_ID_PATTERN = re `[0-9a-f]{32}`;
 
 // ===== Readiness and the catch-all route =====
 
+// Client settings for tests that leave a listener with no attached service: such a listener answers with
+// its own 404, and a kept-alive connection to it would hold up a graceful stop until its timeout.
+final http:ClientConfiguration noKeepAlive = {http1Settings: {keepAlive: http:KEEPALIVE_NEVER}};
+
 @test:Config {groups: ["foundry"]}
 function testFoundryReadiness() returns error? {
     http:Response response = check foundryClient->get("/readiness");
@@ -382,7 +386,9 @@ function testFoundryDetach() returns error? {
     check foundryListener.attach(foundryService);
     check foundryListener.'start();
     do {
-        http:Client 'client = check new (string `http://localhost:${FOUNDRY_DETACH_PORT}`);
+        // No keep-alive: after detach the listener answers with its own 404, and a kept-alive connection
+        // would make the graceful stop below wait out its whole timeout.
+        http:Client 'client = check new (string `http://localhost:${FOUNDRY_DETACH_PORT}`, noKeepAlive);
         http:Response response = check 'client->get("/readiness");
         test:assertEquals(response.statusCode, 200);
         test:assertTrue(getFoundryDispatcher(foundryService, foundryListener) is FoundryDispatcherService);
@@ -483,8 +489,8 @@ function testFoundryServiceOnTwoListeners() returns error? {
         }
         test:assertFalse(firstDispatcher === secondDispatcher);
 
-        http:Client firstClient = check new (string `http://localhost:${FOUNDRY_TWO_FIRST_PORT}`);
-        http:Client secondClient = check new (string `http://localhost:${FOUNDRY_TWO_SECOND_PORT}`);
+        http:Client firstClient = check new (string `http://localhost:${FOUNDRY_TWO_FIRST_PORT}`, noKeepAlive);
+        http:Client secondClient = check new (string `http://localhost:${FOUNDRY_TWO_SECOND_PORT}`, noKeepAlive);
 
         // Detaching from the first listener leaves the second one fully working.
         check first.detach(foundryService);

@@ -150,18 +150,47 @@ The compiler plugin enforces this table (Milestone 6).
 - `attach` accepts only the root base path (`()`, `"/"` or empty): Foundry calls `/readiness` and
   `/invocations` at the root (`core/_base.py:482`), and only a dispatcher at the root also gets the
   platform headers onto unmatched paths.
-- **Decision: a new native adaptor in `ai.azure`** (`NativeFoundryServiceAdaptor`), not reuse of
-  the `ballerina/ai` one. The `ai` adaptor is internal Java (not exported) and hard-codes the
-  `chat`/`decision` resources and a fixed payload type. The Foundry adaptor must instead:
-  - find `post invocations`, `get invocations/*` and `post invocations/*/cancel` by accessor and
-    path shape;
-  - work out each parameter's role (payload by `@http:Payload`, context by type, path parameter)
-    and build the argument list in declared order;
-  - convert the request body to the declared payload type (`string`, `byte[]`, `xml`, `json`, or
-    `json` → target type with `ValueUtils.convert`), reporting a conversion failure as a
-    `400 user` error.
+- **Decision: a new native adaptor in `ai.azure`** (`NativeFoundryServiceAdaptor` links the
+  services; `NativeFoundryResourceInvoker` calls the user's resources), not reuse of the
+  `ballerina/ai` one. The `ai` adaptor is internal Java (not exported) and hard-codes the
+  `chat`/`decision` resources and a fixed payload type. The Foundry adaptor instead:
+  - finds `post invocations`, `get invocations/*` and `post invocations/*/cancel` by accessor and
+    path shape (`["invocations"]`, `["invocations", "^"]`, `["invocations", "^", "cancel"]`, with
+    `^` for a path parameter as `getResourcePath()` reports it);
+  - works out each parameter's role (path parameters first, then the `@http:Payload` parameter and
+    the `azure:FoundryContext` parameter, each optional and in any order) and builds the argument
+    list in declared order. Any other parameter is an error (a `500` until the compiler plugin
+    rejects it at compile time);
+  - reports the declared payload type to the dispatcher, which binds the body in Ballerina: a
+    `string`, `byte[]` or `xml` subtype is read as UTF-8 text, bytes or XML; any other `anydata`
+    type is parsed with `data.jsondata`'s `parseBytes` straight to the declared type, with no data
+    projection (as `ballerina/http`'s record binding) and constraint validation. This is strict: a
+    closed record rejects unknown fields and a fraction is not accepted for an `int`. (`http` itself
+    converts an already-parsed `json` value with `parseAsType`, which rounds `1.5` to `2`.) An empty
+    body binds to `()` when the type allows nil, to `""` / `[]` for text and bytes, and is otherwise
+    a `400`. The declared type, not `content-type`, decides how the body is read. A binding failure
+    is a `400 invalid_request` with `x-platform-error-source: user` and a fixed message that never
+    quotes the body. Only that message and the underlying error's type are logged (debug level),
+    never the parser's message, which quotes the offending value;
+  - returns a panic in the user's resource as an error, so the request gets a `500` instead of no
+    response;
+  - keeps `http`'s locking: an isolated resource of an isolated service runs on the dispatcher's
+    (concurrent-safe) strand, and any other resource is called from a new virtual thread with a
+    strand that is not concurrent-safe, so it holds the runtime's global lock as it would on an
+    `http:Listener`. (Reusing the dispatcher's strand would run a non-isolated service with no
+    lock, since the runtime reuses the current strand whatever metadata it is given.)
   It keeps the observability handling from the `ai` adaptor, so traces name the user's service
   as the entrypoint.
+- **Result mapping mostly follows `ballerina/http`.** A plain `anydata` result is sent as `200`
+  (wrapped in `http:Ok`), as the reference's handlers do, instead of the `201` that `http` uses for
+  a `post` resource. Otherwise the dispatcher returns the user's value unchanged, so `http` builds
+  the response as for a `post` resource of its own: `anydata` → `200` (JSON, or `text/plain` for `string`, `application/xml` for
+  `xml`, `application/octet-stream` for `byte[]`), `()` → `202` with no body, `http:Response` as
+  is, a status-code record with its status, body, headers and `mediaType`. A returned error goes to
+  the error interceptor. The resolved IDs are stored in the `http:RequestContext`, and the response
+  interceptor adds `x-agent-invocation-id` / `x-agent-session-id` to every response of the request,
+  including error-interceptor responses, replacing any value the user set. A returned stream is
+  handed to `streamToFoundryResponse`, which answers `500` until SSE support lands.
 - The dispatcher declares a catch-all `default [string... path]` resource, so unknown paths
   (`404`) and wrong methods on known paths (`405`) also get the platform headers. Their body is the
   error envelope (codes `not_found` and `method_not_allowed`), not Starlette's plain-text
@@ -183,20 +212,20 @@ The compiler plugin enforces this table (Milestone 6).
 | `x-request-id` on every response: the trace ID of a valid incoming `traceparent` (32 chars, not all zeros), else the incoming `x-request-id`, else a generated UUID (32 hex digits) | dispatcher | `core/_request_id.py:51-120`, `core/_middleware.py:97-142` (**not in the prompt; included**). The reference asks OpenTelemetry for an active span first; none is active where it resolves the ID, so it parses `traceparent` |
 | Graceful stop with timeout; `AGENTSERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS`, default 30 | `gracefulStopTimeout` | `core/_config.py:239-266`, `core/_base.py:404-429` |
 | Routes: `POST /invocations`, `GET /invocations/{id}`, `POST /invocations/{id}/cancel`, `GET /invocations/docs/openapi.json` | dispatcher resources | `inv/_invocation.py:277-316` |
-| Session ID on invoke: `agent_session_id` query → `FOUNDRY_AGENT_SESSION_ID` → UUID; invalid → UUID | `resolveSessionId` | `inv/_invocation.py:547-551`, `135-152` |
+| Session ID on invoke: `agent_session_id` query → `FOUNDRY_AGENT_SESSION_ID` → UUID; empty counts as absent; invalid → UUID; a repeated query parameter resolves to its last value (Starlette `query_params.get`). The raw query is parsed as `parse_qsl(keep_blank_values=True)` does (split on `&`, `+` → space, name and value percent-decoded), not through `http:Request.getQueryParamValues`, which splits values on commas, trims them and doesn't decode names, so `agent_session_id=a,b` is invalid (→ UUID) rather than `b` | `resolveInvokeSessionId`, `lastQueryParamValue`, `lastRawQueryParamValue` | `inv/_invocation.py:547-551`, `135-152` |
 | Session ID on get/cancel: query → env → `""`; invalid → `""` (no UUID is generated) | same | `inv/_invocation.py:647-662` |
-| Invocation ID on invoke: `x-agent-invocation-id` header if valid, else UUID | `sanitizeId` | `inv/_invocation.py:542-545` |
-| Invocation ID on get/cancel: the path value, kept even when it fails validation | `sanitizeId(raw, fallback = raw)` | `inv/_invocation.py:643-645` |
-| ID rule: 1–256 chars, `^[a-zA-Z0-9\-_.:]+$` | `sanitizeId` | `inv/_invocation.py:95-97` |
+| Invocation ID on invoke: `x-agent-invocation-id` header (first value) if valid, else UUID (`str(uuid4())`, with dashes) | `resolveInvokeInvocationId` | `inv/_invocation.py:542-545` |
+| Invocation ID on get/cancel: the path value, kept even when it fails validation | `sanitizeFoundryId(raw, fallback = raw)` | `inv/_invocation.py:643-645` |
+| ID rule: 1–256 chars, `^[a-zA-Z0-9\-_.:]+$`, matched against the whole value (Python's `re.match` with `$` also accepts a trailing newline; we don't, so an ID can't break a response header) | `sanitizeFoundryId` | `inv/_invocation.py:95-97` |
 | `x-agent-user-id`, `x-agent-foundry-call-id` read as optional; empty → `()` | `FoundryContext.userId`, `callId` | `inv/_invocation.py:155-175`; `core/_platform_headers.py:56-76` |
-| `x-client-*` pass-through headers | `clientHeaders` | `core/_platform_headers.py:80-85` |
-| `traceparent`, `x-ms-client-request-id`, `x-request-id` (plus `tracestate`, `baggage`) | `FoundryTraceContext` | `core/_platform_headers.py:35-41`, `89-97` |
-| `x-ms-original-subject`: RFC 9651 dictionary profile with unique `oid`/`tid`/`idtype` string members; exactly one header field; empty dictionary rejected | `parseOriginalSubject` | `core/_request_context.py:46-52`, `76-111` |
-| Invalid original subject → `400`, `x-platform-error-source: platform`, `x-platform-error-detail: invalid_original_subject` | dispatcher | `inv/_invocation.py:178-192` |
+| `x-client-*` pass-through headers, keyed by lower-case name; a repeated header keeps all values joined with `", "` (RFC 9110 field combination; the reference has no rule) | `clientHeaders` | `core/_platform_headers.py:80-85` |
+| `traceparent`, `x-ms-client-request-id`, `x-request-id` (plus `tracestate`, `baggage`); first value, empty → `()` | `FoundryTraceContext` | `core/_platform_headers.py:35-41`, `89-97` |
+| `x-ms-original-subject`: RFC 9651 dictionary profile with unique `oid`/`tid`/`idtype` string members; exactly one header field; empty dictionary rejected | `parseOriginalSubject` (a hand-written scanner equivalent to the reference's member regex) | `core/_request_context.py:46-52`, `76-111` |
+| Invalid original subject → `400`, `x-platform-error-source: platform`, `x-platform-error-detail: invalid_original_subject`, both ID headers; the resource is not called and the value is never echoed or logged | dispatcher | `inv/_invocation.py:178-192`, `553-559` |
 | `x-agent-invocation-id` and `x-agent-session-id` on invoke responses, including errors and streams | dispatcher | `inv/_invocation.py:585-617` |
 | `x-agent-invocation-id` only (no session header) on get/cancel responses | dispatcher | `inv/_invocation.py:673-689` |
 | Error envelope `{"error":{"code","message"}}` | `errorResponse` | `core/_errors.py:28-63` |
-| Invoke resource missing → `501`, `upstream` | dispatcher | `inv/_invocation.py:401-404`, `588-601` |
+| Invoke resource missing → `501` `not_implemented`, `upstream` (the error-source header is added with the other classification) | dispatcher | `inv/_invocation.py:401-404`, `588-601` |
 | Get/cancel not implemented → `404`, `upstream` | dispatcher | `inv/_invocation.py:406-424` |
 | No OpenAPI spec → `404`, `upstream`; otherwise the spec as JSON | dispatcher | `inv/_invocation.py:446-455` |
 | Error from the user's code → `500 "Internal server error"`, `upstream`, no detail | dispatcher | `inv/_invocation.py:78-92`, `602-617` |
@@ -219,6 +248,7 @@ public API.
 | Session and invocation IDs on get/cancel validated and replaced like invoke | invocation ID: the raw path value is **kept** when invalid (`_sanitize_id(raw, raw)`); session ID: invalid or missing → `""`, never a new UUID | Replacing the path ID with a UUID would look up the wrong invocation. `FoundryContext.sessionId` is `""` when unknown. |
 | `x-platform-error-source` on every 4xx/5xx from protocol endpoints | the reference adds it only to responses the framework builds; a 4xx/5xx the handler returns itself has none | We follow the platform contract doc instead and add `upstream` to any 4xx/5xx the user returns (`http:Response`, status-code record, `httpscerr` error), unless the user already set the header. |
 | "Detail when there is diagnostic detail" | detail only on `platform` errors (and `invalid_original_subject`) | User error messages never reach the header, so user content and secrets can't leak. |
+| Result mapping follows `ballerina/http`, except `anydata` → `200` | the reference sends whatever `Response` the handler builds (its samples send `200`) | A `post invocations` returning `anydata` gets `200 OK`, matching the reference, not the `201 Created` of a plain Ballerina `post` resource; `()` gets `202 Accepted`; return `http:Created` (or an `http:Response`) for a `201`. Annotations on the user's return type (`@http:Payload {mediaType}`, `@http:Cache`) are not applied, because `http` sees the dispatcher's resource; use a status-code record's `mediaType` or an `http:Response` instead. |
 
 ## Reference behaviour the prompt doesn't mention
 

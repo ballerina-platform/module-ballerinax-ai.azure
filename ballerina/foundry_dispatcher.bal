@@ -28,6 +28,19 @@ const HEADER_TRACEPARENT = "traceparent";
 const ZERO_TRACE_ID = "00000000000000000000000000000000";
 // The `http:RequestContext` key under which the request interceptor stores the resolved request ID.
 const REQUEST_ID_CONTEXT_KEY = "ballerinax.ai.azure.foundry.requestId";
+// The `http:RequestContext` keys under which a protocol resource stores the resolved invocation and
+// session IDs, so the response interceptor sets them on every response to the request, including the
+// error responses.
+const INVOCATION_ID_CONTEXT_KEY = "ballerinax.ai.azure.foundry.invocationId";
+const SESSION_ID_CONTEXT_KEY = "ballerinax.ai.azure.foundry.sessionId";
+
+// The error classification headers (`core/_platform_headers.py:106-130`).
+const HEADER_ERROR_SOURCE = "x-platform-error-source";
+const HEADER_ERROR_DETAIL = "x-platform-error-detail";
+const ERROR_SOURCE_USER = "user";
+const ERROR_SOURCE_PLATFORM = "platform";
+const ERROR_DETAIL_INVALID_ORIGINAL_SUBJECT = "invalid_original_subject";
+const INVALID_ORIGINAL_SUBJECT_MESSAGE = "Invalid original-subject platform header.";
 
 const READINESS_PATH = "readiness";
 // The readiness body, byte-for-byte as the reference sends it (`core/_base.py:46`).
@@ -104,6 +117,57 @@ isolated service class FoundryDispatcherService {
     # + return - `200` with `{"status":"healthy"}`
     isolated resource function get readiness() returns http:Response => readinessResponse();
 
+    # `POST /invocations`: resolves the invocation and session IDs, builds the platform context and
+    # calls the user's `post invocations` resource (`_create_invocation_endpoint`,
+    # `inv/_invocation.py:541-617`).
+    #
+    # The user's return value is returned as it is, so the http module turns it into the response
+    # exactly as it does for a `post` resource of its own (for example `201` for `anydata` and `202`
+    # for `()`). The response interceptor adds `x-agent-invocation-id` and `x-agent-session-id` to that
+    # response and to every error response.
+    #
+    # + ctx - The request context
+    # + request - The request
+    # + return - The user's result; a `400` when the original-subject header or the payload is
+    # invalid; a `501` when the service declares no `post invocations` resource; or an error, which
+    # the error interceptor turns into a response
+    isolated resource function post invocations(http:RequestContext ctx, http:Request request)
+            returns FoundryResourceResponse|error {
+        string invocationId = resolveInvokeInvocationId(firstHeaderValue(request, HEADER_INVOCATION_ID));
+        string sessionId = resolveInvokeSessionId(lastQueryParamValue(request, QUERY_AGENT_SESSION_ID),
+                self.config.agent.sessionId);
+        ctx.set(INVOCATION_ID_CONTEXT_KEY, invocationId);
+        ctx.set(SESSION_ID_CONTEXT_KEY, sessionId);
+
+        FoundryContext|FoundryOriginalSubjectError foundryContext =
+            foundryContextFromRequest(request, sessionId, invocationId, self.config.agent);
+        if foundryContext is FoundryOriginalSubjectError {
+            // Neither the header value nor the parse error, which describes it, is logged.
+            log:printWarn("Request rejected: invalid original-subject platform header.", invocationId = invocationId);
+            return invalidOriginalSubjectResponse();
+        }
+        FoundryResourceSignature? signature = check getFoundryResourceSignature(self, http:HTTP_POST,
+                [INVOCATIONS_PATH]);
+        if signature is () {
+            log:printError("The FoundryInvocationService declares no 'post invocations' resource",
+                    invocationId = invocationId);
+            return errorResponse(http:STATUS_NOT_IMPLEMENTED, ERROR_CODE_NOT_IMPLEMENTED,
+                    "The FoundryInvocationService declares no 'post invocations' resource.");
+        }
+        anydata payload = ();
+        typedesc<anydata>? payloadType = signature.payloadType;
+        if payloadType is typedesc<anydata> {
+            anydata|FoundryPayloadBindingError bound = bindFoundryPayload(request, payloadType);
+            if bound is FoundryPayloadBindingError {
+                return payloadBindingErrorResponse(bound);
+            }
+            payload = bound;
+        }
+        any|error result = invokeFoundryResource(self, http:HTTP_POST, [INVOCATIONS_PATH], [], payload,
+                foundryContext);
+        return toFoundryResourceResponse(result, invocationId);
+    }
+
     # Catch-all for every path and method that no other resource serves.
     #
     # The status codes and the `Allow` header match the reference (Starlette routing). The body is the
@@ -145,6 +209,9 @@ isolated function allowedMethods(string[] path) returns string[]? {
     if path == [READINESS_PATH] {
         return [http:HTTP_GET, http:HTTP_HEAD];
     }
+    if path == [INVOCATIONS_PATH] {
+        return [http:HTTP_POST];
+    }
     return ();
 }
 
@@ -181,6 +248,80 @@ isolated function errorResponse(int statusCode, string code, string message) ret
     response.statusCode = statusCode;
     response.setJsonPayload({'error: {code, message}});
     return response;
+}
+
+# Builds the `400` response to a request whose `x-ms-original-subject` header is invalid
+# (`_invalid_original_subject_response`, `inv/_invocation.py:178-192`). The header value is never
+# echoed.
+#
+# + return - The error response, classified as a platform error
+isolated function invalidOriginalSubjectResponse() returns http:Response {
+    http:Response response = errorResponse(http:STATUS_BAD_REQUEST, ERROR_CODE_INVALID_REQUEST,
+            INVALID_ORIGINAL_SUBJECT_MESSAGE);
+    response.setHeader(HEADER_ERROR_SOURCE, ERROR_SOURCE_PLATFORM);
+    response.setHeader(HEADER_ERROR_DETAIL, ERROR_DETAIL_INVALID_ORIGINAL_SUBJECT);
+    return response;
+}
+
+# Builds the `400` response to a request whose body can't be bound to the declared payload type. It
+# is the caller's mistake, so it is classified as a `user` error.
+#
+# + err - The binding error; its message never contains the body
+# + return - The error response
+isolated function payloadBindingErrorResponse(FoundryPayloadBindingError err) returns http:Response {
+    http:Response response = errorResponse(http:STATUS_BAD_REQUEST, ERROR_CODE_INVALID_REQUEST, err.message());
+    response.setHeader(HEADER_ERROR_SOURCE, ERROR_SOURCE_USER);
+    return response;
+}
+
+# Turns what the user's resource returned into what the dispatcher resource returns.
+#
+# A plain `anydata` value (other than `()`) is sent as `200 OK`, as the reference's handlers do,
+# instead of the `201 Created` the http module uses for a `post` resource; the media type is
+# inferred as http does (JSON, `text/plain` for `string`, `application/xml` for `xml`,
+# `application/octet-stream` for `byte[]`). `()` stays `202 Accepted` with no body. An
+# `http:Response`, a status-code record and an error are returned as they are, so the http module
+# and the error interceptor map them as they would for the user's own resource. A stream is handed
+# to `streamToFoundryResponse`.
+#
+# + result - The user's return value
+# + invocationId - The invocation ID, for logging
+# + return - The dispatcher resource's return value
+isolated function toFoundryResourceResponse(any|error result, string invocationId)
+        returns FoundryResourceResponse|error {
+    if result is error {
+        return result;
+    }
+    if result is anydata && result !is () {
+        http:Ok ok = {body: result};
+        return ok;
+    }
+    if result is FoundryResourceResponse {
+        return result;
+    }
+    if result is stream<any|error, error?> {
+        return streamToFoundryResponse(result, invocationId);
+    }
+    log:printError("The FoundryInvocationService resource returned a value the listener can't send",
+            invocationId = invocationId);
+    return errorResponse(http:STATUS_INTERNAL_SERVER_ERROR, ERROR_CODE_INTERNAL_ERROR, "Internal server error");
+}
+
+# Sends a stream returned by the user's resource. Server-sent event streaming is not supported yet,
+# so the request fails with a `500` and a log entry that says why.
+#
+# + result - The stream the user's resource returned
+# + invocationId - The invocation ID, for logging
+# + return - The `500` error response
+isolated function streamToFoundryResponse(stream<any|error, error?> result, string invocationId)
+        returns http:Response {
+    log:printError("The FoundryInvocationService resource returned a stream, but this version of the Foundry "
+            + "listener can't send streaming (server-sent event) responses", invocationId = invocationId);
+    error? closed = result.close();
+    if closed is error {
+        log:printDebug("Closing the unsent stream failed", closed);
+    }
+    return errorResponse(http:STATUS_INTERNAL_SERVER_ERROR, ERROR_CODE_INTERNAL_ERROR, "Internal server error");
 }
 
 # Resolves the `x-request-id` of a request, in the reference's order (`core/_request_id.py:100-120`):
@@ -239,12 +380,37 @@ isolated function setPlatformHeaders(http:Response response, string requestId) {
 #
 # + ctx - The request context
 # + return - The stored request ID, or `()` when none is stored
-isolated function requestIdFromContext(http:RequestContext ctx) returns string? {
-    if !ctx.hasKey(REQUEST_ID_CONTEXT_KEY) {
+isolated function requestIdFromContext(http:RequestContext ctx) returns string? =>
+    stringFromContext(ctx, REQUEST_ID_CONTEXT_KEY);
+
+# Reads a string stored in the request context.
+#
+# + ctx - The request context
+# + key - The key
+# + return - The stored string, or `()` when none is stored
+isolated function stringFromContext(http:RequestContext ctx, string key) returns string? {
+    if !ctx.hasKey(key) {
         return ();
     }
-    http:ReqCtxMember value = ctx.get(REQUEST_ID_CONTEXT_KEY);
+    http:ReqCtxMember value = ctx.get(key);
     return value is string ? value : ();
+}
+
+# Sets `x-agent-invocation-id` and `x-agent-session-id` on a response when a protocol resource stored
+# the resolved IDs in the request context. The values replace any the user's response set, as in the
+# reference (`inv/_invocation.py:586-587`).
+#
+# + response - The response
+# + ctx - The request context
+isolated function setInvocationHeaders(http:Response response, http:RequestContext ctx) {
+    string? invocationId = stringFromContext(ctx, INVOCATION_ID_CONTEXT_KEY);
+    if invocationId is string {
+        response.setHeader(HEADER_INVOCATION_ID, invocationId);
+    }
+    string? sessionId = stringFromContext(ctx, SESSION_ID_CONTEXT_KEY);
+    if sessionId is string {
+        response.setHeader(HEADER_SESSION_ID, sessionId);
+    }
 }
 
 # Resolves the request ID once per request and stores it in the request context, so the response
@@ -259,14 +425,16 @@ isolated service class FoundryRequestIdInterceptor {
     }
 }
 
-# Sets `x-platform-server` and `x-request-id` on every response of the dispatcher, including the
-# responses built by `FoundryResponseErrorInterceptor`.
+# Sets `x-platform-server` and `x-request-id` on every response of the dispatcher, and the invocation
+# and session IDs on every response to a protocol request, including the responses built by
+# `FoundryResponseErrorInterceptor`.
 isolated service class FoundryResponseHeaderInterceptor {
     *http:ResponseInterceptor;
 
     isolated remote function interceptResponse(http:RequestContext ctx, http:Response response)
             returns http:NextService|error? {
         setPlatformHeaders(response, requestIdFromContext(ctx) ?: newRequestId());
+        setInvocationHeaders(response, ctx);
         return ctx.next();
     }
 }
