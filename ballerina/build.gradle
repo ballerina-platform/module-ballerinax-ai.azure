@@ -65,6 +65,18 @@ task updateTomlFiles {
     doLast {
         def newBallerinaToml = ballerinaTomlFilePlaceHolder.text.replace("@project.version@", project.version)
         newBallerinaToml = newBallerinaToml.replace("@toml.version@", tomlVersion)
+                .replace("@azure.identity.version@", project.azureIdentityVersion)
+                .replace("@azure.core.version@", project.azureCoreVersion)
+                .replace("@azure.core.http.jdk.httpclient.version@", project.azureCoreHttpJdkHttpClientVersion)
+                .replace("@azure.json.version@", project.azureJsonVersion)
+                .replace("@azure.xml.version@", project.azureXmlVersion)
+                .replace("@msal4j.version@", project.msal4jVersion)
+                .replace("@msal4j.persistence.extension.version@", project.msal4jPersistenceExtensionVersion)
+                .replace("@jna.version@", project.jnaVersion)
+                .replace("@jna.platform.version@", project.jnaPlatformVersion)
+                .replace("@jackson.version@", project.jacksonVersion)
+                .replace("@reactor.core.version@", project.reactorCoreVersion)
+                .replace("@reactive.streams.version@", project.reactiveStreamsVersion)
         ballerinaTomlFile.text = newBallerinaToml
 
         def ballerinaToOpenApiVersion = project.ballerinaToOpenApiVersion

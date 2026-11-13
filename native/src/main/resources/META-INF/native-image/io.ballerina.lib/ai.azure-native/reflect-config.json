@@ -1,0 +1,189 @@
+[
+  {
+    "name": "com.azure.json.JsonSerializable"
+  },
+  {
+    "name": "com.azure.core.models.ResponseError",
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.azure.core.models.ResponseInnerError",
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.azure.core.util.serializer.JacksonAdapter",
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.azure.core.http.HttpHeaderName",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.azure.core.models.AzureCloud",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "com.azure.core.exception.HttpResponseException",
+    "allDeclaredConstructors": true
+  },
+  {
+    "name": "com.azure.core.http.rest.ResponseBase",
+    "queryAllDeclaredConstructors": true,
+    "methods": [
+      {
+        "name": "<init>",
+        "parameterTypes": [
+          "com.azure.core.http.HttpRequest",
+          "int",
+          "com.azure.core.http.HttpHeaders",
+          "java.lang.Object",
+          "java.lang.Object"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "com.azure.core.implementation.util.StringContent",
+    "fields": [
+      {
+        "name": "bytes"
+      }
+    ]
+  },
+  {
+    "name": "com.azure.core.util.Header",
+    "fields": [
+      {
+        "name": "cachedStringValue"
+      }
+    ]
+  },
+  {
+    "name": "com.azure.core.util.QueryParameter",
+    "fields": [
+      {
+        "name": "cachedStringValue"
+      }
+    ]
+  },
+  {
+    "name": "com.azure.identity.AzureIdentityEnvVars",
+    "methods": [
+      {
+        "name": "<init>",
+        "parameterTypes": []
+      }
+    ]
+  },
+  {
+    "name": "com.azure.identity.implementation.RegionalAuthority",
+    "methods": [
+      {
+        "name": "<init>",
+        "parameterTypes": []
+      }
+    ]
+  },
+  {
+    "name": "com.fasterxml.jackson.core.JsonFactory",
+    "methods": [
+      {
+        "name": "setStreamReadConstraints",
+        "parameterTypes": [
+          "com.fasterxml.jackson.core.StreamReadConstraints"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "com.fasterxml.jackson.core.StreamReadConstraints",
+    "methods": [
+      {
+        "name": "builder",
+        "parameterTypes": []
+      }
+    ]
+  },
+  {
+    "name": "com.fasterxml.jackson.core.StreamReadConstraints$Builder",
+    "methods": [
+      {
+        "name": "build",
+        "parameterTypes": []
+      },
+      {
+        "name": "maxStringLength",
+        "parameterTypes": [
+          "int"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "com.fasterxml.jackson.databind.ext.Java7SupportImpl",
+    "methods": [
+      {
+        "name": "<init>",
+        "parameterTypes": []
+      }
+    ]
+  },
+  {
+    "name": "java.lang.Thread",
+    "methods": [
+      {
+        "name": "isVirtual",
+        "parameterTypes": []
+      },
+      {
+        "name": "ofVirtual",
+        "parameterTypes": []
+      }
+    ]
+  },
+  {
+    "name": "java.lang.Thread$Builder",
+    "methods": [
+      {
+        "name": "factory",
+        "parameterTypes": []
+      },
+      {
+        "name": "name",
+        "parameterTypes": [
+          "java.lang.String",
+          "long"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "com.azure.core.util.SharedExecutorService"
+  },
+  {
+    "name": "com.azure.core.http.jdk.httpclient.implementation.JdkHttpResponseSync"
+  },
+  {
+    "name": "com.azure.core.implementation.util.InputStreamContent"
+  },
+  {
+    "name": "com.fasterxml.jackson.databind.deser.BeanDeserializerModifier[]"
+  },
+  {
+    "name": "com.fasterxml.jackson.databind.deser.Deserializers[]"
+  },
+  {
+    "name": "com.fasterxml.jackson.databind.deser.KeyDeserializers[]"
+  },
+  {
+    "name": "com.fasterxml.jackson.databind.deser.ValueInstantiators[]"
+  },
+  {
+    "name": "com.fasterxml.jackson.databind.ser.BeanSerializerModifier[]"
+  },
+  {
+    "name": "com.fasterxml.jackson.databind.ser.Serializers[]"
+  }
+]
