@@ -16,6 +16,7 @@
 
 import ballerina/ai;
 import ballerina/ai.observe;
+import ballerina/data.jsondata;
 import ballerina/http;
 import ballerinax/azure.openai.responses;
 
@@ -275,40 +276,54 @@ isolated function convertResponsesOutputToAssistantMessage(responses:InlineRespo
 
 # Posts a prepared Responses request to the configured surface.
 #
-# - **v1 GA** (`useV1` is `true`): the generated `responses:Client` posts `{serviceUrl}/responses`. `api-version`
-#   is only sent when the caller opted into `preview`/`v1` (`v1ApiVersion`).
+# - **v1 GA** (`useV1` is `true`): `{serviceUrl}/responses` is posted by the generated `responses:Client` with an
+#   API key, or by the raw HTTP client with an `Authorization: Bearer` token when a credential is used.
+#   `api-version` is only sent when the caller opted into `preview`/`v1` (`v1ApiVersion`).
 # - **Legacy** (otherwise): the raw HTTP client posts `POST {legacyBase}/responses?api-version={apiVersion}` with
-#   the `api-key` header, where `legacyBase` is the resolved legacy base URL (see `resolveLegacyBase`).
+#   the `api-key` or `Authorization` header, where `legacyBase` is the resolved legacy base URL (see
+#   `resolveLegacyBase`).
 #
-# + responsesClient - The generated Responses connector for the v1 GA surface (`()` on the legacy path)
-# + legacyResponsesClient - The raw HTTP client for the legacy route (`()` on the v1 path)
+# + responsesClient - The generated Responses connector for the v1 GA surface with an API key (`()` otherwise)
+# + rawResponsesClient - The raw HTTP client for the legacy route, or for the v1 route with a credential (`()`
+#                        otherwise)
 # + useV1 - `true` to target the v1 GA surface; `false` for the legacy route
-# + apiKey - The Azure OpenAI API key (sent as `api-key` on the legacy route)
+# + auth - The Azure OpenAI API key, or the Entra ID bearer authentication
 # + apiVersion - The date-based `api-version` query value used on the legacy route
 # + v1ApiVersion - The `preview`/`v1` api-version forwarded on the v1 route, if any
 # + request - The prepared Responses request
 # + return - The Responses API response, or an `error` on failure
-isolated function postResponsesRequest(responses:Client? responsesClient, http:Client? legacyResponsesClient,
-        boolean useV1, string apiKey, string? apiVersion, string? v1ApiVersion,
+isolated function postResponsesRequest(responses:Client? responsesClient, http:Client? rawResponsesClient,
+        boolean useV1, string|BearerAuth auth, string? apiVersion, string? v1ApiVersion,
         responses:OpenAICreateResponse request) returns responses:InlineResponse200|error {
     if useV1 {
-        responses:Client? llmClient = responsesClient;
+        if auth is string {
+            responses:Client? llmClient = responsesClient;
+            if llmClient is () {
+                return error("Responses (v1) client is not initialized");
+            }
+            if v1ApiVersion is string {
+                return llmClient->/responses.post(request,
+                        api\-version = <responses:AzureAIFoundryModelsApiVersion>v1ApiVersion);
+            }
+            return llmClient->/responses.post(request);
+        }
+        http:Client? llmClient = rawResponsesClient;
         if llmClient is () {
             return error("Responses (v1) client is not initialized");
         }
-        if v1ApiVersion is string {
-            return llmClient->/responses.post(request,
-                    api\-version = <responses:AzureAIFoundryModelsApiVersion>v1ApiVersion);
-        }
-        return llmClient->/responses.post(request);
+        // The same serialization as the generated connector.
+        json body = jsondata:toJson(request);
+        responses:InlineResponse200 response = check llmClient->post(v1Path("/responses", v1ApiVersion), body,
+                check auth.headers());
+        return response;
     }
 
-    http:Client? llmClient = legacyResponsesClient;
+    http:Client? llmClient = rawResponsesClient;
     if llmClient is () {
         return error("Responses (legacy) client is not initialized");
     }
     responses:InlineResponse200 response = check llmClient->post(
-            string `/responses?api-version=${apiVersion ?: ""}`, request.toJson(), {"api-key": apiKey});
+            string `/responses?api-version=${apiVersion ?: ""}`, request.toJson(), check authHeaders(auth));
     return response;
 }
 
@@ -372,10 +387,11 @@ isolated function toResponsesConnectionConfig(string apiKey, ConnectionConfig cc
 
 # Generates a structured value from the LLM via the Responses API (the `generate` method's responses path).
 #
-# + responsesClient - The generated Responses connector for the v1 GA surface (`()` on the legacy path)
-# + legacyResponsesClient - The raw HTTP client for the legacy route (`()` on the v1 path)
+# + responsesClient - The generated Responses connector for the v1 GA surface with an API key (`()` otherwise)
+# + rawResponsesClient - The raw HTTP client for the legacy route, or for the v1 route with a credential (`()`
+#                        otherwise)
 # + useV1 - `true` to target the v1 GA surface; `false` for the legacy route
-# + apiKey - The Azure OpenAI API key
+# + auth - The Azure OpenAI API key, or the Entra ID bearer authentication
 # + apiVersion - The date-based `api-version` used on the legacy route
 # + v1ApiVersion - The `preview`/`v1` api-version forwarded on the v1 route, if any
 # + deploymentId - The Azure deployment ID (used as the model name)
@@ -386,7 +402,8 @@ isolated function toResponsesConnectionConfig(string apiKey, ConnectionConfig cc
 # + expectedResponseTypedesc - The expected response type descriptor
 # + return - The parsed response, or an error
 isolated function generateLlmResponseViaResponses(responses:Client? responsesClient,
-        http:Client? legacyResponsesClient, boolean useV1, string apiKey, string? apiVersion, string? v1ApiVersion,
+        http:Client? rawResponsesClient, boolean useV1, string|BearerAuth auth, string? apiVersion,
+        string? v1ApiVersion,
         string deploymentId, decimal? temperature, int maxTokens, ReasoningEffort? reasoning,
         ai:Prompt prompt, typedesc<json> expectedResponseTypedesc) returns anydata|ai:Error {
     observe:GenerateContentSpan span = observe:createGenerateContentSpan(deploymentId);
@@ -436,8 +453,8 @@ isolated function generateLlmResponseViaResponses(responses:Client? responsesCli
     }
     span.addInputMessages([inputMessage].toJson());
 
-    responses:InlineResponse200|error response = postResponsesRequest(responsesClient, legacyResponsesClient,
-            useV1, apiKey, apiVersion, v1ApiVersion, request);
+    responses:InlineResponse200|error response = postResponsesRequest(responsesClient, rawResponsesClient,
+            useV1, auth, apiVersion, v1ApiVersion, request);
     if response is error {
         ai:Error err = error("LLM call failed: " + response.message(), detail = response.detail(), cause = response.cause());
         span.close(err);

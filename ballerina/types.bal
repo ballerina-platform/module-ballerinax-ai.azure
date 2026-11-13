@@ -75,6 +75,13 @@ public type ConnectionConfig record {|
     # Enables the inbound payload validation functionality which provided by the constraint package. Enabled by default
     @display {label: "Payload Validation"}
     boolean validation = true;
+
+    # Microsoft Entra ID token scope, used only when authenticating with a credential. By default it is derived
+    # from the service URL (for example, `https://cognitiveservices.azure.com/.default` for an Azure OpenAI
+    # resource, or `https://ai.azure.com/.default` for a Foundry project endpoint); set it for other hosts, such as
+    # an API Management gateway.
+    @display {label: "Token Scope"}
+    string tokenScope?;
 |};
 
 # The Azure OpenAI API surface used by the `OpenAiModelProvider`.

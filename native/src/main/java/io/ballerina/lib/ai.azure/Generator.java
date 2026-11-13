@@ -29,8 +29,8 @@ import io.ballerina.runtime.api.values.BTypedesc;
  *
  * <p>The {@code OpenAiModelProvider} selects its API surface through the {@code apiType} field. When it is
  * {@code CHAT_COMPLETIONS} (the default), the request is routed to the Chat Completions API; otherwise it is
- * routed to the Responses API. Each path in turn selects the v1 GA connector or the legacy raw HTTP client based
- * on the {@code useV1} flag.
+ * routed to the Responses API. Each path in turn selects the v1 GA connector or the raw HTTP client based on the
+ * {@code useV1} flag and the {@code auth} field (an API key, or the Entra ID bearer authentication).
  *
  * @since 1.0.0
  */
@@ -41,11 +41,11 @@ public class Generator {
 
     private static final String API_TYPE = "apiType";
     private static final String CHAT_CLIENT = "chatClient";
-    private static final String LEGACY_CHAT_CLIENT = "legacyChatClient";
+    private static final String RAW_CHAT_CLIENT = "rawChatClient";
     private static final String RESPONSES_CLIENT = "responsesClient";
-    private static final String LEGACY_RESPONSES_CLIENT = "legacyResponsesClient";
+    private static final String RAW_RESPONSES_CLIENT = "rawResponsesClient";
     private static final String USE_V1 = "useV1";
-    private static final String API_KEY = "apiKey";
+    private static final String AUTH = "auth";
     private static final String DEPLOYMENT_ID = "deploymentId";
     private static final String API_VERSION = "apiVersion";
     private static final String V1_API_VERSION = "v1ApiVersion";
@@ -67,9 +67,9 @@ public class Generator {
         return env.getRuntime().callFunction(
                 MODULE, "generateLlmResponseViaResponses", null,
                 modelProvider.get(StringUtils.fromString(RESPONSES_CLIENT)),
-                modelProvider.get(StringUtils.fromString(LEGACY_RESPONSES_CLIENT)),
+                modelProvider.get(StringUtils.fromString(RAW_RESPONSES_CLIENT)),
                 modelProvider.get(StringUtils.fromString(USE_V1)),
-                modelProvider.get(StringUtils.fromString(API_KEY)),
+                modelProvider.get(StringUtils.fromString(AUTH)),
                 modelProvider.get(StringUtils.fromString(API_VERSION)),
                 modelProvider.get(StringUtils.fromString(V1_API_VERSION)),
                 modelProvider.get(StringUtils.fromString(DEPLOYMENT_ID)),
@@ -84,9 +84,9 @@ public class Generator {
         return env.getRuntime().callFunction(
                 MODULE, "generateLlmResponse", null,
                 modelProvider.get(StringUtils.fromString(CHAT_CLIENT)),
-                modelProvider.get(StringUtils.fromString(LEGACY_CHAT_CLIENT)),
+                modelProvider.get(StringUtils.fromString(RAW_CHAT_CLIENT)),
                 modelProvider.get(StringUtils.fromString(USE_V1)),
-                modelProvider.get(StringUtils.fromString(API_KEY)),
+                modelProvider.get(StringUtils.fromString(AUTH)),
                 modelProvider.get(StringUtils.fromString(DEPLOYMENT_ID)),
                 modelProvider.get(StringUtils.fromString(API_VERSION)),
                 modelProvider.get(StringUtils.fromString(V1_API_VERSION)),

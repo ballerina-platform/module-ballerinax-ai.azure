@@ -345,53 +345,73 @@ isolated function buildLegacyChatBody(chat:ChatCompletionsBody request) returns 
 
 # Posts a prepared Chat Completions request to the configured surface.
 #
-# - **v1 GA** (`useV1` is `true`): the generated `chat:Client` posts `{serviceUrl}/chat/completions`. `api-version`
-#   is only sent when the caller opted into `preview`/`v1` (`v1ApiVersion`).
+# - **v1 GA** (`useV1` is `true`): `{serviceUrl}/chat/completions` is posted by the generated `chat:Client` with an
+#   API key, or by the raw HTTP client with an `Authorization: Bearer` token when a credential is used.
+#   `api-version` is only sent when the caller opted into `preview`/`v1` (`v1ApiVersion`).
 # - **Legacy** (otherwise): the raw HTTP client posts
-#   `POST {legacyBase}/deployments/{deploymentId}/chat/completions?api-version={apiVersion}` with the `api-key`
-#   header, where `legacyBase` is the resolved legacy base URL (see `resolveLegacyBase`).
+#   `POST {legacyBase}/deployments/{deploymentId}/chat/completions?api-version={apiVersion}` with the `api-key` or
+#   `Authorization` header, where `legacyBase` is the resolved legacy base URL (see `resolveLegacyBase`).
 #
-# + chatClient - The generated Chat Completions connector for the v1 GA surface (`()` on the legacy path)
-# + legacyChatClient - The raw HTTP client for the legacy route (`()` on the v1 path)
+# + chatClient - The generated Chat Completions connector for the v1 GA surface with an API key (`()` otherwise)
+# + rawChatClient - The raw HTTP client for the legacy route, or for the v1 route with a credential (`()` otherwise)
 # + useV1 - `true` to target the v1 GA surface; `false` for the legacy route
-# + apiKey - The Azure OpenAI API key (sent as `api-key` on the legacy route)
+# + auth - The Azure OpenAI API key, or the Entra ID bearer authentication
 # + deploymentId - The Azure deployment ID
 # + apiVersion - The date-based `api-version` query value used on the legacy route
 # + v1ApiVersion - The `preview`/`v1` api-version to forward on the v1 route, if any
 # + request - The prepared Chat Completions request
 # + return - The parsed Chat Completions response, or an `error` on failure
-isolated function postChatCompletion(chat:Client? chatClient, http:Client? legacyChatClient, boolean useV1,
-        string apiKey, string deploymentId, string? apiVersion, string? v1ApiVersion,
+isolated function postChatCompletion(chat:Client? chatClient, http:Client? rawChatClient, boolean useV1,
+        string|BearerAuth auth, string deploymentId, string? apiVersion, string? v1ApiVersion,
         chat:ChatCompletionsBody request) returns chat:InlineResponse200|error {
     if useV1 {
-        chat:Client? llmClient = chatClient;
+        if auth is string {
+            chat:Client? llmClient = chatClient;
+            if llmClient is () {
+                return error("Chat Completions (v1) client is not initialized");
+            }
+            if v1ApiVersion is string {
+                return llmClient->/chat/completions.post(request,
+                        api\-version = <chat:AzureAIFoundryModelsApiVersion>v1ApiVersion);
+            }
+            return llmClient->/chat/completions.post(request);
+        }
+        http:Client? llmClient = rawChatClient;
         if llmClient is () {
             return error("Chat Completions (v1) client is not initialized");
         }
-        if v1ApiVersion is string {
-            return llmClient->/chat/completions.post(request,
-                    api\-version = <chat:AzureAIFoundryModelsApiVersion>v1ApiVersion);
-        }
-        return llmClient->/chat/completions.post(request);
+        // The same serialization as the generated connector.
+        json body = jsondata:toJson(request);
+        chat:InlineResponse200 result = check llmClient->post(v1Path("/chat/completions", v1ApiVersion), body,
+                check auth.headers());
+        return result;
     }
 
-    http:Client? llmClient = legacyChatClient;
+    http:Client? llmClient = rawChatClient;
     if llmClient is () {
         return error("Chat Completions (legacy) client is not initialized");
     }
     map<json> body = check buildLegacyChatBody(request);
     chat:InlineResponse200 result = check llmClient->post(
             string `/deployments/${deploymentId}/chat/completions?api-version=${apiVersion ?: ""}`,
-            body, {"api-key": apiKey});
+            body, check authHeaders(auth));
     return result;
 }
 
+# Builds the resource path of a v1 GA route posted through a raw HTTP client.
+#
+# + resourcePath - The route, e.g. `/chat/completions`
+# + v1ApiVersion - The `preview`/`v1` api-version to forward, if any
+# + return - The resource path, with `?api-version=...` only when `v1ApiVersion` is set
+isolated function v1Path(string resourcePath, string? v1ApiVersion) returns string =>
+    v1ApiVersion is string ? string `${resourcePath}?api-version=${v1ApiVersion}` : resourcePath;
+
 # Generates a structured value from the LLM via the Chat Completions API (the `generate` method's chat path).
 #
-# + chatClient - The generated Chat Completions connector for the v1 GA surface (`()` on the legacy path)
-# + legacyChatClient - The raw HTTP client for the legacy route (`()` on the v1 path)
+# + chatClient - The generated Chat Completions connector for the v1 GA surface with an API key (`()` otherwise)
+# + rawChatClient - The raw HTTP client for the legacy route, or for the v1 route with a credential (`()` otherwise)
 # + useV1 - `true` to target the v1 GA surface; `false` for the legacy route
-# + apiKey - The Azure OpenAI API key
+# + auth - The Azure OpenAI API key, or the Entra ID bearer authentication
 # + deploymentId - The Azure deployment ID (also sent as the `model` on the v1 route)
 # + apiVersion - The date-based `api-version` used on the legacy route
 # + v1ApiVersion - The `preview`/`v1` api-version forwarded on the v1 route, if any
@@ -401,8 +421,8 @@ isolated function postChatCompletion(chat:Client? chatClient, http:Client? legac
 # + prompt - The user prompt
 # + expectedResponseTypedesc - The expected response type descriptor
 # + return - The parsed response, or an `ai:Error`
-isolated function generateLlmResponse(chat:Client? chatClient, http:Client? legacyChatClient, boolean useV1,
-        string apiKey, string deploymentId, string? apiVersion, string? v1ApiVersion, decimal? temperature,
+isolated function generateLlmResponse(chat:Client? chatClient, http:Client? rawChatClient, boolean useV1,
+        string|BearerAuth auth, string deploymentId, string? apiVersion, string? v1ApiVersion, decimal? temperature,
         int maxTokens, ReasoningEffort? reasoning, ai:Prompt prompt, typedesc<json> expectedResponseTypedesc)
         returns anydata|ai:Error {
     observe:GenerateContentSpan span = observe:createGenerateContentSpan(deploymentId);
@@ -440,7 +460,7 @@ isolated function generateLlmResponse(chat:Client? chatClient, http:Client? lega
     applyMaxTokens(request, maxTokens, useV1 || usesMaxCompletionTokens(apiVersion ?: ""));
     span.addInputMessages(messages.toJson());
 
-    chat:InlineResponse200|error response = postChatCompletion(chatClient, legacyChatClient, useV1, apiKey,
+    chat:InlineResponse200|error response = postChatCompletion(chatClient, rawChatClient, useV1, auth,
             deploymentId, apiVersion, v1ApiVersion, request);
     if response is error {
         ai:Error err = error("LLM call failed: " + response.message(), cause = response.cause(), detail = response.detail());
