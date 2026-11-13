@@ -68,7 +68,9 @@ import static io.ballerina.lib.ai.azure.diagnostics.FoundryDiagnostic.INVALID_PA
 import static io.ballerina.lib.ai.azure.diagnostics.FoundryDiagnostic.INVALID_PAYLOAD_TYPE;
 import static io.ballerina.lib.ai.azure.diagnostics.FoundryDiagnostic.INVALID_RETURN_TYPE;
 import static io.ballerina.lib.ai.azure.diagnostics.FoundryDiagnostic.MISSING_INVOKE_RESOURCE;
+import static io.ballerina.lib.ai.azure.diagnostics.FoundryDiagnostic.MISSING_READINESS_RESOURCE;
 import static io.ballerina.lib.ai.azure.diagnostics.FoundryDiagnostic.PAYLOAD_NOT_ALLOWED;
+import static io.ballerina.lib.ai.azure.diagnostics.FoundryDiagnostic.READINESS_PARAMETER_NOT_ALLOWED;
 import static io.ballerina.lib.ai.azure.diagnostics.FoundryDiagnostic.REMOTE_FUNCTION_NOT_ALLOWED;
 import static io.ballerina.lib.ai.azure.diagnostics.FoundryDiagnostic.STREAM_RETURN_TYPE;
 import static io.ballerina.lib.ai.azure.diagnostics.FoundryDiagnostic.UNSUPPORTED_PARAMETER;
@@ -78,14 +80,16 @@ import static io.ballerina.lib.ai.azure.diagnostics.FoundryDiagnostic.UNSUPPORTE
  * Validates an {@code azure:FoundryInvocationService} against the resource contract of the Foundry listener.
  *
  * <p>The service type is only {@code *http:Service}, so the compiler accepts any resource. The listener's dispatcher
- * only ever calls three resources and supplies a fixed set of arguments, and anything else is answered at run time
+ * only ever calls four resources and supplies a fixed set of arguments, and anything else is answered at run time
  * with a {@code 500} (or never reached at all). This task rejects those shapes at compile time instead:
  * <ul>
- * <li>the service must declare {@code post invocations};</li>
- * <li>the only resources are {@code post invocations}, {@code get invocations/[string invocationId]} and
- * {@code post invocations/[string invocationId]/cancel}; remote functions are not allowed;</li>
- * <li>a resource parameter is either the {@code @http:Payload} parameter (an {@code anydata} subtype; not on the
- * get resource) or an {@code azure:FoundryContext} parameter, each at most once and in any order, and the path
+ * <li>the service must declare {@code post invocations} and {@code get readiness};</li>
+ * <li>the only resources are {@code post invocations}, {@code get readiness},
+ * {@code get invocations/[string invocationId]} and {@code post invocations/[string invocationId]/cancel}; remote
+ * functions are not allowed;</li>
+ * <li>{@code get readiness} declares no parameters;</li>
+ * <li>any other resource parameter is either the {@code @http:Payload} parameter (an {@code anydata} subtype; not on
+ * the get resource) or an {@code azure:FoundryContext} parameter, each at most once and in any order, and the path
  * parameter is a {@code string};</li>
  * <li>a resource returns a subtype of {@code anydata|http:Response|http:StatusCodeResponse|error}, and never a
  * stream;</li>
@@ -116,6 +120,7 @@ public class FoundryServiceValidationTask implements AnalysisTask<SyntaxNodeAnal
     private static final String POST = "post";
     private static final String GET = "get";
     private static final String INVOCATIONS = "invocations";
+    private static final String READINESS = "readiness";
     private static final String CANCEL = "cancel";
     private static final String PATH_PARAM = "^";
 
@@ -291,9 +296,12 @@ public class FoundryServiceValidationTask implements AnalysisTask<SyntaxNodeAnal
 
         void validate(NodeList<Node> members, Location serviceLocation) {
             boolean hasInvokeResource = false;
+            boolean hasReadinessResource = false;
             for (Node member : members) {
                 if (member.kind() == SyntaxKind.RESOURCE_ACCESSOR_DEFINITION) {
-                    hasInvokeResource |= validateResource((FunctionDefinitionNode) member);
+                    ResourceKind kind = validateResource((FunctionDefinitionNode) member);
+                    hasInvokeResource |= kind == ResourceKind.INVOKE;
+                    hasReadinessResource |= kind == ResourceKind.READINESS;
                 } else if (member.kind() == SyntaxKind.OBJECT_METHOD_DEFINITION) {
                     FunctionDefinitionNode method = (FunctionDefinitionNode) member;
                     if (hasQualifier(method.qualifierList(), SyntaxKind.REMOTE_KEYWORD)) {
@@ -305,29 +313,50 @@ public class FoundryServiceValidationTask implements AnalysisTask<SyntaxNodeAnal
             if (!hasInvokeResource) {
                 report(MISSING_INVOKE_RESOURCE, serviceLocation);
             }
+            if (!hasReadinessResource) {
+                report(MISSING_READINESS_RESOURCE, serviceLocation);
+            }
         }
 
-        // Returns whether the resource is `post invocations`.
-        private boolean validateResource(FunctionDefinitionNode resource) {
+        // Validates one resource and returns which of the supported resources it is.
+        private ResourceKind validateResource(FunctionDefinitionNode resource) {
             String accessor = resource.functionName().text().trim().toLowerCase(Locale.ROOT);
             List<String> shape = pathShape(resource.relativeResourcePath());
             String label = resourceLabel(resource);
-            boolean isInvoke = POST.equals(accessor) && shape.equals(List.of(INVOCATIONS));
-            boolean isGet = GET.equals(accessor) && shape.equals(List.of(INVOCATIONS, PATH_PARAM));
-            boolean isCancel = POST.equals(accessor) && shape.equals(List.of(INVOCATIONS, PATH_PARAM, CANCEL));
-            if (!isInvoke && !isGet && !isCancel) {
+            ResourceKind kind;
+            if (POST.equals(accessor) && shape.equals(List.of(INVOCATIONS))) {
+                kind = ResourceKind.INVOKE;
+            } else if (GET.equals(accessor) && shape.equals(List.of(READINESS))) {
+                kind = ResourceKind.READINESS;
+            } else if (GET.equals(accessor) && shape.equals(List.of(INVOCATIONS, PATH_PARAM))) {
+                kind = ResourceKind.GET;
+            } else if (POST.equals(accessor) && shape.equals(List.of(INVOCATIONS, PATH_PARAM, CANCEL))) {
+                kind = ResourceKind.CANCEL;
+            } else {
                 report(UNSUPPORTED_RESOURCE, resourceLocation(resource), label);
-                return false;
+                return ResourceKind.UNSUPPORTED;
             }
             Optional<Symbol> symbol = semanticModel.symbol(resource);
             ResourceMethodSymbol resourceSymbol = symbol.isPresent()
                     && symbol.get() instanceof ResourceMethodSymbol method ? method : null;
-            validatePathParameters(resource, resourceSymbol, label);
-            validateParameters(resource, label, !isGet);
+            if (kind == ResourceKind.READINESS) {
+                validateReadinessParameters(resource, label);
+            } else {
+                validatePathParameters(resource, resourceSymbol, label);
+                validateParameters(resource, label, kind != ResourceKind.GET);
+            }
             if (resourceSymbol != null) {
                 validateReturnType(resource, resourceSymbol, label);
             }
-            return isInvoke;
+            return kind;
+        }
+
+        // The readiness probe carries no payload and no platform headers, so the dispatcher passes the readiness
+        // resource no arguments: every parameter is rejected, whatever its kind or annotation.
+        private void validateReadinessParameters(FunctionDefinitionNode resource, String label) {
+            for (ParameterNode parameter : resource.functionSignature().parameters()) {
+                report(READINESS_PARAMETER_NOT_ALLOWED, parameter.location(), label, parameterName(parameter));
+            }
         }
 
         private void validatePathParameters(FunctionDefinitionNode resource, ResourceMethodSymbol resourceSymbol,
@@ -410,7 +439,8 @@ public class FoundryServiceValidationTask implements AnalysisTask<SyntaxNodeAnal
             Optional<ReturnTypeDescriptorNode> returnTypeNode = resource.functionSignature().returnTypeDesc();
             Optional<TypeSymbol> returnType = resourceSymbol.typeDescriptor().returnTypeDescriptor();
             if (returnTypeNode.isEmpty() || returnType.isEmpty()) {
-                // No return type is `()`, which is sent as `202 Accepted`.
+                // No return type is `()`, which is sent as `202 Accepted` (for readiness, as the default
+                // `200 {"status":"healthy"}`).
                 return;
             }
             List<TypeSymbol> members = new ArrayList<>();
@@ -656,6 +686,17 @@ public class FoundryServiceValidationTask implements AnalysisTask<SyntaxNodeAnal
         int end = last.textRange().endOffset();
         return new SpanLocation(LineRange.from(firstRange.fileName(), firstRange.startLine(), lastRange.endLine()),
                 TextRange.from(start, end - start));
+    }
+
+    /**
+     * The resources the dispatcher serves, and {@code UNSUPPORTED} for any other resource.
+     */
+    private enum ResourceKind {
+        INVOKE,
+        READINESS,
+        GET,
+        CANCEL,
+        UNSUPPORTED
     }
 
     /**

@@ -20,11 +20,12 @@ import ballerina/os;
 # A service that runs as a Microsoft Foundry hosted agent using the Invocations protocol.
 #
 # Attach it to an `azure:FoundryListener`. The service declares the required
-# `resource function post invocations` and, optionally,
+# `resource function post invocations` and `resource function get readiness` (the readiness
+# probe, with no parameters) and, optionally,
 # `resource function get invocations/[string invocationId]` and
-# `resource function post invocations/[string invocationId]/cancel`. The listener handles the
-# platform contract (readiness, session and invocation IDs, platform headers, error
-# classification), so the resources contain only agent logic.
+# `resource function post invocations/[string invocationId]/cancel`. The compiler plugin enforces
+# this. The listener handles the platform contract (session and invocation IDs, platform headers,
+# error classification), so the resources contain only agent logic.
 public type FoundryInvocationService distinct service object {
     *http:Service;
 };

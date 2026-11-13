@@ -20,4 +20,6 @@ listener azure:FoundryListener foundryListener = new (9201);
 
 service azure:FoundryInvocationService on foundryListener {
     resource function get invocations/[string invocationId]() returns json => {id: invocationId};
+
+    resource function get readiness() returns json => {status: "healthy"};
 }

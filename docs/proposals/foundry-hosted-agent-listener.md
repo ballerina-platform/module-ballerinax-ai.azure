@@ -46,6 +46,9 @@ service azure:FoundryInvocationService on foundryListener {
         return {reply: message, session: ctx.sessionId};
     }
 
+    // Required. GET /readiness (and HEAD). `()` is the default 200 {"status":"healthy"}.
+    resource function get readiness() returns json => {status: "healthy"};
+
     // Optional. GET /invocations/{invocationId}
     resource function get invocations/[string invocationId](azure:FoundryContext ctx)
             returns json|error => {id: invocationId, status: "completed"};
@@ -59,7 +62,9 @@ service azure:FoundryInvocationService on foundryListener {
 ### Types
 
 ```ballerina
-# Service type for a Foundry hosted agent speaking the Invocations protocol.
+# Service type for a Foundry hosted agent speaking the Invocations protocol. A marker type: the
+# required resources (`post invocations`, `get readiness`) are enforced by the compiler plugin, not
+# declared here, so the payload and context parameters stay flexible.
 public type FoundryInvocationService distinct service object {
     *http:Service;
 };
@@ -116,6 +121,10 @@ public type FoundryAgentInfo record {|
     string? id;               // FOUNDRY_AGENT_ID
     string? sessionId;        // FOUNDRY_AGENT_SESSION_ID
 |};
+
+# The headers to forward on outbound calls to Foundry platform services: `x-agent-foundry-call-id`
+# when `ctx.callId` is set, otherwise none. The user ID is never included.
+public isolated function foundryPlatformHeaders(FoundryContext ctx) returns map<string>;
 ```
 
 Naming notes:
@@ -131,16 +140,64 @@ Naming notes:
 | Resource | Parameters (any order) | Return types |
 |---|---|---|
 | `post invocations` (required) | optional `@http:Payload` of `json`, `string`, `byte[]`, `xml` or any `anydata` subtype (records, arrays, maps); optional `azure:FoundryContext` | `anydata`, `http:Response`, any `http:StatusCodeResponse`, `error`, `()`, or a union of these. No streams: the listener doesn't send server-sent events |
+| `get readiness` (required) | none | same, but `()` means "ready" (see below) |
 | `get invocations/[string invocationId]` (optional) | path parameter; optional `azure:FoundryContext` | same |
 | `post invocations/[string invocationId]/cancel` (optional) | path parameter; optional `@http:Payload` (bound as for `post invocations`); optional `azure:FoundryContext` | same |
 
 The compiler plugin enforces this table at compile time (see [Compiler plugin](#compiler-plugin)).
-The dispatcher still checks it at run time, as a safety net: a resource that breaks it is answered
-with a `500` classified as `upstream` (the agent author's mistake): an unsupported parameter
+The dispatcher still checks it at run time, as a safety net: a protocol resource that breaks it is
+answered with a `500` classified as `upstream` (the agent author's mistake): an unsupported parameter
 (including a path parameter whose type doesn't accept every `string`), an `@http:Payload` parameter
 on the get resource (a GET request has no body to bind), or a return value outside the table
 (including a stream). The cancel resource may declare a payload because the reference hands its
 handler the raw request, so a cancel request can carry a body such as a reason.
+
+**Decision: both resources are required, enforced by the compiler plugin, not declared in the type.**
+`FoundryInvocationService` stays the marker type `distinct service object { *http:Service; }`.
+Declaring `resource function post invocations(...)` in the type would fix one parameter list and
+return type, while the listener accepts many (any `anydata` payload type, the context anywhere or
+not at all). The plugin makes both resources mandatory (`101`, `113`) with that flexibility kept.
+
+#### The readiness resource
+
+The reference lets an agent register a readiness handler (`readiness_handler`, `core/_base.py:771-790`)
+that replaces the default `200 {"status":"healthy"}` (`_readiness_endpoint`, `core/_base.py:1200-1210`).
+Here the `get readiness` resource is that handler, and it is required, so every agent states its
+readiness logic explicitly (often just "always ready").
+
+- **No parameters.** The reference passes the raw request, but a health probe carries no body and no
+  platform headers (no session, invocation or user ID), so neither an `@http:Payload` nor an
+  `azure:FoundryContext` parameter would have anything to bind. A readiness check that needs state
+  reads it from the module (for example a flag set when a model client is warmed up). An
+  `http:Request` parameter is not supported by any Foundry resource. The compiler plugin rejects any
+  parameter (`114`).
+- **Returns**, mapped by `toReadinessResponse`:
+  - `()` (or no return type): the default response, `200` with `{"status":"healthy"}`
+    (`application/json`), byte-for-byte the reference's default. For `post invocations` `()` is
+    `202 Accepted`, but readiness has no "accepted" meaning; a resource that returns nothing reports
+    ready, as the reference does with no handler registered, so `resource function get readiness() {}`
+    is the minimal "always ready" probe.
+  - any other `anydata` value: `200` with that body, by the same rule as `post invocations` (JSON, or
+    `text/plain` for `string`, and so on).
+  - `http:Response` or a status-code record: sent as it is, so `http:ServiceUnavailable` (with a body
+    and headers such as `retry-after`) reports "not ready". Foundry treats any non-2xx as not ready.
+  - an error, returned or panicked: as the http module maps an error: a `500` with the error envelope
+    and the generic `Internal server error` message, or the status of an `httpscerr` status-code error
+    (so `httpscerr:ServiceUnavailableError` is a `503`). In the reference an exception raised by the
+    readiness handler reaches Starlette's `ServerErrorMiddleware`, which also answers `500`.
+  - anything else (a stream): a `500`; the compiler plugin rejects it (`110`, `111`).
+- **Not a protocol endpoint.** Readiness responses carry `x-platform-server` and `x-request-id`, but
+  never `x-platform-error-source`, `x-platform-error-detail` or the `x-agent-*` ID headers, whatever the
+  status, as in the reference, where nothing classifies the readiness response. The listener-owned
+  headers an `http:ApplicationResponseError` brings from another service's response are dropped, as on
+  the protocol routes.
+- **`HEAD /readiness`** calls the readiness resource and sends the `GET` response without its body, as
+  Starlette serves `HEAD` on a `GET` route.
+- **Missing at run time** (only possible if the compiler plugin did not run): the default
+  `200 {"status":"healthy"}`, logged at debug level, as the reference answers when no handler is
+  registered. A `500` would take a running agent out of rotation for a mistake the compiler already
+  reports. A readiness resource with a parameter, or a dispatcher with no linked service (a probe that
+  races a detach), is a `500`, unclassified like every readiness response.
 
 ## Dispatcher design
 
@@ -158,9 +215,11 @@ handler the raw request, so a cancel request can carry a body such as a reason.
   services; `NativeFoundryResourceInvoker` calls the user's resources), not reuse of the
   `ballerina/ai` one. The `ai` adaptor is internal Java (not exported) and hard-codes the
   `chat`/`decision` resources and a fixed payload type. The Foundry adaptor instead:
-  - finds `post invocations`, `get invocations/*` and `post invocations/*/cancel` by accessor and
-    path shape (`["invocations"]`, `["invocations", "^"]`, `["invocations", "^", "cancel"]`, with
-    `^` for a path parameter as `getResourcePath()` reports it);
+  - finds `post invocations`, `get readiness`, `get invocations/*` and `post invocations/*/cancel` by
+    accessor and path shape (`["invocations"]`, `["readiness"]`, `["invocations", "^"]`,
+    `["invocations", "^", "cancel"]`, with `^` for a path parameter as `getResourcePath()` reports it);
+    the signature it reports (`payloadType`, `hasContext`) lets the dispatcher reject a readiness
+    resource that declares a parameter before calling it;
   - works out each parameter's role (path parameters first, then the `@http:Payload` parameter and
     the `azure:FoundryContext` parameter, each optional and in any order) and builds the argument
     list in declared order. Any other parameter is an error (rejected at compile time by the
@@ -184,7 +243,8 @@ handler the raw request, so a cancel request can carry a body such as a reason.
     `http:Listener`. (Reusing the dispatcher's strand would run a non-isolated service with no
     lock, since the runtime reuses the current strand whatever metadata it is given.)
   It keeps the observability handling from the `ai` adaptor, so traces name the user's service
-  as the entrypoint.
+  as the entrypoint, and gives the user's resource span the Foundry attributes (see
+  [Tracing](#tracing)).
 - **Result mapping mostly follows `ballerina/http`.** A plain `anydata` result is sent as `200`
   (wrapped in `http:Ok`), as the reference's handlers do, instead of the `201` that `http` uses for
   a `post` resource. Otherwise the dispatcher returns the user's value unchanged, so `http` builds
@@ -200,7 +260,8 @@ handler the raw request, so a cancel request can carry a body such as a reason.
   error envelope (codes `not_found` and `method_not_allowed`), not Starlette's plain-text
   `Not Found` / `Method Not Allowed`; see the deviations below. `HEAD` on a `GET` route is served
   there with the `GET` response, as Starlette does (so `HEAD /invocations/{id}` calls the get
-  resource); the HTTP transport doesn't send the body of a `HEAD` response.
+  resource and `HEAD /readiness` the readiness resource); the HTTP transport doesn't send the body of a
+  `HEAD` response.
 - The dispatcher's interceptors are a response interceptor (platform headers, ID headers, `upstream`
   for a user's 4xx/5xx) and an error interceptor. There is deliberately no request interceptor:
   http 2.18 never answers a request whose path a request interceptor's `[string... path]` can't
@@ -238,7 +299,7 @@ handler the raw request, so a cancel request can carry a body such as a reason.
   | No service linked with the dispatcher (a request racing a detach), a resource that disappears between lookup and call, a path-argument count mismatch, an interrupted or failed call of the resource outside the user's code | `platform` | Listener failures; the message names only fixed text (for an unexpected Java exception, only its class) |
   | A body that can't be bound, a 4xx the http module raises for a protocol request (a protocol path that can't be decoded is answered `400`) | `user` | The caller's request |
   | An invalid `x-ms-original-subject` | `platform`, detail `invalid_original_subject` | As the reference |
-  | Readiness, the catch-all `404`/`405` (including `405` on `/invocations`) | none | Starlette produces these in the reference |
+  | Readiness, whatever the user's readiness resource returns (including an error, a `503`, a readiness resource with a parameter, or no linked service); the catch-all `404`/`405` (including `405` on `/invocations`) | none | Not protocol responses: nothing classifies the readiness response in the reference, and Starlette produces the `404`/`405` |
 
 ## Behaviour and its source
 
@@ -247,7 +308,10 @@ handler the raw request, so a cancel request can carry a body such as a reason.
 | Port: explicit argument → `PORT` → `8088` | `init(listenOn = ())` | `core/_config.py:220-236` (`resolve_port`), `core/_constants.py:17-18` |
 | Listen on all interfaces, HTTP/1.1, no TLS | `http:Listener` default host | deploy-hosted-agent docs |
 | Accept an existing `http:Listener` | `init(http:Listener)` | `ai:Listener`, `websocket:Listener`, `mcp:Listener` |
-| `GET /readiness` → `200 {"status":"healthy"}`, `application/json`, no model calls | dispatcher `get readiness` | `core/_base.py:46`, `482`, `1200-1210` |
+| `GET /readiness` → the response of the user's required `get readiness` resource; `()` → `200 {"status":"healthy"}`, `application/json` (the reference's default) | dispatcher `get readiness` → `readinessResponse`, `toReadinessResponse` | `core/_base.py:46`, `482`, `771-790`, `1200-1210` |
+| `HEAD /readiness` → the `GET /readiness` response without a body (the readiness resource is called) | catch-all resource → `headResponse` | Starlette serves `HEAD` on a `GET` route |
+| An error from the readiness resource → `500` (or an `httpscerr` status), error envelope, no `x-platform-error-source`; a readiness response never carries the `x-agent-*` ID headers | `readinessErrorResponse` | `ServerErrorMiddleware` answers an exception from the readiness handler with a `500` |
+| Readiness resource missing at run time → `200 {"status":"healthy"}` | `readinessResponse` | `core/_base.py:1210` (no handler registered) |
 | `x-platform-server` on every response, format `<sdk>/<version> (<runtime>/<version>)` | dispatcher + catch-all resource; value `ballerinax-ai.azure/<pkg version> (ballerina/<runtime version>)`. The runtime version is the distribution the package was built with: the program JVM carries no Ballerina version under `bal run` or `java -jar` (the `ballerina.version` system property is used when set) | `core/_base.py:180-202`, `662-693`; `core/_server_version.py:11-33` |
 | `x-request-id` on every response: the trace ID of a valid incoming `traceparent` (32 chars, not all zeros), else the incoming `x-request-id`, else a generated UUID (32 hex digits) | dispatcher | `core/_request_id.py:51-120`, `core/_middleware.py:97-142` (**not in the prompt; included**). The reference asks OpenTelemetry for an active span first; none is active where it resolves the ID, so it parses `traceparent` |
 | Graceful stop with timeout; `AGENTSERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS`, default 30 | `gracefulStopTimeout` | `core/_config.py:239-266`, `core/_base.py:404-429` |
@@ -303,14 +367,99 @@ public API.
 |---|---|
 | `x-request-id` response header on every response (`core/_request_id.py`) | **Yes** |
 | `405` for a known path with the wrong method (Starlette routing) | **Yes**, via the catch-all resource, with the `Allow` header and `HEAD` served on `GET` routes. The `404`/`405` body is the error envelope instead of Starlette's plain text, so all listener errors have one shape |
-| Custom readiness handler (`core/_base.py:1208`) | No: the prompt fixes the allowed resources; can be added later |
+| Custom readiness handler (`readiness_handler`, `core/_base.py:771-790`, `1208`) | **Yes**, and required: the service's `get readiness` resource is the handler. It takes no parameters (the reference passes the raw request, but a probe carries nothing to bind), its result replaces the default response, and `()` gives the reference's default `200 {"status":"healthy"}`. See [The readiness resource](#the-readiness-resource) |
 | `/invocations/docs/asyncapi.json` and `.yaml` (`inv/_invocation.py:284-295`) | No: these describe the WebSocket transport, which is out of scope |
-| OpenTelemetry baggage entries `azure.ai.agentserver.invocation_id` / `session_id` (`inv/_invocation.py:564-575`) | No: Ballerina observability is configured separately; the IDs are on `FoundryContext` |
+| OpenTelemetry baggage entries `azure.ai.agentserver.invocation_id` / `session_id` (`inv/_invocation.py:561-575`), which the span processor turns into attributes of every span (`core/_tracing.py:797-874`) | **Partly**: when Ballerina tracing is enabled, the request span and the user resource's span get the same attributes; spans started beneath the user's resource don't, and no baggage is propagated. See [Tracing](#tracing) |
 | `FOUNDRY_AGENT_SESSION_GUID` / `FOUNDRY_HOSTING_ENVIRONMENT` validation (`core/_config.py:50-55`) | No: not needed for Invocations routing |
+| `platform_headers()`: `x-agent-foundry-call-id` (only when present, never `x-agent-user-id`) for outbound calls to Foundry platform services (`core/_request_context.py:221-239`) | **Yes**, as `azure:foundryPlatformHeaders(FoundryContext ctx) returns map<string>`, which can be passed as an `http:Client` method's `headers`. Outbound headers are not forwarded automatically; the agent adds them to its own outbound calls |
 | `model_attribution_headers()` / `x-ms-foundry-baggage` (`core/_request_context.py:148-219`) | No: outbound, experimental, out of scope. `originalSubject` is exposed so it can be added later. |
 | Shutdown handler hook (`core/_base.py:760`) | No: Ballerina code can use a module-level `listener`'s lifecycle or `runtime:onGracefulStop` |
 | Resilient task manager, WebSocket, Responses, snapshot/restore | No: out of scope per the prompt |
 | SSE streaming responses with keep-alive comments (`inv/_sse.py`, `SSE_KEEPALIVE_INTERVAL`) | No: dropped from scope. A resource that returns a stream gets a `500` classified as `upstream`, and the compiler plugin rejects stream return types |
+
+## Tracing
+
+The reference installs an OpenTelemetry span processor, `_FoundryEnrichmentSpanProcessor`
+(`core/_tracing.py:797-874`), that stamps Foundry attributes on **every** span of the process: on start, the
+`microsoft.foundry` marker, the project ID and the session, conversation and invocation IDs it finds in
+the OpenTelemetry baggage (`POST /invocations` puts the invocation and session IDs there,
+`inv/_invocation.py:561-575`); on end, the agent identity. Ballerina has no span processor hook and no
+OpenTelemetry context or baggage that follows a request through Ballerina code, so the listener tags the spans
+it can reach.
+
+**When.** Only when Ballerina tracing is enabled (`ballerina.observe.tracingEnabled`, with the program built
+with `observabilityIncluded`). Otherwise the dispatcher checks one static flag per protocol request and builds
+nothing.
+
+**Which spans.** For `POST /invocations`, `GET /invocations/{invocationId}` (and `HEAD`) and
+`POST /invocations/{invocationId}/cancel`:
+
+- the dispatcher's request span: the span of the http listener's observer context, which the dispatcher
+  resource continues (it carries `http.method`, `http.url`, `http.status_code`);
+- the span of the user's resource, a child of the request span.
+
+Readiness, the OpenAPI route and the catch-all `404`/`405` are not tagged, although the reference's
+processor would stamp `microsoft.foundry` and the identity on their spans too: they are not protocol
+requests, and readiness is probed every few seconds.
+
+**Attributes** (names and values as in the reference; a value that is not configured, or empty, is left out,
+as the reference does):
+
+| Attribute | Value | Reference |
+|---|---|---|
+| `microsoft.foundry` | `True` | `core/_tracing.py:66`, `83`, `818` |
+| `microsoft.foundry.project.id` | `FoundryAgentInfo.projectArmId` (`FOUNDRY_PROJECT_ARM_ID`) | `core/_tracing.py:64`, `819-820`; `core/_config.py:424-433` |
+| `gen_ai.agent.name`, `gen_ai.agent.version` | `FoundryAgentInfo.name` / `version` | `core/_tracing.py:59-60`, `858-863` |
+| `gen_ai.agent.id` | `FOUNDRY_AGENT_INSTANCE_CLIENT_ID`, else `<name>:<version>`, else `<name>` (not `FOUNDRY_AGENT_ID`, the agent GUID, which the reference doesn't put on spans) | `core/_tracing.py:56`, `864-865`; `resolve_agent_id`, `core/_config.py:375-394` |
+| `microsoft.a365.agent.blueprint.id` | `FOUNDRY_AGENT_BLUEPRINT_CLIENT_ID` | `core/_tracing.py:57`, `866-867` |
+| `microsoft.tenant.id` | `FOUNDRY_AGENT_TENANT_ID` | `core/_tracing.py:58`, `868-869` |
+| `azure.ai.agentserver.invocations.invocation_id` | the resolved invocation ID; on get/cancel only when the path value is a valid ID (`[a-zA-Z0-9\-_.:]{1,256}`), so a value that is not an ID (request content) never becomes an attribute | `inv/_constants.py:22` (`ATTR_SPAN_INVOCATION_ID`); `core/_tracing.py:77`, `831-833` |
+| `azure.ai.agentserver.invocations.session_id` | the resolved session ID, when not empty | `inv/_constants.py:23` (`ATTR_SPAN_SESSION_ID`) |
+| `microsoft.session.id` | the same session ID | `core/_tracing.py:65`, `825-827` |
+| `azure.ai.agentserver.invocations.error.code` | the error-envelope code (`internal_error`, `invalid_request`, `not_implemented`, `not_found`, `method_not_allowed`), request span only | `inv/_constants.py:24` (`ATTR_SPAN_ERROR_CODE`) |
+
+The three agent identity values that `FoundryAgentInfo` doesn't carry (`FOUNDRY_AGENT_INSTANCE_CLIENT_ID`,
+`FOUNDRY_AGENT_BLUEPRINT_CLIENT_ID`, `FOUNDRY_AGENT_TENANT_ID`) are read from the environment once, at module
+initialisation, so the public API is unchanged. The error code is set wherever the listener builds an error
+envelope (`errorResponse`), so the catch-all `404`/`405` spans, and a readiness error, get it too. `ATTR_SPAN_ERROR_MESSAGE` is not
+set: like `x-platform-error-detail`, attributes never carry user error messages or request content. (Ballerina's
+own instrumentation does record an `error.message`, with the error's message and stack trace, on the span of a
+user resource that returns an error; that is the runtime's standard behaviour for every Ballerina resource, not
+something the listener adds.)
+
+In the reference, `ATTR_SPAN_SESSION_ID`, `ATTR_SPAN_ERROR_CODE` and `ATTR_SPAN_ERROR_MESSAGE` are defined but
+not set by the HTTP invocations code, and get/cancel set no baggage, so their spans get no IDs there. The
+listener sets the session and error-code attributes anyway, and tags get/cancel with the IDs it resolved.
+
+**How.** `tagFoundryRequestSpan` (`foundry_tracing.bal`) builds the attributes (`foundrySpanTags`) and
+`FoundryTracing.setFoundrySpanTags` (`native/.../FoundryTracing.java`) writes them straight to the current
+span with `BSpan.addTags`, not with `ObserverContext.addTag`: the observer context's tags also become metric
+tags, and per-request values would give the metrics unbounded tag values. The attributes are also kept as a
+property of the dispatcher's observer context. The user's span doesn't exist yet when the dispatcher calls
+the resource, so the observer context the invoker creates for it (`newUserContext`, see the dispatcher design)
+is a small `ObserverContext` subclass that writes the attributes to the span the runtime gives it when the
+resource starts (`setSpan`), the closest Ballerina has to a span processor's `on_start`.
+
+**What Ballerina can't do.** Spans started beneath the user's resource (for example a model provider's
+`http:Client` calls, or `ballerina/ai` agent spans) get fresh observer contexts from the runtime
+(`ObserveUtils.startCallableObservation` creates a new `ObserverContext` with the parent link only), so they
+can't be given the attributes; a trace backend can still find them through the tagged parent. No W3C `baggage`
+is added to outbound requests: neither `ballerina/observe` nor the runtime has a baggage API (a span is started
+from the thread's current OpenTelemetry `Context` plus the parent span, `BSpan.start`), and a `Context` made
+current on a thread would not follow a Ballerina strand across yields and virtual threads, so it couldn't be
+done cleanly. Incoming `baggage` (including `x_request_id`, which the reference adds,
+`core/_tracing.py:529-536`) is exposed on `FoundryContext.trace` but not turned into attributes.
+
+**Tests.** The package tests run with tracing enabled and `ballerina/observe`'s in-memory `mock` tracer provider
+(`ballerina/tests/Config.toml`; `bal test --observability-included`, passed through `testCoverageParam` in
+`ballerina/build.gradle`, so the published package itself gains no observability dependencies). `foundry_tracing_test.bal`
+reads the finished spans back with `observe.mockextension:getFinishedSpans` and checks the attributes on the
+request and user spans, the parent link, the error code without the user's message, the get route and the
+absence of the attributes on the user's outbound call. The mock provider's tracers are keyed by service name; a
+service with no attach point (the dispatcher, a service object or a declaration without a base path) is named
+`<org>_<package>_svc_<n>` by the compiler (`JvmObservabilityGen`), so the test scans those names. The mock
+provider exports nothing and its propagators are no-ops, so outbound requests of the other tests carry no
+trace headers and their behaviour doesn't change; metrics stay disabled. `foundrySpanTags` also has unit tests.
 
 ## Compiler plugin
 
@@ -335,7 +484,7 @@ placeholder.
 | Code | Rule | Message | Points at |
 |---|---|---|---|
 | `AI_AZURE_FOUNDRY_101` | The service declares `post invocations` | an `` `azure:FoundryInvocationService` `` must declare a `` `resource function post invocations` ``, which serves `` `POST /invocations` ``. | The service type of a declaration (the `service` keyword when it has none), the class name, or `service object` |
-| `AI_AZURE_FOUNDRY_102` | The only resources are `post invocations`, `get invocations/[string invocationId]` and `post invocations/[string invocationId]/cancel` (any other accessor or path, `default`, a rest path parameter or `.` is rejected) | the resource '{0}' is not supported in an `` `azure:FoundryInvocationService` ``, which serves only `` `post invocations` ``, `` `get invocations/[string invocationId]` `` and `` `post invocations/[string invocationId]/cancel` ``. | The accessor and resource path |
+| `AI_AZURE_FOUNDRY_102` | The only resources are `post invocations`, `get readiness`, `get invocations/[string invocationId]` and `post invocations/[string invocationId]/cancel` (any other accessor or path, such as `post readiness` or `get readiness/status`, `default`, a rest path parameter or `.` is rejected) | the resource '{0}' is not supported in an `` `azure:FoundryInvocationService` ``, which serves only `` `post invocations` ``, `` `get readiness` ``, `` `get invocations/[string invocationId]` `` and `` `post invocations/[string invocationId]/cancel` ``. | The accessor and resource path |
 | `AI_AZURE_FOUNDRY_103` | No remote functions | the remote function '{0}' is not allowed in an `` `azure:FoundryInvocationService` ``; declare resource functions instead. | The function name |
 | `AI_AZURE_FOUNDRY_104` | A parameter is either the `@http:Payload` parameter or an `azure:FoundryContext` parameter (an un-annotated parameter of another type, `http:Request`, `http:Caller`, `http:Headers`, a query parameter, `azure:FoundryContext?`, a defaultable non-payload parameter, a rest or included-record parameter are rejected) | the parameter '{1}' of the resource '{0}' is not supported. Declare only {2}. (`{2}` is "an `` `azure:FoundryContext` `` parameter" on the get resource, otherwise "an `` `@http:Payload` `` parameter and an `` `azure:FoundryContext` `` parameter") | The parameter |
 | `AI_AZURE_FOUNDRY_105` | At most one `@http:Payload` parameter | the resource '{0}' declares more than one `` `@http:Payload` `` parameter. | The second payload parameter |
@@ -346,6 +495,12 @@ placeholder.
 | `AI_AZURE_FOUNDRY_110` | The return type is a subtype of `anydata\|http:Response\|http:StatusCodeResponse\|error` (nil is allowed through `anydata`; no return type means `()`; the whole type is checked, so an intersection such as `readonly & (json\|error)` is accepted) | the resource '{0}' must return a subtype of `` `anydata\|http:Response\|http:StatusCodeResponse\|error` ``, found '{1}'. | The return type |
 | `AI_AZURE_FOUNDRY_111` | The return type contains no stream | the resource '{0}' returns a stream ('{1}'), but streaming responses are not supported by `` `azure:FoundryListener` ``; return the complete response instead. | The return type |
 | `AI_AZURE_FOUNDRY_112` | A service declaration has no base path other than `/` (or a string whose value, after trimming, is made only of `/`; escapes such as `"\u{2F}"` are decoded first, as the listener sees the value) | an `` `azure:FoundryInvocationService` `` must be attached at the root base path, because Foundry calls `` `/readiness` `` and `` `/invocations` `` at the root; remove the base path '{0}'. | The base path |
+| `AI_AZURE_FOUNDRY_113` | The service declares `get readiness` | an `` `azure:FoundryInvocationService` `` must declare a `` `resource function get readiness` ``, which serves the `` `GET /readiness` `` probe. | As `101` |
+| `AI_AZURE_FOUNDRY_114` | `get readiness` declares no parameters (of any kind: payload, context, `http:Request`, defaultable, rest) | the parameter '{1}' of the resource '{0}' is not supported: the readiness probe carries no payload or platform headers, so the resource must declare no parameters. | The parameter |
+
+Rules `104` to `109` apply to the invocation resources, `114` to `get readiness`; `110` and `111` apply to
+all four. A service missing both required resources gets both `101` and `113`, at the same position.
+`101` keeps its meaning (only `post invocations`), so the readiness rule has its own code.
 
 Types in messages are shown as written in the source (for example `azure:FoundryContext`). A return
 type that holds a stream gets only `111`, not also `110`. A client object (such as `http:Caller`) or a
@@ -355,15 +510,19 @@ sees it.
 ### Compile time versus run time
 
 The rules were checked against `NativeFoundryResourceInvoker` (`ResourceParams`, `findResource`) and the
-dispatcher (`dispatchInvocationRoute`, `toFoundryResourceResponse`) and `FoundryListener.attach`.
-Everything the runtime serves compiles, and everything the runtime answers with a `500` classified as
-`upstream` (or rejects at attach) is a compile error. No runtime change was needed. Where the two differ,
-the compiler is deliberately the stricter side:
+dispatcher (`dispatchInvocationRoute`, `toFoundryResourceResponse`, `readinessResponse`,
+`toReadinessResponse`) and `FoundryListener.attach`. Everything the runtime serves compiles, and
+everything the runtime answers with a `500` (classified as `upstream` on a protocol route, unclassified on
+readiness) or rejects at attach is a compile error. Where the two differ, the compiler is deliberately the
+stricter side:
 
 | Shape | Runtime | Compiler plugin |
 |---|---|---|
 | Path parameter of a type that accepts every string but isn't `string`, such as `string\|int` | Served | `109`: the documented contract is `[string invocationId]` |
 | No `post invocations` | `501 not_implemented` | `101` |
+| No `get readiness` | `200 {"status":"healthy"}` (the reference's default) | `113` |
+| `get readiness` with a payload or context parameter, or any other parameter | `500`, unclassified; the resource is not called | `114` |
+| `get readiness` returning a stream or another unsupported value | `500`, unclassified | `110`, `111` |
 | Another resource, a remote function | Never called (the catch-all answers `404`/`405`) | `102`, `103` |
 | `*azure:FoundryContext` included-record parameter | Passed the context | `104` |
 | A Foundry service on a listener other than `azure:FoundryListener` | Not dispatched by the Foundry listener | Still validated, because the type is what is checked |
@@ -378,8 +537,14 @@ in the test, not formatted from the plugin's templates, so a broken template fai
 `01_valid_service` uses every allowed shape (including untyped declarations on a Foundry listener, an
 intersection return type and an escaped `"/"` base path) and must have no errors; one package per
 diagnostic follows, plus an import alias, a service class and object constructor, non-Foundry HTTP
-services in the same package (which must be ignored), and untyped service declarations on a Foundry
-listener (`17_untyped_service_declaration`).
+services in the same package (which must be ignored), untyped service declarations on a Foundry
+listener (`17_untyped_service_declaration`), a missing readiness resource on every kind of service
+(`18_missing_readiness_resource`) and readiness parameters (`19_readiness_parameter`). Every valid service
+in these packages declares `get readiness`. Diagnostics at the same position are ordered by code.
+
+The compiler plugin validates the packages that depend on `ballerinax/ai.azure`, not the package itself,
+so the package's own tests (`ballerina/tests`) can still exercise the run-time answers to services the
+plugin rejects (a missing `post invocations` or `get readiness`, unsupported parameters).
 
 The package is built on Docker (`connector = true`), so the Ballerina Gradle plugin unpacks no
 distribution. The test project's `prepareBallerinaDistribution` task builds one instead: the

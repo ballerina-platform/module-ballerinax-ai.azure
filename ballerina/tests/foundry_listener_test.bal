@@ -51,13 +51,19 @@ listener FoundryListener foundryTestListener = new (FOUNDRY_PORT, agent = testAg
 
 service FoundryInvocationService on foundryTestListener {
     resource function post invocations(@http:Payload json payload) returns json => payload;
+
+    resource function get readiness() returns json => {status: "healthy"};
 }
 
-// The Foundry service type used for programmatic attach.
+// The Foundry service type used for programmatic attach. Its readiness resource returns nothing, so
+// the probe gets the default healthy response.
 isolated service class TestFoundryService {
     *FoundryInvocationService;
 
     isolated resource function post invocations(@http:Payload json payload) returns json => payload;
+
+    isolated resource function get readiness() {
+    }
 }
 
 final http:Client foundryClient = check new (string `http://localhost:${FOUNDRY_PORT}`);

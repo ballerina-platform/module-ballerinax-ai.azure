@@ -41,7 +41,7 @@ public enum FoundryDiagnostic {
                     + "serves `POST /invocations`.", ERROR),
     UNSUPPORTED_RESOURCE("AI_AZURE_FOUNDRY_102",
             "the resource ''{0}'' is not supported in an `azure:FoundryInvocationService`, which serves only "
-                    + "`post invocations`, `get invocations/[string invocationId]` and "
+                    + "`post invocations`, `get readiness`, `get invocations/[string invocationId]` and "
                     + "`post invocations/[string invocationId]/cancel`.", ERROR),
     REMOTE_FUNCTION_NOT_ALLOWED("AI_AZURE_FOUNDRY_103",
             "the remote function ''{0}'' is not allowed in an `azure:FoundryInvocationService`; declare "
@@ -68,7 +68,13 @@ public enum FoundryDiagnostic {
                     + "`azure:FoundryListener`; return the complete response instead.", ERROR),
     INVALID_BASE_PATH("AI_AZURE_FOUNDRY_112",
             "an `azure:FoundryInvocationService` must be attached at the root base path, because Foundry calls "
-                    + "`/readiness` and `/invocations` at the root; remove the base path ''{0}''.", ERROR);
+                    + "`/readiness` and `/invocations` at the root; remove the base path ''{0}''.", ERROR),
+    MISSING_READINESS_RESOURCE("AI_AZURE_FOUNDRY_113",
+            "an `azure:FoundryInvocationService` must declare a `resource function get readiness`, which "
+                    + "serves the `GET /readiness` probe.", ERROR),
+    READINESS_PARAMETER_NOT_ALLOWED("AI_AZURE_FOUNDRY_114",
+            "the parameter ''{1}'' of the resource ''{0}'' is not supported: the readiness probe carries no "
+                    + "payload or platform headers, so the resource must declare no parameters.", ERROR);
 
     private final String code;
     private final String message;

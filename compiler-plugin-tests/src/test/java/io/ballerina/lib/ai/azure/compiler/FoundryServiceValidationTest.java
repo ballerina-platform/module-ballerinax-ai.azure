@@ -66,8 +66,11 @@ public class FoundryServiceValidationTest {
     private static final String INVALID_RETURN_TYPE = "AI_AZURE_FOUNDRY_110";
     private static final String STREAM_RETURN_TYPE = "AI_AZURE_FOUNDRY_111";
     private static final String INVALID_BASE_PATH = "AI_AZURE_FOUNDRY_112";
+    private static final String MISSING_READINESS_RESOURCE = "AI_AZURE_FOUNDRY_113";
+    private static final String READINESS_PARAMETER_NOT_ALLOWED = "AI_AZURE_FOUNDRY_114";
 
     private static final String INVOKE = "post invocations";
+    private static final String READINESS = "get readiness";
     private static final String GET = "get invocations/[string invocationId]";
     private static final String CANCEL = "post invocations/[string invocationId]/cancel";
     private static final String PAYLOAD_AND_CONTEXT = "an `@http:Payload` parameter and an `azure:FoundryContext` "
@@ -95,7 +98,9 @@ public class FoundryServiceValidationTest {
                 expect(UNSUPPORTED_RESOURCE, 32, 23,
                         unsupportedResource("get invocations/[string invocationId]/cancel")),
                 expect(UNSUPPORTED_RESOURCE, 34, 23, unsupportedResource("default [string... path]")),
-                expect(UNSUPPORTED_RESOURCE, 36, 23, unsupportedResource("get .")));
+                expect(UNSUPPORTED_RESOURCE, 36, 23, unsupportedResource("get .")),
+                expect(UNSUPPORTED_RESOURCE, 38, 23, unsupportedResource("post readiness")),
+                expect(UNSUPPORTED_RESOURCE, 40, 23, unsupportedResource("get readiness/status")));
     }
 
     @Test
@@ -158,36 +163,40 @@ public class FoundryServiceValidationTest {
         assertDiagnostics("11_invalid_return_type",
                 expect(INVALID_RETURN_TYPE, 23, 50, invalidReturnType(INVOKE, "any")),
                 expect(INVALID_RETURN_TYPE, 25, 71, invalidReturnType(GET, "http:Request")),
-                expect(INVALID_RETURN_TYPE, 27, 79, invalidReturnType(CANCEL, "json|Holder")));
+                expect(INVALID_RETURN_TYPE, 27, 79, invalidReturnType(CANCEL, "json|Holder")),
+                expect(INVALID_RETURN_TYPE, 29, 47, invalidReturnType(READINESS, "Holder|error")));
     }
 
     @Test
     public void testStreamReturnType() {
         assertDiagnostics("12_stream_return_type",
                 expect(STREAM_RETURN_TYPE, 22, 50, streamReturnType(INVOKE, "stream<string, error?>")),
-                expect(STREAM_RETURN_TYPE, 24, 71, streamReturnType(GET, "json|stream<json>|error")));
+                expect(STREAM_RETURN_TYPE, 24, 71, streamReturnType(GET, "json|stream<json>|error")),
+                expect(STREAM_RETURN_TYPE, 26, 47, streamReturnType(READINESS, "stream<json>")));
     }
 
     @Test
     public void testInvalidBasePath() {
         assertDiagnostics("13_invalid_base_path",
                 expect(INVALID_BASE_PATH, 22, 40, invalidBasePath("/agents/v1")),
-                expect(INVALID_BASE_PATH, 26, 40, invalidBasePath("\"agent\"")),
-                expect(INVALID_BASE_PATH, 34, 40, invalidBasePath("\"\\u{2F}a\"")),
-                expect(INVALID_BASE_PATH, 39, 9, invalidBasePath("/api")));
+                expect(INVALID_BASE_PATH, 28, 40, invalidBasePath("\"agent\"")),
+                expect(INVALID_BASE_PATH, 38, 40, invalidBasePath("\"\\u{2F}a\"")),
+                expect(INVALID_BASE_PATH, 45, 9, invalidBasePath("/api")));
     }
 
     @Test
     public void testImportAlias() {
         assertDiagnostics("14_import_alias",
                 expect(UNSUPPORTED_PARAMETER, 23, 93, unsupportedParameter(INVOKE, "extra", PAYLOAD_AND_CONTEXT)),
-                expect(UNSUPPORTED_RESOURCE, 26, 23, unsupportedResource("get status")));
+                expect(UNSUPPORTED_RESOURCE, 26, 23, unsupportedResource("get status")),
+                expect(READINESS_PARAMETER_NOT_ALLOWED, 28, 37, readinessParameterNotAllowed("ctx")));
     }
 
     @Test
     public void testServiceClassAndObjectConstructor() {
         assertDiagnostics("15_service_class_and_object",
                 expect(MISSING_INVOKE_RESOURCE, 20, 24, missingInvokeResource()),
+                expect(MISSING_READINESS_RESOURCE, 20, 24, missingReadinessResource()),
                 expect(UNSUPPORTED_RESOURCE, 25, 32, unsupportedResource("get health")),
                 expect(UNSUPPORTED_PARAMETER, 29, 68, unsupportedParameter(INVOKE, "extra", PAYLOAD_AND_CONTEXT)));
     }
@@ -201,13 +210,35 @@ public class FoundryServiceValidationTest {
     public void testUntypedServiceDeclaration() {
         assertDiagnostics("17_untyped_service_declaration",
                 expect(MISSING_INVOKE_RESOURCE, 24, 1, missingInvokeResource()),
+                expect(MISSING_READINESS_RESOURCE, 24, 1, missingReadinessResource()),
                 expect(UNSUPPORTED_RESOURCE, 25, 23, unsupportedResource("get status")),
                 expect(UNSUPPORTED_PARAMETER, 27, 61, unsupportedParameter(GET, "extra", CONTEXT_ONLY)),
                 expect(STREAM_RETURN_TYPE, 27, 83, streamReturnType(GET, "stream<json>")),
                 expect(MISSING_INVOKE_RESOURCE, 30, 10, missingInvokeResource()),
                 expect(REMOTE_FUNCTION_NOT_ALLOWED, 31, 30, remoteFunctionNotAllowed("ping")),
-                expect(INVALID_BASE_PATH, 34, 9, invalidBasePath("/agents")),
-                expect(UNSUPPORTED_PARAMETER, 35, 40, unsupportedParameter(INVOKE, "request", PAYLOAD_AND_CONTEXT)));
+                expect(INVALID_BASE_PATH, 36, 9, invalidBasePath("/agents")),
+                expect(UNSUPPORTED_PARAMETER, 37, 40, unsupportedParameter(INVOKE, "request", PAYLOAD_AND_CONTEXT)));
+    }
+
+    @Test
+    public void testMissingReadinessResource() {
+        assertDiagnostics("18_missing_readiness_resource",
+                expect(MISSING_READINESS_RESOURCE, 24, 9, missingReadinessResource()),
+                expect(MISSING_READINESS_RESOURCE, 29, 1, missingReadinessResource()),
+                expect(MISSING_INVOKE_RESOURCE, 34, 9, missingInvokeResource()),
+                expect(MISSING_READINESS_RESOURCE, 34, 9, missingReadinessResource()),
+                expect(MISSING_READINESS_RESOURCE, 37, 24, missingReadinessResource()),
+                expect(MISSING_READINESS_RESOURCE, 43, 52, missingReadinessResource()));
+    }
+
+    @Test
+    public void testReadinessParameters() {
+        assertDiagnostics("19_readiness_parameter",
+                expect(READINESS_PARAMETER_NOT_ALLOWED, 27, 37, readinessParameterNotAllowed("payload")),
+                expect(READINESS_PARAMETER_NOT_ALLOWED, 27, 65, readinessParameterNotAllowed("ctx")),
+                expect(READINESS_PARAMETER_NOT_ALLOWED, 34, 37, readinessParameterNotAllowed("request")),
+                expect(READINESS_PARAMETER_NOT_ALLOWED, 34, 59, readinessParameterNotAllowed("count")),
+                expect(READINESS_PARAMETER_NOT_ALLOWED, 34, 74, readinessParameterNotAllowed("names")));
     }
 
     private static void assertDiagnostics(String packageName, ExpectedDiagnostic... expected) {
@@ -220,7 +251,9 @@ public class FoundryServiceValidationTest {
         List<Diagnostic> actual = result.diagnostics().stream()
                 .filter(FoundryServiceValidationTest::isFoundryDiagnostic)
                 .sorted(Comparator.comparingInt((Diagnostic diagnostic) -> start(diagnostic).line())
-                        .thenComparingInt(diagnostic -> start(diagnostic).offset()))
+                        .thenComparingInt(diagnostic -> start(diagnostic).offset())
+                        // Two diagnostics can share a position (a service missing both required resources).
+                        .thenComparing(diagnostic -> diagnostic.diagnosticInfo().code()))
                 .collect(Collectors.toList());
         Assert.assertEquals(actual.size(), expected.length, "Foundry diagnostics: " + describe(actual));
         for (int i = 0; i < expected.length; i++) {
@@ -272,8 +305,19 @@ public class FoundryServiceValidationTest {
 
     private static String unsupportedResource(String resource) {
         return "the resource '" + resource + "' is not supported in an `azure:FoundryInvocationService`, which "
-                + "serves only `post invocations`, `get invocations/[string invocationId]` and "
+                + "serves only `post invocations`, `get readiness`, `get invocations/[string invocationId]` and "
                 + "`post invocations/[string invocationId]/cancel`.";
+    }
+
+    private static String missingReadinessResource() {
+        return "an `azure:FoundryInvocationService` must declare a `resource function get readiness`, which "
+                + "serves the `GET /readiness` probe.";
+    }
+
+    private static String readinessParameterNotAllowed(String parameter) {
+        return "the parameter '" + parameter + "' of the resource '" + READINESS + "' is not supported: the "
+                + "readiness probe carries no payload or platform headers, so the resource must declare no "
+                + "parameters.";
     }
 
     private static String remoteFunctionNotAllowed(String function) {

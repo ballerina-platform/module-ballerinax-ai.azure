@@ -25,4 +25,6 @@ service azure:FoundryInvocationService on foundryListener {
 
     // A plain method is allowed: it is not part of the service's network interface.
     function helper() returns string => "helper";
+
+    resource function get readiness() returns json => {status: "healthy"};
 }

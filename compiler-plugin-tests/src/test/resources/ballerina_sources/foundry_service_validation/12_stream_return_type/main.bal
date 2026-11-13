@@ -22,4 +22,6 @@ service azure:FoundryInvocationService on foundryListener {
     resource function post invocations() returns stream<string, error?> => ["a", "b"].toStream();
 
     resource function get invocations/[string invocationId]() returns json|stream<json>|error => {};
+
+    resource function get readiness() returns stream<json> => [].toStream();
 }

@@ -49,8 +49,10 @@ const OPENAPI_PATH = "openapi.json";
 // A path parameter segment in a resource path shape, as `ResourceMethodType.getResourcePath()` reports it.
 const PATH_PARAM_SEGMENT = "^";
 const NO_OPENAPI_SPEC_MESSAGE = "No OpenAPI spec registered";
-// The readiness body, byte-for-byte as the reference sends it (`core/_base.py:46`).
+// The default readiness body, byte-for-byte as the reference sends it when no readiness handler is
+// registered (`core/_base.py:46`, `1210`).
 const READINESS_BODY = "{\"status\":\"healthy\"}";
+const READINESS_RESOURCE = "get readiness";
 const APPLICATION_JSON = "application/json";
 
 // Error codes of the error envelope (`core/_errors.py`, `inv/_invocation.py`).
@@ -156,10 +158,14 @@ isolated service class FoundryDispatcherService {
         new FoundryResponseErrorInterceptor()
     ];
 
-    # `GET /readiness`: the readiness probe. It always reports healthy and calls no model.
+    # `GET /readiness`: the readiness probe, served by the user's required `get readiness` resource, as
+    # the reference serves it with a registered readiness handler (`_readiness_endpoint`,
+    # `core/_base.py:1200-1210`). See `readinessResponse`.
     #
-    # + return - `200` with `{"status":"healthy"}`
-    isolated resource function get readiness() returns http:Response => readinessResponse();
+    # + request - The request
+    # + return - The readiness response
+    isolated resource function get readiness(http:Request request) returns FoundryResourceResponse =>
+        self.readinessResponse(request);
 
     # `POST /invocations`: resolves the invocation and session IDs, builds the platform context and
     # calls the user's `post invocations` resource (`_create_invocation_endpoint`,
@@ -181,6 +187,7 @@ isolated service class FoundryDispatcherService {
                 self.config.agent.sessionId);
         ctx.set(INVOCATION_ID_CONTEXT_KEY, invocationId);
         ctx.set(SESSION_ID_CONTEXT_KEY, sessionId);
+        tagFoundryRequestSpan(self.config.agent, invocationId, sessionId);
 
         FoundryContext|FoundryOriginalSubjectError foundryContext =
             foundryContextFromRequest(request, sessionId, invocationId, self.config.agent);
@@ -330,6 +337,7 @@ isolated service class FoundryDispatcherService {
         }
         string sessionId = resolveGetOrCancelSessionId(lastQueryParamValue(request, QUERY_AGENT_SESSION_ID),
                 self.config.agent.sessionId);
+        tagFoundryRequestSpan(self.config.agent, invocationId, sessionId);
 
         FoundryContext|FoundryOriginalSubjectError foundryContext =
             foundryContextFromRequest(request, sessionId, invocationId, self.config.agent);
@@ -384,8 +392,49 @@ isolated service class FoundryDispatcherService {
         return response;
     }
 
+    # Serves the readiness probe by calling the user's `get readiness` resource.
+    #
+    # Readiness is not a protocol endpoint: its responses carry `x-platform-server` and `x-request-id`
+    # but never `x-platform-error-source` or the `x-agent-*` ID headers, as in the reference, where
+    # nothing classifies the readiness response. The resource takes no parameters: a probe carries no
+    # payload and no platform headers. The result is mapped by `toReadinessResponse`.
+    #
+    # The compiler plugin requires the resource, so a compiled service always declares it. Should it be
+    # missing anyway, the probe gets the reference's default response (`200` with
+    # `{"status":"healthy"}`), as when no readiness handler is registered there.
+    #
+    # + request - The request
+    # + return - The readiness response
+    isolated function readinessResponse(http:Request request) returns FoundryResourceResponse {
+        FoundryResourceSignature|error? signature = getFoundryResourceSignature(self, http:HTTP_GET,
+                [READINESS_PATH]);
+        if signature is () {
+            log:printDebug("The FoundryInvocationService declares no 'get readiness' resource; "
+                + "the readiness probe reports healthy");
+            return defaultReadinessResponse();
+        }
+        if signature is error {
+            return readinessErrorResponse(signature, request);
+        }
+        if signature.payloadType !is () || signature.hasContext {
+            return readinessErrorResponse(error(string `the '${READINESS_RESOURCE}' resource of the `
+                + "FoundryInvocationService is not supported: it must declare no parameters"), request);
+        }
+        // The resource declares no parameters, so none of these values reaches it; the invoker only
+        // passes a context to a resource that declares one.
+        FoundryContext unused = {
+            sessionId: "",
+            invocationId: "",
+            agent: self.config.agent,
+            headers: createFoundryHeaders(request)
+        };
+        any|error result = invokeFoundryResource(self, http:HTTP_GET, [READINESS_PATH], [], (), unused);
+        return toReadinessResponse(result, request);
+    }
+
     # Builds the response to a `HEAD` request on a `GET` route: the `GET` response. As Starlette does,
-    # `HEAD /invocations/{invocationId}` calls the user's get resource.
+    # `HEAD /invocations/{invocationId}` calls the user's get resource and `HEAD /readiness` the user's
+    # readiness resource.
     #
     # + path - The request path segments
     # + ctx - The request context
@@ -394,9 +443,7 @@ isolated service class FoundryDispatcherService {
     isolated function headResponse(string[] path, http:RequestContext ctx, http:Request request)
             returns FoundryResourceResponse {
         if path == [READINESS_PATH] {
-            http:Response response = new;
-            response.setHeader("content-type", APPLICATION_JSON);
-            return response;
+            return self.readinessResponse(request);
         }
         if path == [INVOCATIONS_PATH, DOCS_PATH, OPENAPI_PATH] {
             ctx.set(PROTOCOL_CONTEXT_KEY, true);
@@ -433,23 +480,87 @@ isolated function allowedMethods(string[] path) returns string[]? {
     return ();
 }
 
-# Builds the readiness response.
+# Builds the default readiness response, which the reference sends when no readiness handler is
+# registered (`core/_base.py:1210`).
 #
 # + return - `200` with `{"status":"healthy"}` and content type application/json
-isolated function readinessResponse() returns http:Response {
+isolated function defaultReadinessResponse() returns http:Response {
     http:Response response = new;
     response.setTextPayload(READINESS_BODY, APPLICATION_JSON);
     return response;
 }
 
+# Turns what the user's `get readiness` resource returned into the readiness response.
+#
+# - `()` (also from a resource with no return type) is the default readiness response, `200` with
+# `{"status":"healthy"}`: readiness has no "accepted" meaning, so a resource that returns nothing
+# reports the container ready, as the reference does when no readiness handler is registered.
+# - Any other `anydata` value is sent as `200 OK` with that body, as for `post invocations` (JSON, or
+# `text/plain` for `string`, `application/xml` for `xml`, `application/octet-stream` for `byte[]`).
+# - An `http:Response` and a status-code record (for example `http:ServiceUnavailable`) are sent as
+# they are. Foundry treats any status other than 2xx as not ready.
+# - An error (returned, or a panic) is answered as the http module answers an error: a `500` with the
+# generic `Internal server error` message, or the status of an `httpscerr` status-code error (for
+# example `503` for `httpscerr:ServiceUnavailableError`). In the reference an exception in the
+# readiness handler also ends in a `500`.
+# - Any other value (a stream, for example) is outside the resource contract and gets a `500`.
+#
+# None of these responses is classified with `x-platform-error-source`.
+#
+# + result - The user's return value
+# + request - The request, for logging
+# + return - The readiness response
+isolated function toReadinessResponse(any|error result, http:Request request) returns FoundryResourceResponse {
+    if result is error {
+        return readinessErrorResponse(result, request);
+    }
+    if result is () {
+        return defaultReadinessResponse();
+    }
+    if result is anydata {
+        http:Ok ok = {body: result};
+        return ok;
+    }
+    if result is FoundryResourceResponse {
+        return result;
+    }
+    if result is stream<any|error, error?> {
+        closeUnsentStream(result);
+    }
+    log:printError(string `The FoundryInvocationService '${READINESS_RESOURCE}' resource returned a value the `
+        + "listener can't send");
+    return errorResponse(http:STATUS_INTERNAL_SERVER_ERROR, ERROR_CODE_INTERNAL_ERROR, "Internal server error");
+}
+
+# Builds the readiness response to an error: one the user's readiness resource returned or panicked
+# with, a readiness resource declared in a way the listener can't call, or a failure of the listener
+# itself. The status follows the http module's mapping (see `errorToResponse`), so a plain error is a
+# `500` with the generic message. Readiness responses are not classified, so no
+# `x-platform-error-source` or `x-platform-error-detail` is added, and the listener-owned headers an
+# `http:ApplicationResponseError` carries from another service's response are dropped.
+#
+# + err - The error
+# + request - The request, for logging
+# + return - The error response
+isolated function readinessErrorResponse(error err, http:Request request) returns http:Response {
+    http:Response response = errorToResponse(err, request);
+    if err is http:ApplicationResponseError {
+        foreach string name in LISTENER_OWNED_HEADERS {
+            response.removeHeader(name);
+        }
+    }
+    return response;
+}
+
 # Builds a response with the standard error envelope `{"error":{"code":...,"message":...}}`
-# (`core/_errors.py`).
+# (`core/_errors.py`). When tracing is enabled, the code (never the message) is added to the current span.
 #
 # + statusCode - The HTTP status code
 # + code - The machine-readable error code
 # + message - The human-readable error message
 # + return - The error response
 isolated function errorResponse(int statusCode, string code, string message) returns http:Response {
+    tagFoundryErrorCode(code);
     http:Response response = new;
     response.statusCode = statusCode;
     response.setJsonPayload({'error: {code, message}});

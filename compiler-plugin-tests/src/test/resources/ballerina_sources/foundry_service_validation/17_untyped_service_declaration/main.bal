@@ -29,8 +29,12 @@ service on foundryListener {
 
 isolated service on remoteListener {
     isolated remote function ping() returns string => "pong";
+
+    isolated resource function get readiness() returns json => {status: "healthy"};
 }
 
 service /agents on new azure:FoundryListener(17003) {
     resource function post invocations(http:Request request) returns json => {};
+
+    resource function get readiness() returns json => {status: "healthy"};
 }

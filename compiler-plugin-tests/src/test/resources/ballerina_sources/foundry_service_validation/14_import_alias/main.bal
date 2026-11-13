@@ -24,4 +24,6 @@ service foundry:FoundryInvocationService on foundryListener {
             returns json|h:Response => payload;
 
     resource function get status() returns string => "ok";
+
+    resource function get readiness(foundry:FoundryContext ctx) returns h:Response => new;
 }

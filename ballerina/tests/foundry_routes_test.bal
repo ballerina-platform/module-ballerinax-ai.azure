@@ -132,14 +132,20 @@ service FoundryInvocationService on foundryRoutesListener, foundryRoutesLocalLis
         }
         return {route: "cancel", invocationId, reason, context: foundryContextSummary(ctx)};
     }
+
+    resource function get readiness() {
+    }
 }
 
-// A service with only the required resource, and no OpenAPI document.
+// A service with only the required resources, and no OpenAPI document.
 listener FoundryListener foundryRoutesMissingListener = new (FOUNDRY_ROUTES_MISSING_PORT, agent = {},
     gracefulStopTimeout = 0);
 
 service FoundryInvocationService on foundryRoutesMissingListener {
     resource function post invocations(@http:Payload json payload) returns json => payload;
+
+    resource function get readiness() {
+    }
 }
 
 // A get resource with a payload parameter, which a GET request can't supply.
@@ -153,6 +159,9 @@ service FoundryInvocationService on foundryRoutesGetPayloadListener {
         countFoundryRouteCall();
         return payload;
     }
+
+    resource function get readiness() {
+    }
 }
 
 // A get resource whose path parameter is not a string, which the dispatcher can't supply.
@@ -165,6 +174,9 @@ service FoundryInvocationService on foundryRoutesIntPathListener {
     resource function get invocations/[int invocationId]() returns json {
         countFoundryRouteCall();
         return {invocationId};
+    }
+
+    resource function get readiness() {
     }
 }
 

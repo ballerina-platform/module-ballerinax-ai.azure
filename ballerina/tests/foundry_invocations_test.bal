@@ -81,6 +81,9 @@ service FoundryInvocationService on foundryInvListener {
         countFoundryInvocation();
         return {payload, context: foundryContextSummary(ctx)};
     }
+
+    resource function get readiness() {
+    }
 }
 
 // B: a local run: no agent information, no payload parameter, context only.
@@ -90,6 +93,9 @@ service FoundryInvocationService on foundryInvLocalListener {
     resource function post invocations(FoundryContext ctx) returns json {
         countFoundryInvocation();
         return foundryContextSummary(ctx);
+    }
+
+    resource function get readiness() {
     }
 }
 
@@ -101,6 +107,9 @@ service FoundryInvocationService on foundryInvRecordListener {
         countFoundryInvocation();
         return {'order, sessionId: ctx.sessionId};
     }
+
+    resource function get readiness() {
+    }
 }
 
 // D, E, F, G: payload only, of type string, byte[], xml and an array of records.
@@ -108,24 +117,36 @@ listener FoundryListener foundryInvTextListener = new (FOUNDRY_INV_TEXT_PORT, ag
 
 service FoundryInvocationService on foundryInvTextListener {
     resource function post invocations(@http:Payload string text) returns string => string `got:${text}`;
+
+    resource function get readiness() {
+    }
 }
 
 listener FoundryListener foundryInvBytesListener = new (FOUNDRY_INV_BYTES_PORT, agent = {});
 
 service FoundryInvocationService on foundryInvBytesListener {
     resource function post invocations(@http:Payload byte[] bytes) returns byte[] => [...bytes, 0];
+
+    resource function get readiness() {
+    }
 }
 
 listener FoundryListener foundryInvXmlListener = new (FOUNDRY_INV_XML_PORT, agent = {});
 
 service FoundryInvocationService on foundryInvXmlListener {
     resource function post invocations(@http:Payload xml document) returns xml => xml `<got>${document}</got>`;
+
+    resource function get readiness() {
+    }
 }
 
 listener FoundryListener foundryInvArrayListener = new (FOUNDRY_INV_ARRAY_PORT, agent = {});
 
 service FoundryInvocationService on foundryInvArrayListener {
     resource function post invocations(@http:Payload FoundryTestOrder[] orders) returns int => orders.length();
+
+    resource function get readiness() {
+    }
 }
 
 // H: every kind of return value, chosen by the payload's `kind`.
@@ -189,13 +210,20 @@ service FoundryInvocationService on foundryInvReturnsListener {
         }
         return error("unknown kind");
     }
+
+    resource function get readiness() {
+    }
 }
 
-// I: a service without a `post invocations` resource.
+// I: a service without a `post invocations` resource. The compiler plugin doesn't validate this
+// package's own services, so the listener's run-time answer is tested here.
 listener FoundryListener foundryInvMissingListener = new (FOUNDRY_INV_MISSING_PORT, agent = {});
 
 service FoundryInvocationService on foundryInvMissingListener {
     resource function get invocations/[string invocationId]() returns json => {invocationId};
+
+    resource function get readiness() {
+    }
 }
 
 // J: a `post invocations` resource with a parameter the listener can't supply.
@@ -205,6 +233,9 @@ service FoundryInvocationService on foundryInvUnsupportedListener {
     resource function post invocations(@http:Payload json payload, string extra) returns json {
         countFoundryInvocation();
         return payload;
+    }
+
+    resource function get readiness() {
     }
 }
 
@@ -219,6 +250,9 @@ isolated service class SlowFoundryInvocationService {
         }
         runtime:sleep(2);
         return "done:" + ctx.sessionId;
+    }
+
+    isolated resource function get readiness() {
     }
 }
 
@@ -244,6 +278,9 @@ service FoundryInvocationService on foundryInvNonIsolatedListener {
         foundryNonIsolatedCalls += 1;
         foundryNonIsolatedActive -= 1;
         return {sum, sessionId: ctx.sessionId};
+    }
+
+    resource function get readiness() {
     }
 }
 

@@ -55,9 +55,10 @@ import java.util.concurrent.ExecutionException;
  *
  * <p>A resource is found by its accessor and path shape, where a path parameter segment is {@code ^}, as
  * {@link ResourceMethodType#getResourcePath()} reports it: {@code post [invocations]},
- * {@code get [invocations, ^]} and {@code post [invocations, ^, cancel]}. Path parameters come first in the
- * resource's parameter list; every other parameter must be either the {@code @http:Payload} parameter or the
- * {@code azure:FoundryContext} parameter, each at most once and in any order.
+ * {@code get [invocations, ^]}, {@code post [invocations, ^, cancel]} and {@code get [readiness]}. Path parameters
+ * come first in the resource's parameter list; every other parameter must be either the {@code @http:Payload}
+ * parameter or the {@code azure:FoundryContext} parameter, each at most once and in any order. The dispatcher itself
+ * rejects any parameter on {@code get readiness}, using {@code hasContext} and {@code payloadType} of the signature.
  *
  * <p>An error the resource returns or panics with, and a resource declared with a parameter the dispatcher can't
  * supply, are the agent's errors and come back as they are (the dispatcher classifies them as {@code upstream}).
@@ -85,6 +86,7 @@ public final class NativeFoundryResourceInvoker {
     // the x-platform-error-detail response header, so it is always fixed text: never request content.
     private static final String PLATFORM_ERROR_TYPE = "FoundryPlatformError";
     private static final String PAYLOAD_TYPE_FIELD = "payloadType";
+    private static final String HAS_CONTEXT_FIELD = "hasContext";
     private static final String HTTP_HEADERS_TYPE = "Headers";
     private static final BString HTTP_HEADERS_REQUEST_FIELD = StringUtils.fromString("request");
     private static final String ENTRYPOINT_FUNCTION_MODULE_TAG = "entrypoint.function.module";
@@ -118,6 +120,7 @@ public final class NativeFoundryResourceInvoker {
             Map<String, Object> fields = new HashMap<>();
             fields.put(PAYLOAD_TYPE_FIELD, params.payloadIndex < 0 ? null
                     : ValueCreator.createTypedescValue(params.payloadType));
+            fields.put(HAS_CONTEXT_FIELD, params.contextIndex >= 0);
             return ValueCreator.createRecordValue(env.getCurrentModule(), RESOURCE_SIGNATURE_TYPE, fields);
         } catch (BError error) {
             return error;
@@ -472,9 +475,11 @@ public final class NativeFoundryResourceInvoker {
     // a fresh context that is not yet started: the runtime then fills the entrypoint from that resource, while the
     // parent link keeps its span under the dispatcher's span. The context is seeded from the dispatcher's, so spans
     // started under it still find a parent span if the resource is ever not observed.
-    // Copied from ballerina/ai's NativeHttpToChatServiceAdaptor.
+    // Copied from ballerina/ai's NativeHttpToChatServiceAdaptor. The context also writes the Foundry span attributes
+    // the dispatcher set for the request to the user resource's span (see FoundryTracing); seeding it with the
+    // dispatcher's span writes the same attributes that span already has.
     private static ObserverContext newUserContext(Environment env, ObserverContext dispatcherContext) {
-        ObserverContext userContext = new ObserverContext();
+        ObserverContext userContext = FoundryTracing.newUserObserverContext(dispatcherContext);
         userContext.setParent(dispatcherContext);
         userContext.setSpan(dispatcherContext.getSpan());
         userContext.setServiceName(dispatcherContext.getServiceName());

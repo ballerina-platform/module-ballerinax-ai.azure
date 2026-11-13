@@ -27,6 +27,8 @@ isolated service class AgentService {
 
 final azure:FoundryInvocationService agentObject = service object {
     resource function post invocations(@http:Payload json payload, string extra) returns json => payload;
+
+    resource function get readiness() returns json => {status: "healthy"};
 };
 
 // A service class of another service type is not validated.

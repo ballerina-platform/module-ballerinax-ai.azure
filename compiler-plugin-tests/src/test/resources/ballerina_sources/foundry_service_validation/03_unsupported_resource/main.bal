@@ -34,4 +34,10 @@ service azure:FoundryInvocationService on foundryListener {
     resource function default [string... path]() returns json => {};
 
     resource function get .() returns string => "root";
+
+    resource function post readiness() returns json => {};
+
+    resource function get readiness/status() returns json => {};
+
+    resource function get readiness() returns json => {status: "healthy"};
 }

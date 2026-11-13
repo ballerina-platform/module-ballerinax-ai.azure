@@ -24,4 +24,6 @@ service azure:FoundryInvocationService on foundryListener {
 
     resource function post invocations/[string invocationId]/cancel(@http:Payload json first,
             azure:FoundryContext ctx, @http:Payload json second) returns json => first;
+
+    resource function get readiness() returns json => {status: "healthy"};
 }

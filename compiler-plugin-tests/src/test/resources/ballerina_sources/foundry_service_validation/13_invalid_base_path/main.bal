@@ -21,10 +21,14 @@ listener azure:FoundryListener literalListener = new (13002);
 
 service azure:FoundryInvocationService /agents/v1 on pathListener {
     resource function post invocations() returns json => {};
+
+    resource function get readiness() returns json => {status: "healthy"};
 }
 
 service azure:FoundryInvocationService "agent" on literalListener {
     resource function post invocations() returns json => {};
+
+    resource function get readiness() returns json => {status: "healthy"};
 }
 
 listener azure:FoundryListener escapedListener = new (13003);
@@ -33,9 +37,13 @@ listener azure:FoundryListener untypedListener = new (13004);
 // The value of the literal ("/a"), not its text, is what is checked.
 service azure:FoundryInvocationService "\u{2F}a" on escapedListener {
     resource function post invocations() returns json => {};
+
+    resource function get readiness() returns json => {status: "healthy"};
 }
 
 // A declaration without a type descriptor is still checked.
 service /api on untypedListener {
     resource function post invocations() returns json => {};
+
+    resource function get readiness() returns json => {status: "healthy"};
 }

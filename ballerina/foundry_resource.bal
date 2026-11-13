@@ -37,8 +37,10 @@ const PAYLOAD_TYPE_MISMATCH_MESSAGE = "The request body does not match the expec
 #
 # + payloadType - The declared type of the `@http:Payload` parameter, or `()` when the resource
 # declares none
+# + hasContext - Whether the resource declares an `azure:FoundryContext` parameter
 type FoundryResourceSignature record {|
     typedesc<anydata>? payloadType;
+    boolean hasContext;
 |};
 
 # The request body can't be bound to the declared payload type. The message is safe to send to the

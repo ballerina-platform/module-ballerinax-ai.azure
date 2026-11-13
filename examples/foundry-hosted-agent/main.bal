@@ -38,10 +38,14 @@ final ai:Agent agent = check new ({
     memory: check new ai:ShortTermMemory()
 });
 
-// Listens on the port in the `PORT` environment variable, else on 8088, and serves `GET /readiness`.
+// Listens on the port in the `PORT` environment variable, else on 8088.
 listener azure:FoundryListener foundryListener = new;
 
 service azure:FoundryInvocationService on foundryListener {
+
+    // Required. Serves the `GET /readiness` probe. Keep it cheap: Foundry calls it often, and any
+    // status other than 2xx takes the container out of rotation. It never calls the model.
+    resource function get readiness() returns json => {status: "healthy"};
 
     resource function post invocations(@http:Payload json payload, azure:FoundryContext ctx)
             returns json|error {

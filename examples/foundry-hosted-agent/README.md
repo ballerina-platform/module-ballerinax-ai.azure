@@ -59,7 +59,9 @@ content-length: 20
 {"status":"healthy"}
 ```
 
-The readiness probe never calls the model.
+The service's required `get readiness` resource serves the probe. It returns `{"status":"healthy"}` and
+never calls the model; return a status-code record such as `http:ServiceUnavailable` from it instead to
+report the container as not ready.
 
 ```bash
 curl -i -X POST "http://localhost:8088/invocations?agent_session_id=s1" \

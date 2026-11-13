@@ -56,7 +56,9 @@ def stripBallerinaExtensionVersion(String extVersion) {
 ballerina {
     packageOrganization = packageOrg
     module = packageName
-    testCoverageParam = "--code-coverage --coverage-format=xml"
+    // --observability-included: the tests assert the Foundry span attributes with the mock tracer
+    // (tests/Config.toml). Passed to `bal test` only, so the published package gains no observability dependencies.
+    testCoverageParam = "--code-coverage --coverage-format=xml --observability-included"
     connector = true
     langVersion = ballerinaLangVersion
     platform = "java25"

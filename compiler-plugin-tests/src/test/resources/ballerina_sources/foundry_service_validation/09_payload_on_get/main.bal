@@ -24,4 +24,6 @@ service azure:FoundryInvocationService on foundryListener {
 
     resource function get invocations/[string invocationId](@http:Payload json payload, azure:FoundryContext ctx)
             returns json => payload;
+
+    resource function get readiness() returns json => {status: "healthy"};
 }

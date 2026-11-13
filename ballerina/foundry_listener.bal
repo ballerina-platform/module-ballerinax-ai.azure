@@ -20,7 +20,8 @@ import ballerina/os;
 # A listener that runs a `FoundryInvocationService` as a Microsoft Foundry hosted agent.
 #
 # The listener serves the Foundry Invocations protocol over HTTP: `POST /invocations`, the
-# optional get and cancel routes, and the `GET /readiness` probe. It resolves session and
+# optional get and cancel routes, and the `GET /readiness` probe (served by the service's
+# `get readiness` resource). It resolves session and
 # invocation IDs, reads the platform headers into a `FoundryContext`, sets the platform response
 # headers and classifies errors, so the attached service contains only agent logic.
 public isolated class FoundryListener {

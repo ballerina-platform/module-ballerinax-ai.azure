@@ -23,8 +23,11 @@ listener http:Listener httpListener = new (16002);
 // A valid Foundry service next to plain HTTP services, which may declare any resource.
 service azure:FoundryInvocationService on foundryListener {
     resource function post invocations(@http:Payload json payload) returns json => payload;
+
+    resource function get readiness() returns json => {status: "healthy"};
 }
 
+// Plain HTTP services need no readiness resource.
 service /api on httpListener {
     resource function post invocations(string extra) returns json => {extra};
 

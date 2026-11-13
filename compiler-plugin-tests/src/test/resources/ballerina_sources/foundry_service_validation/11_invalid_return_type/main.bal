@@ -25,6 +25,8 @@ service azure:FoundryInvocationService on foundryListener {
     resource function get invocations/[string invocationId]() returns http:Request => new;
 
     resource function post invocations/[string invocationId]/cancel() returns json|Holder => {};
+
+    resource function get readiness() returns Holder|error => new Holder();
 }
 
 // An object type that is neither `http:Response` nor a client object.

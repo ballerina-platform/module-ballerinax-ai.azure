@@ -57,6 +57,12 @@ service azure:FoundryInvocationService on jsonListener {
         http:Accepted accepted = {body: {id: invocationId, session: ctx.sessionId}};
         return accepted;
     }
+
+    // Readiness that reports "not ready" with a status-code record.
+    resource function get readiness() returns http:Ok|http:ServiceUnavailable|error {
+        http:ServiceUnavailable unavailable = {body: {status: "starting"}};
+        return unavailable;
+    }
 }
 
 // Context before the payload, a `string` payload, `()` returns and no return type, at the `/` base path.
@@ -69,11 +75,18 @@ service azure:FoundryInvocationService / on textListener {
 
     resource function post invocations/[string invocationId]/cancel() {
     }
+
+    // Readiness with no return type: the default healthy response.
+    resource function get readiness() {
+    }
 }
 
 // A `byte[]` payload, at the `"/"` base path.
 service azure:FoundryInvocationService "/" on bytesListener {
     resource function post invocations(@http:Payload byte[] bytes) returns byte[] => bytes;
+
+    resource function get readiness() returns error? {
+    }
 }
 
 // An `xml` payload.
@@ -81,6 +94,8 @@ service azure:FoundryInvocationService on xmlListener {
     resource function post invocations(@http:Payload xml document) returns xml => document;
 
     resource function post invocations/[string invocationId]/cancel(@http:Payload xml reason) returns xml => reason;
+
+    resource function get readiness() returns string => "ready";
 }
 
 // A record payload, the context through a type alias, and status-code records.
@@ -94,12 +109,20 @@ service azure:FoundryInvocationService on recordListener {
         http:Created created = {body: 'order};
         return created;
     }
+
+    resource function get readiness() returns http:Response {
+        http:Response response = new;
+        response.setJsonPayload({status: "healthy"});
+        return response;
+    }
 }
 
 // An array payload and a union of `anydata` types with `error?`.
 service azure:FoundryInvocationService on arrayListener {
     resource function post invocations(@http:Payload Order[] orders) returns int|map<json>|error? =>
         orders.length();
+
+    resource function get readiness() returns json => {status: "healthy"};
 }
 
 // No parameters and a named union return type, in an isolated service.
@@ -108,12 +131,19 @@ isolated service azure:FoundryInvocationService on noParamsListener {
         json result = {status: "ok"};
         return result;
     }
+
+    isolated resource function get readiness() returns InvokeResult {
+        json result = {status: "healthy"};
+        return result;
+    }
 }
 
 // A map payload with a default value, and the `http:StatusCodeResponse` union itself.
 service azure:FoundryInvocationService on mapListener {
     resource function post invocations(@http:Payload map<json> payload = {}) returns http:StatusCodeResponse =>
         <http:Ok>{body: payload};
+
+    resource function get readiness() returns http:StatusCodeResponse => <http:Ok>{body: {status: "healthy"}};
 }
 
 listener azure:FoundryListener untypedListener = new (9109);
@@ -126,20 +156,44 @@ service on untypedListener {
         {reply: payload, session: ctx.sessionId};
 
     resource function get invocations/[string invocationId]() returns json => {id: invocationId};
+
+    resource function get readiness() returns json => {status: "healthy"};
 }
 
 // An untyped declaration on an inline listener, at the `/` base path.
 service / on new azure:FoundryListener(9112) {
     resource function post invocations() returns string => "ok";
+
+    resource function get readiness() returns string => "ready";
 }
 
 // An intersection return type that is a subtype of the supported union, though no single member category holds it.
 service azure:FoundryInvocationService on intersectionListener {
     resource function post invocations(@http:Payload json payload) returns readonly & (json|error) =>
         payload.cloneReadOnly();
+
+    resource function get readiness() returns readonly & (json|error) => {status: "healthy"};
 }
 
-// A base path literal whose value is "/" (written with an escape).
+// A base path literal whose value is "/" (written with an escape), and the readiness resource name written as a
+// quoted identifier.
 service azure:FoundryInvocationService "\u{2F}" on escapedListener {
     resource function post invocations() returns json => {};
+
+    resource function get 'readiness() returns json => {status: "healthy"};
 }
+
+// A service class and an object constructor that declare both required resources.
+isolated service class AgentService {
+    *azure:FoundryInvocationService;
+
+    isolated resource function post invocations(@http:Payload json payload) returns json => payload;
+
+    isolated resource function get readiness() returns json => {status: "healthy"};
+}
+
+final azure:FoundryInvocationService agentObject = service object {
+    resource function post invocations() returns json => {};
+
+    resource function get readiness() returns http:Ok => {body: {status: "healthy"}};
+};
