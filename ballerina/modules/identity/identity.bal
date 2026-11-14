@@ -64,6 +64,11 @@ isolated function toNativeTransport(string credentialType, CredentialOptions opt
 
 # Maps `http:ClientSecureSocket` to the token client. Options that can't be honoured for token requests are
 # rejected rather than silently ignored.
+#
+# + credentialType - The credential's `type`, recorded in the error detail
+# + secureSocket - The TLS settings to apply
+# + transport - The token client settings, updated in place
+# + return - An `Error` if an option is not supported for token requests
 isolated function applySecureSocket(string credentialType, http:ClientSecureSocket secureSocket,
         NativeTransport transport) returns Error? {
     if !secureSocket.enable {

@@ -30,10 +30,15 @@ type NativeTransport record {|
     record {|string path; string password;|}[] trustStores = [];
     # `true` when TLS is disabled (`secureSocket.enable = false`): any server certificate is accepted
     boolean trustAll = false;
+    # JSSE protocol names to enable (e.g. `TLSv1.3`); empty for the JVM's defaults
     string[] protocols = [];
+    # Cipher suites to enable; empty for the JVM's defaults
     string[] ciphers = [];
+    # Timeout (in seconds) for each token request
     decimal timeout;
+    # Proxy for token requests; local managed identity endpoints bypass it
     record {|string host; int port; string userName = ""; string password = "";|} proxy?;
+    # Microsoft Entra ID authority host
     string authorityHost;
 |};
 
@@ -87,6 +92,10 @@ isolated class NativeCredential {
 }
 
 # Maps a native error to the module's error types. Native messages are already sanitised (no tokens or secrets).
+#
+# + credentialType - The credential's `type`, recorded in the error detail
+# + err - The native error
+# + return - A `CredentialUnavailableError`, an `AuthenticationError`, or an `Error` for any other failure
 isolated function toIdentityError(string credentialType, error err) returns Error {
     map<anydata> detail = <map<anydata>>err.detail().cloneReadOnly();
     anydata code = detail["code"];
