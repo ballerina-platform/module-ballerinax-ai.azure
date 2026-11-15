@@ -96,66 +96,8 @@ public type ManagedIdentityConfig record {|
     string clientId?;
 |};
 
-# A Kubernetes workload identity (federated token file). Defaults come from the `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`
-# and `AZURE_FEDERATED_TOKEN_FILE` environment variables.
-@display {label: "Workload Identity"}
-public type WorkloadIdentityConfig record {|
-    # Discriminator for this credential type
-    @display {label: "Type"}
-    "workloadIdentity" 'type;
-    # Microsoft Entra ID tenant ID
-    @display {label: "Tenant ID"}
-    string tenantId?;
-    # Client ID of the application or user-assigned managed identity
-    @display {label: "Client ID"}
-    string clientId?;
-    # Path of the federated token file
-    @display {label: "Token File Path"}
-    string tokenFilePath?;
-|};
-
-# A service principal with a client secret. Keep the secret out of source control.
-@display {label: "Client Secret"}
-public type ClientSecretConfig record {|
-    # Discriminator for this credential type
-    @display {label: "Type"}
-    "clientSecret" 'type;
-    # Microsoft Entra ID tenant ID
-    @display {label: "Tenant ID"}
-    string tenantId;
-    # Client (application) ID of the service principal
-    @display {label: "Client ID"}
-    string clientId;
-    # Client secret of the service principal
-    @display {label: "Client Secret"}
-    string clientSecret;
-|};
-
-# The account signed in to the Azure CLI (`az login`), for developer machines.
-@display {label: "Azure CLI"}
-public type AzureCliConfig record {|
-    # Discriminator for this credential type
-    @display {label: "Type"}
-    "azureCli" 'type;
-    # Microsoft Entra ID tenant to request tokens from
-    @display {label: "Tenant ID"}
-    string tenantId?;
-|};
-
-# A fixed token, for tests or tokens managed outside the application. It is never refreshed.
-@display {label: "Static Token"}
-public type StaticTokenConfig record {|
-    # Discriminator for this credential type
-    @display {label: "Type"}
-    "staticToken" 'type;
-    # The bearer token
-    @display {label: "Token"}
-    string token;
-|};
-
 # Plain-data configuration of a credential. The `type` field selects the credential.
-public type CredentialConfig DefaultCredentialConfig|ManagedIdentityConfig|WorkloadIdentityConfig
-        |ClientSecretConfig|AzureCliConfig|StaticTokenConfig;
+public type CredentialConfig DefaultCredentialConfig|ManagedIdentityConfig;
 
 # A credential: either its configuration or a ready-made `TokenCredential`.
 public type Credential CredentialConfig|TokenCredential;

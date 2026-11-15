@@ -41,35 +41,6 @@ function testCreateManagedIdentityCredential() {
         is TokenCredential);
 }
 
-@test:Config {
-    dataProvider: notImplementedConfigs
-}
-function testNotImplementedCredentialTypes(string credentialType, CredentialConfig config) {
-    TokenCredential|Error credential = createCredential(config);
-    if credential !is Error {
-        test:assertFail(string `'${credentialType}' should not be implemented yet`);
-    }
-    test:assertEquals(credential.message(), string `credential type '${credentialType}' is not implemented yet`);
-    test:assertEquals(credential.detail().credential, credentialType);
-}
-
-function notImplementedConfigs() returns map<[string, CredentialConfig]> => {
-    "workloadIdentity": ["workloadIdentity", {'type: "workloadIdentity"}],
-    "clientSecret": ["clientSecret", {'type: "clientSecret", tenantId: "t", clientId: "c", clientSecret: "s3cr3t-value"}],
-    "azureCli": ["azureCli", {'type: "azureCli"}],
-    "staticToken": ["staticToken", {'type: "staticToken", token: "static-token-value"}]
-};
-
-@test:Config
-function testNotImplementedErrorHasNoSecrets() {
-    TokenCredential|Error credential = createCredential(
-        {'type: "clientSecret", tenantId: "t", clientId: "c", clientSecret: "s3cr3t-value"});
-    if credential !is Error {
-        test:assertFail("clientSecret is not implemented yet");
-    }
-    test:assertFalse(credential.toString().includes("s3cr3t-value"), "the client secret must not leak into errors");
-}
-
 @test:Config
 function testUnsupportedTlsOptionsAreRejected() {
     TokenCredential|Error noHostCheck = createCredential({'type: "managedIdentity"},

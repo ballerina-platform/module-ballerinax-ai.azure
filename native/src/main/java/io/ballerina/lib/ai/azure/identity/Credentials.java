@@ -83,7 +83,7 @@ public final class Credentials {
                 case TYPE_DEFAULT -> defaultCredential(config, httpClient, authorityHost);
                 case TYPE_MANAGED_IDENTITY -> managedIdentityCredential(config, httpClient);
                 default -> throw new IllegalArgumentException(
-                        "credential type '" + credentialType.getValue() + "' is not implemented yet");
+                        "credential type '" + credentialType.getValue() + "' is not supported");
             };
             credential.addNativeData(NATIVE_CREDENTIAL, tokenCredential);
             return null;

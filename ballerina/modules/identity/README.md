@@ -5,14 +5,10 @@ The `ai.azure.identity` module provides Microsoft Entra ID (keyless) credentials
 A credential is described by a plain record whose `type` field selects it, or supplied as any object that implements
 `TokenCredential`. Tokens are cached per scope set and refreshed before they expire.
 
-| `type` | Credential | Status |
-|---|---|---|
-| `default` | Default chain: environment, workload identity, managed identity, then developer tools (Azure CLI, ...) | Supported |
-| `managedIdentity` | Managed identity (Azure compute, Azure AI Foundry hosted agents) | Supported |
-| `workloadIdentity` | Kubernetes workload identity | Not implemented yet |
-| `clientSecret` | Service principal with a client secret | Not implemented yet |
-| `azureCli` | Azure CLI sign-in | Not implemented yet |
-| `staticToken` | Fixed token | Not implemented yet |
+| `type` | Credential |
+|---|---|
+| `default` | Default chain: environment, workload identity, managed identity, then developer tools (Azure CLI, ...) |
+| `managedIdentity` | Managed identity (Azure compute, Azure AI Foundry hosted agents) |
 
 ```ballerina
 import ballerinax/ai.azure.identity;

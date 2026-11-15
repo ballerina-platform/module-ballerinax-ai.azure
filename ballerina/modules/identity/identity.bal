@@ -31,14 +31,10 @@ const SSL_CERT_FILE = "SSL_CERT_FILE";
 #
 # + config - The credential configuration; its `type` field selects the credential
 # + options - Transport and cloud options for the credential's token requests
-# + return - The credential, or an `Error` if the configuration is invalid or its type is not supported yet
+# + return - The credential, or an `Error` if the configuration is invalid
 public isolated function createCredential(CredentialConfig config, *CredentialOptions options)
         returns TokenCredential|Error {
     string credentialType = config.'type;
-    if config !is DefaultCredentialConfig && config !is ManagedIdentityConfig {
-        return error Error(string `credential type '${credentialType}' is not implemented yet`,
-            credential = credentialType);
-    }
     NativeTransport transport = check toNativeTransport(credentialType, options);
     return new AzureIdentityCredential(credentialType, config, transport);
 }

@@ -405,14 +405,14 @@ function testCredentialConfigInitMakesNoNetworkCall() returns error? {
 
 @test:Config {groups: ["entra-auth"]}
 function testCredentialConfigErrorsAtInit() {
-    OpenAiModelProvider|ai:Error notImplemented = new ("https://res.openai.azure.com/openai/v1",
-        {'type: "azureCli"}, DEPLOYMENT_ID);
-    if notImplemented !is ai:Error {
-        test:assertFail("an unimplemented credential type must fail at init");
+    // A proxy that token requests can't use is rejected, which shows `proxy` reaches the credential.
+    OpenAiModelProvider|ai:Error socks = new ("https://res.openai.azure.com/openai/v1", {'type: "managedIdentity"},
+        DEPLOYMENT_ID, proxy = {host: "proxy.example", port: 1080, protocol: http:SOCKS5});
+    if socks !is ai:Error {
+        test:assertFail("a SOCKS proxy must fail at init");
     }
-    error? cause = notImplemented.cause();
-    test:assertTrue(cause is error && cause.message().includes("not implemented yet"),
-        notImplemented.toString());
+    error? cause = socks.cause();
+    test:assertTrue(cause is error && cause.message().includes("'SOCKS5' proxy is not supported"), socks.toString());
 
     // TLS options that token requests can't honour are rejected, which shows `secureSocket` reaches the credential.
     OpenAiModelProvider|ai:Error insecure = new ("https://res.openai.azure.com/openai/v1", {'type: "default"},
