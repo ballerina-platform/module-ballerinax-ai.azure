@@ -23,21 +23,18 @@ public const AZURE_US_GOVERNMENT = "https://login.microsoftonline.us/";
 # Microsoft Entra ID authority host of Microsoft Azure operated by 21Vianet (China).
 public const AZURE_CHINA = "https://login.chinacloudapi.cn/";
 
-# An access token for one audience. Times are epoch seconds.
+# A Microsoft Entra ID access token.
 #
-# + token - The bearer token. Never log it or put it in an error.
-# + expiresOn - When the token expires
-# + refreshOn - When the source suggests refreshing the token early, if it does
+# + token - The bearer token
+# + expiresOn - When the token expires (epoch seconds)
+# + refreshOn - When the token should be refreshed (epoch seconds), if the source suggests a time
 public type AccessToken readonly & record {|
     string token;
     int expiresOn;
     int refreshOn?;
 |};
 
-# Anything that can produce Microsoft Entra ID access tokens.
-#
-# The type is structural, so an application can supply its own implementation (for example, one that reads tokens
-# from a vault). Implementations are expected to cache and refresh tokens, to never panic, and to never log tokens.
+# Provides Microsoft Entra ID access tokens.
 public type TokenCredential isolated object {
     # Returns a valid access token for the given scopes.
     #
@@ -46,7 +43,7 @@ public type TokenCredential isolated object {
     public isolated function getToken(string[] scopes) returns AccessToken|Error;
 };
 
-# Details of an identity error. They never contain tokens or secrets.
+# Details of an identity error.
 #
 # + credential - The credential type that failed (for example, `managedIdentity`)
 # + code - The Microsoft Entra ID error code (`AADSTS...`), when the service returned one
@@ -58,25 +55,22 @@ public type ErrorDetail record {|
 # Represents any error from the identity module.
 public type Error distinct error<ErrorDetail>;
 
-# No usable credential source is available in this environment (for example, no managed identity endpoint, or the
-# Azure CLI is not logged in).
+# No credential source is available in the current environment.
 public type CredentialUnavailableError distinct Error;
 
-# A credential source was found, but Microsoft Entra ID or the managed identity endpoint refused the request.
+# The credential source refused the token request.
 public type AuthenticationError distinct Error;
 
-# The default credential chain, which picks the first source that works in the current environment: environment
-# variables, workload identity, managed identity, then developer tools such as the Azure CLI.
+# The default Azure credential, which uses the first credential source available in the current environment.
 @display {label: "Default Azure Credential"}
 public type DefaultCredentialConfig record {|
-    # Discriminator for this credential type
+    # The credential type
     @display {label: "Type"}
     "default" 'type;
-    # Narrows the chain: `prod` keeps environment, workload identity and managed identity; `dev` keeps the developer
-    # tools; `all` keeps every source (the `AZURE_TOKEN_CREDENTIALS` environment variable can still narrow it)
+    # The credential sources to try: `all`, `prod` (deployed environments) or `dev` (developer tools)
     @display {label: "Credential Sources"}
     "all"|"prod"|"dev" sources = "all";
-    # Client ID of a user-assigned managed identity (default: the `AZURE_CLIENT_ID` environment variable)
+    # Client ID of a user-assigned managed identity
     @display {label: "Managed Identity Client ID"}
     string managedIdentityClientId?;
     # Microsoft Entra ID tenant to request tokens from
@@ -84,33 +78,30 @@ public type DefaultCredentialConfig record {|
     string tenantId?;
 |};
 
-# A managed identity: Azure compute (VMs, App Service, Container Apps, AKS, Functions) and Azure AI Foundry hosted
-# agents.
+# The managed identity of an Azure resource or an Azure AI Foundry hosted agent.
 @display {label: "Managed Identity"}
 public type ManagedIdentityConfig record {|
-    # Discriminator for this credential type
+    # The credential type
     @display {label: "Type"}
     "managedIdentity" 'type;
-    # Client ID of a user-assigned managed identity. Omit it to use the system-assigned identity.
+    # Client ID of a user-assigned managed identity; omit it to use the system-assigned identity
     @display {label: "Client ID"}
     string clientId?;
 |};
 
-# Plain-data configuration of a credential. The `type` field selects the credential.
+# The configuration of a credential.
 public type CredentialConfig DefaultCredentialConfig|ManagedIdentityConfig;
 
-# A credential: either its configuration or a ready-made `TokenCredential`.
+# A credential configuration or a `TokenCredential`.
 public type Credential CredentialConfig|TokenCredential;
 
-# Transport and cloud options for the token requests a credential makes.
+# Options for the token requests of a credential.
 public type CredentialOptions record {|
-    # Microsoft Entra ID authority host (`AZURE_PUBLIC_CLOUD`, `AZURE_US_GOVERNMENT`, `AZURE_CHINA`, or a URL)
+    # Microsoft Entra ID authority host
     string authorityHost = AZURE_PUBLIC_CLOUD;
-    # TLS settings for token requests. Certificates in the file named by the `SSL_CERT_FILE` environment variable
-    # are always trusted as well, in addition to the JVM's default trust store.
+    # SSL/TLS-related options for token requests
     http:ClientSecureSocket secureSocket?;
-    # HTTP proxy for token requests (SOCKS proxies are not supported). Local managed identity endpoints are always
-    # reached directly.
+    # HTTP proxy for token requests
     http:ProxyConfig proxy?;
     # Timeout (in seconds) for each token request
     decimal timeout = 30;

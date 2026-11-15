@@ -76,26 +76,12 @@ public type ConnectionConfig record {|
     @display {label: "Payload Validation"}
     boolean validation = true;
 
-    # Microsoft Entra ID token scope, used only when authenticating with a credential. By default it is derived
-    # from the service URL (for example, `https://cognitiveservices.azure.com/.default` for an Azure OpenAI
-    # resource, or `https://ai.azure.com/.default` for a Foundry project endpoint); set it for other hosts, such as
-    # an API Management gateway.
+    # Microsoft Entra ID token scope for credential authentication; derived from the service URL when not set
     @display {label: "Token Scope"}
     string tokenScope?;
 |};
 
-# The Azure OpenAI API surface used by the `OpenAiModelProvider`.
-#
-# The concrete wire route is derived from both this value and the shape of the `serviceUrl`:
-#
-# | `apiType` | `serviceUrl` ends with `/v1` (v1 GA) | otherwise (legacy) |
-# | --- | --- | --- |
-# | `CHAT_COMPLETIONS` | `POST {serviceUrl}/chat/completions` via the `azure.openai.chat` connector | `POST {legacyBase}/deployments/{deploymentId}/chat/completions?api-version={apiVersion}` |
-# | `RESPONSES` | `POST {serviceUrl}/responses` via the `azure.openai.responses` connector | `POST {legacyBase}/responses?api-version={apiVersion}` |
-#
-# On the legacy surface `legacyBase` is the `serviceUrl` completed with `/openai` when it is a bare origin
-# (e.g. `https://<resource>.openai.azure.com`) and used verbatim when it already carries a path (e.g. an API
-# Management base path).
+# Defines which Azure OpenAI API to use for model interactions.
 @display {label: "OpenAI API Type"}
 public enum ApiType {
     # Use the OpenAI Chat Completions API (`/chat/completions`)

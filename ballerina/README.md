@@ -38,7 +38,9 @@ On the legacy surface, `legacyBase` is derived from the `serviceUrl` as follows:
   (e.g. `https://gw.example.com/azure-openai`) own their base path without the module rewriting it.
 
 The `apiVersion` argument is **required** for legacy (non-`/v1`) service URLs (e.g. `"2024-10-21"`). For v1 (`/v1`)
-service URLs it is optional and normally omitted; pass `"preview"` or `"v1"` to opt into a specific v1 surface.
+service URLs it is optional and normally omitted; pass `"preview"` or `"v1"` to opt into a specific v1 surface (other
+values are ignored on v1 URLs). Leave `temperature` unset for models that do not support it, such as the GPT-5 and
+o-series reasoning models.
 
 This module also provides an `EmbeddingProvider` for Azure OpenAI embedding models. It resolves the `apiVersion` and
 the legacy base URL exactly the same way, so one `serviceUrl` means the same thing to both providers:
@@ -56,6 +58,45 @@ final ai:EmbeddingProvider legacyEmbeddingProvider = check new azure:EmbeddingPr
 final ai:EmbeddingProvider embeddingProvider = check new azure:EmbeddingProvider(
     "https://<resource>.services.ai.azure.com/openai/v1", "api-key", (), "deployment-id");
 ```
+
+### Authentication
+
+`OpenAiModelProvider` authenticates with an API key, sent as the `api-key` header, or with a Microsoft Entra ID
+credential from the `ai.azure.identity` module, sent as an `Authorization: Bearer` token. Pass either one as the
+second argument:
+
+```ballerina
+// API key
+final ai:ModelProvider apiKeyModel = check new azure:OpenAiModelProvider(
+    "https://<resource>.services.ai.azure.com/openai/v1", "api-key", "deployment-id");
+
+// Keyless: the default Azure credential (Azure CLI sign-in locally, managed identity in Azure)
+final ai:ModelProvider keylessModel = check new azure:OpenAiModelProvider(
+    "https://<resource>.services.ai.azure.com/openai/v1", {'type: "default"}, "deployment-id");
+
+// A user-assigned managed identity
+final ai:ModelProvider managedIdentityModel = check new azure:OpenAiModelProvider(
+    "https://<resource>.services.ai.azure.com/openai/v1", {'type: "managedIdentity", clientId: "<client-id>"},
+    "deployment-id");
+```
+
+With a credential:
+
+- The token scope is derived from the service URL. For any other host, such as an API Management gateway or a
+  custom domain, set `tokenScope` in the connection configuration.
+
+  | Service URL | Token scope |
+  | --- | --- |
+  | path contains `/api/projects/` (a Foundry project endpoint) | `https://ai.azure.com/.default` |
+  | `*.openai.azure.com`, `*.cognitiveservices.azure.com`, `*.services.ai.azure.com` | `https://cognitiveservices.azure.com/.default` |
+  | `*.openai.azure.us` | `https://cognitiveservices.azure.us/.default` |
+  | `*.search.windows.net` | `https://search.azure.com/.default` |
+
+- The service URL must use `https://`. `http://` is accepted only for a loopback host (`localhost`, `127.0.0.0/8`
+  or `[::1]`), so a bearer token is never sent in clear text over the network.
+- Token requests use the provider's `secureSocket` and `proxy` settings. Only HTTP proxies are supported for them.
+- Requests to the v1 GA surface are sent through a raw HTTP client instead of the generated connectors, because the
+  connectors always send the `api-key` header.
 
 ## Prerequisites
 
