@@ -4,7 +4,7 @@
     "kind": "ai"
   },
   "trigger": {
-    "displayName": "Microsoft Foundry Hosted Agent",
+    "displayName": "Microsoft Foundry Service",
     "shortDisplayName": "Foundry Agent",
     "description": "Create a service that runs as a Microsoft Foundry hosted agent over the Invocations protocol.",
     "type": "foundry"
@@ -74,7 +74,7 @@
     {
       "target": "$service",
       "metadata": {
-        "label": "Foundry Hosted Agent",
+        "label": "Microsoft Foundry Service",
         "description": "Handles Foundry invocations through fixed resources. The listener manages session and invocation IDs, platform headers and error responses, so the resources contain only agent logic."
       },
       "handlers": [
@@ -223,7 +223,7 @@
     }
   ],
   "artifactInfo": {
-    "displayLabel": "Foundry Hosted Agent",
+    "displayLabel": "Microsoft Foundry Service",
     "icon": {
       "lightPath": "icons/light.svg",
       "darkPath": "icons/dark.svg"
