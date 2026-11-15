@@ -1,0 +1,5 @@
+[package]
+org = "foundry_examples"
+name = "foundry_hosted_agent"
+version = "0.1.0"
+distribution = "2201.14.1"

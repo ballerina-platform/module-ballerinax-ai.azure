@@ -1,9 +1,10 @@
 [package]
 authors = ["Ballerina"]
-distribution = "2201.14.0"
-keywords = ["Agent", "Azure", "Model", "Provider", "Vendor/Microsoft", "Area/AI & Machine Learning", "Type/Embedding Provider", "Type/Model Provider", "Type/Connector", "Name/Azure Model/Embedding Provider"]
+distribution = "2201.14.1"
+keywords = ["Agent", "Azure", "Model", "Provider", "Vendor/Microsoft", "Area/AI & Machine Learning", "Type/Embedding Provider", "Type/Model Provider", "Type/Connector", "Type/Trigger", "Name/Azure Model/Embedding Provider"]
 license = ["Apache-2.0"]
 icon="icon.png"
+include = ["metadata/**"]
 name = "ai.azure"
 org = "ballerinax"
 repository = "https://github.com/ballerina-platform/module-ballerinax-ai.azure"

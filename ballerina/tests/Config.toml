@@ -1,0 +1,6 @@
+# Tracing with the in-memory mock tracer of ballerina/observe, so foundry_tracing_test.bal can read the
+# finished spans back (mockextension:getFinishedSpans). It exports nothing, and its propagators are no-ops,
+# so outbound requests carry no trace headers. Metrics stay disabled.
+[ballerina.observe]
+tracingEnabled = true
+tracingProvider = "mock"

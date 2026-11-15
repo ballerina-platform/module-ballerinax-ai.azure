@@ -1,0 +1,243 @@
+{
+  "version": "v1.0",
+  "listeners": [
+    {
+      "id": "$listener",
+      "doc": "Runs the attached service as a Microsoft Foundry hosted agent, serving the Foundry Invocations protocol over HTTP. Listens on the given port, else the PORT environment variable, else 8088, or shares an existing http:Listener. Resolves the session and invocation IDs, reads the platform headers into an azure:FoundryContext, sets the platform response headers and classifies errors, so the service contains only agent logic.",
+      "type": { "name": "FoundryListener" },
+      "services": ["$service"],
+      "multipleServicesAllowed": false
+    }
+  ],
+  "serviceTypes": [
+    {
+      "id": "$service",
+      "doc": "A Microsoft Foundry hosted agent. It declares the required post invocations and get readiness resources and, optionally, the get and cancel resources for a stored invocation. It is always attached at the root base path, because Foundry calls /invocations and /readiness there. Remote functions and any other resources are compile errors.",
+      "type": { "name": "FoundryInvocationService" },
+      "concrete": false,
+      "multipleListenersAllowed": true,
+      "handlers": {
+        "backedByConcreteType": false,
+        "options": [
+          {
+            "id": "$service.invoke",
+            "name": "invocations",
+            "kind": "resource",
+            "doc": "Handles POST /invocations, the agent's entry point. Runs the agent on the request payload and returns its result. Returning () answers 202 Accepted, for an invocation that completes asynchronously and is read back through the get resource.",
+            "presence": "required",
+            "accessor": { "presence": "required", "values": ["post"] },
+            "path": { "presence": "required", "values": ["invocations"] },
+            "params": [
+              {
+                "id": "$service.invoke.payload",
+                "name": "payload",
+                "doc": "The request body, bound to the declared type: json, string, byte[], xml or another anydata type such as a user-defined record. A body that cannot be bound is answered with 400 before the resource runs.",
+                "type": { "name": "anydata", "builtin": true },
+                "presence": "optional",
+                "dataBinding": {
+                  "typedescs": [
+                    { "constraint": { "name": "anydata", "builtin": true }, "shapes": [{ "form": "bare" }] }
+                  ]
+                },
+                "annotations": ["$payload"]
+              },
+              {
+                "id": "$service.invoke.ctx",
+                "name": "ctx",
+                "doc": "The platform context of the invocation: the resolved session and invocation IDs, the user ID, the call ID, the original subject, the x-client-* headers, the trace headers and the hosted agent's information.",
+                "type": { "name": "FoundryContext" },
+                "presence": "optional"
+              }
+            ],
+            "returns": {
+              "id": "$service.invoke.returns",
+              "type": [
+                { "name": "anydata", "builtin": true },
+                { "name": "Response", "packageInfo": { "org": "ballerina", "packageName": "http", "moduleName": "http", "version": "2.18.2" } },
+                { "name": "StatusCodeResponse", "subtypeFamily": true, "packageInfo": { "org": "ballerina", "packageName": "http", "moduleName": "http", "version": "2.18.2" } },
+                { "name": "error", "builtin": true }
+              ],
+              "dataBinding": {
+                "typedescs": [
+                  {
+                    "constraint": { "name": "anydata", "builtin": true },
+                    "excludes": [
+                      { "name": "StatusCodeResponse", "subtypeFamily": true, "packageInfo": { "org": "ballerina", "packageName": "http", "moduleName": "http", "version": "2.18.2" } }
+                    ],
+                    "shapes": [{ "form": "bare" }]
+                  },
+                  {
+                    "constraint": { "name": "anydata", "builtin": true },
+                    "shapes": [
+                      {
+                        "form": "included",
+                        "envelope": { "name": "StatusCodeResponse", "subtypeFamily": true, "packageInfo": { "org": "ballerina", "packageName": "http", "moduleName": "http", "version": "2.18.2" } },
+                        "bindableFields": ["body", "headers"]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "id": "$service.readiness",
+            "name": "readiness",
+            "kind": "resource",
+            "doc": "Serves the GET /readiness probe (and HEAD). Foundry calls it often and takes the container out of rotation on any non-2xx status, so keep it cheap and never call the model here. Takes no parameters. Returning () answers 200 with {\"status\":\"healthy\"}; return a status-code record such as http:ServiceUnavailable to report that the agent is not ready.",
+            "presence": "required",
+            "accessor": { "presence": "required", "values": ["get"] },
+            "path": { "presence": "required", "values": ["readiness"] },
+            "returns": {
+              "id": "$service.readiness.returns",
+              "type": [
+                { "name": "anydata", "builtin": true },
+                { "name": "Response", "packageInfo": { "org": "ballerina", "packageName": "http", "moduleName": "http", "version": "2.18.2" } },
+                { "name": "StatusCodeResponse", "subtypeFamily": true, "packageInfo": { "org": "ballerina", "packageName": "http", "moduleName": "http", "version": "2.18.2" } },
+                { "name": "error", "builtin": true }
+              ],
+              "dataBinding": {
+                "typedescs": [
+                  {
+                    "constraint": { "name": "anydata", "builtin": true },
+                    "excludes": [
+                      { "name": "StatusCodeResponse", "subtypeFamily": true, "packageInfo": { "org": "ballerina", "packageName": "http", "moduleName": "http", "version": "2.18.2" } }
+                    ],
+                    "shapes": [{ "form": "bare" }]
+                  },
+                  {
+                    "constraint": { "name": "anydata", "builtin": true },
+                    "shapes": [
+                      {
+                        "form": "included",
+                        "envelope": { "name": "StatusCodeResponse", "subtypeFamily": true, "packageInfo": { "org": "ballerina", "packageName": "http", "moduleName": "http", "version": "2.18.2" } },
+                        "bindableFields": ["body", "headers"]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "id": "$service.getInvocation",
+            "name": "invocations/[string invocationId]",
+            "kind": "resource",
+            "doc": "Handles GET /invocations/{invocationId}, returning the status or result of an earlier invocation, such as one answered with 202. The invocation ID is the decoded path segment and must be declared as string. Without this resource the route answers 404.",
+            "presence": "optional",
+            "accessor": { "presence": "required", "values": ["get"] },
+            "path": { "presence": "required", "values": ["invocations/[string invocationId]"] },
+            "params": [
+              {
+                "id": "$service.getInvocation.ctx",
+                "name": "ctx",
+                "doc": "The platform context of the request. Its invocation ID is the one in the path, and its session ID is \"\" when no session is known.",
+                "type": { "name": "FoundryContext" },
+                "presence": "optional"
+              }
+            ],
+            "returns": {
+              "id": "$service.getInvocation.returns",
+              "type": [
+                { "name": "anydata", "builtin": true },
+                { "name": "Response", "packageInfo": { "org": "ballerina", "packageName": "http", "moduleName": "http", "version": "2.18.2" } },
+                { "name": "StatusCodeResponse", "subtypeFamily": true, "packageInfo": { "org": "ballerina", "packageName": "http", "moduleName": "http", "version": "2.18.2" } },
+                { "name": "error", "builtin": true }
+              ],
+              "dataBinding": {
+                "typedescs": [
+                  {
+                    "constraint": { "name": "anydata", "builtin": true },
+                    "excludes": [
+                      { "name": "StatusCodeResponse", "subtypeFamily": true, "packageInfo": { "org": "ballerina", "packageName": "http", "moduleName": "http", "version": "2.18.2" } }
+                    ],
+                    "shapes": [{ "form": "bare" }]
+                  },
+                  {
+                    "constraint": { "name": "anydata", "builtin": true },
+                    "shapes": [
+                      {
+                        "form": "included",
+                        "envelope": { "name": "StatusCodeResponse", "subtypeFamily": true, "packageInfo": { "org": "ballerina", "packageName": "http", "moduleName": "http", "version": "2.18.2" } },
+                        "bindableFields": ["body", "headers"]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "id": "$service.cancelInvocation",
+            "name": "invocations/[string invocationId]/cancel",
+            "kind": "resource",
+            "doc": "Handles POST /invocations/{invocationId}/cancel, cancelling an invocation that is still running. The invocation ID is the decoded path segment and must be declared as string. Without this resource the route answers 404.",
+            "presence": "optional",
+            "accessor": { "presence": "required", "values": ["post"] },
+            "path": { "presence": "required", "values": ["invocations/[string invocationId]/cancel"] },
+            "params": [
+              {
+                "id": "$service.cancelInvocation.payload",
+                "name": "payload",
+                "doc": "The request body, if the caller sends one, bound to the declared anydata type.",
+                "type": { "name": "anydata", "builtin": true },
+                "presence": "optional",
+                "dataBinding": {
+                  "typedescs": [
+                    { "constraint": { "name": "anydata", "builtin": true }, "shapes": [{ "form": "bare" }] }
+                  ]
+                },
+                "annotations": ["$payload"]
+              },
+              {
+                "id": "$service.cancelInvocation.ctx",
+                "name": "ctx",
+                "doc": "The platform context of the request. Its invocation ID is the one in the path, and its session ID is \"\" when no session is known.",
+                "type": { "name": "FoundryContext" },
+                "presence": "optional"
+              }
+            ],
+            "returns": {
+              "id": "$service.cancelInvocation.returns",
+              "type": [
+                { "name": "anydata", "builtin": true },
+                { "name": "Response", "packageInfo": { "org": "ballerina", "packageName": "http", "moduleName": "http", "version": "2.18.2" } },
+                { "name": "StatusCodeResponse", "subtypeFamily": true, "packageInfo": { "org": "ballerina", "packageName": "http", "moduleName": "http", "version": "2.18.2" } },
+                { "name": "error", "builtin": true }
+              ],
+              "dataBinding": {
+                "typedescs": [
+                  {
+                    "constraint": { "name": "anydata", "builtin": true },
+                    "excludes": [
+                      { "name": "StatusCodeResponse", "subtypeFamily": true, "packageInfo": { "org": "ballerina", "packageName": "http", "moduleName": "http", "version": "2.18.2" } }
+                    ],
+                    "shapes": [{ "form": "bare" }]
+                  },
+                  {
+                    "constraint": { "name": "anydata", "builtin": true },
+                    "shapes": [
+                      {
+                        "form": "included",
+                        "envelope": { "name": "StatusCodeResponse", "subtypeFamily": true, "packageInfo": { "org": "ballerina", "packageName": "http", "moduleName": "http", "version": "2.18.2" } },
+                        "bindableFields": ["body", "headers"]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "annotations": [
+    {
+      "id": "$payload",
+      "type": { "name": "Payload", "packageInfo": { "org": "ballerina", "packageName": "http", "moduleName": "http", "version": "2.18.2" } },
+      "attachPoint": "parameter",
+      "presence": "required"
+    }
+  ]
+}

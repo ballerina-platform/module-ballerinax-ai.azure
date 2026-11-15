@@ -36,11 +36,13 @@ include ':checkstyle'
 include ':ai.azure-native'
 include ':ai.azure-ballerina'
 include ':ai.azure-compiler-plugin'
+include ':ai.azure-compiler-plugin-tests'
 
 project(':checkstyle').projectDir = file("build-config${File.separator}checkstyle")
 project(':ai.azure-native').projectDir = file("native")
 project(':ai.azure-ballerina').projectDir = file("ballerina")
 project(':ai.azure-compiler-plugin').projectDir = file('compiler-plugin')
+project(':ai.azure-compiler-plugin-tests').projectDir = file('compiler-plugin-tests')
 
 develocity {
     buildScan {

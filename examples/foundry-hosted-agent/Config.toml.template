@@ -1,0 +1,9 @@
+# Copy this file to Config.toml and fill in your Azure OpenAI values.
+# Config.toml is git-ignored; never commit it or copy it into a container image.
+
+# Legacy URL: https://<resource>.openai.azure.com/openai (needs apiVersion)
+# v1 GA URL:  https://<resource>.services.ai.azure.com/openai/v1 (apiVersion is ignored)
+serviceUrl = "https://<resource>.openai.azure.com/openai"
+apiKey = "<AZURE_OPENAI_API_KEY>"
+deploymentId = "<MODEL_DEPLOYMENT_NAME>"
+apiVersion = "2024-10-21"

@@ -1,0 +1,188 @@
+/*
+ * Copyright (c) 2026, WSO2 LLC. (http://www.wso2.com).
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+plugins {
+    id 'java'
+    id 'checkstyle'
+    id 'com.github.spotbugs'
+}
+
+description = 'Ballerina - Azure model provider Compiler Plugin Tests'
+
+configurations {
+    // The Ballerina distribution (lang libraries and tools) the tests compile the sample packages with. The package
+    // itself is built on Docker (`connector = true`), so the Ballerina Gradle plugin doesn't unpack one.
+    jbalTools
+    // Distribution-only packages that jballerina-tools lacks but the package's dependency graph needs:
+    // `ballerinai/observe` (dependencies such as ballerinax/azure.openai.chat import it).
+    ballerinaDistributionLibs
+}
+
+dependencies {
+    checkstyle project(':checkstyle')
+    checkstyle "com.puppycrawl.tools:checkstyle:${checkstylePluginVersion}"
+
+    jbalTools("org.ballerinalang:jballerina-tools:${ballerinaLangVersion}") {
+        transitive = false
+    }
+    ballerinaDistributionLibs("io.ballerina:observe-ballerina:${observeInternalVersion}") {
+        transitive = false
+    }
+
+    testImplementation project(':ai.azure-compiler-plugin')
+    testImplementation group: 'org.ballerinalang', name: 'ballerina-lang', version: "${ballerinaLangVersion}"
+    testImplementation group: 'org.ballerinalang', name: 'ballerina-parser', version: "${ballerinaLangVersion}"
+    testImplementation group: 'org.ballerinalang', name: 'ballerina-tools-api', version: "${ballerinaLangVersion}"
+    testImplementation group: 'org.testng', name: 'testng', version: "${testngVersion}"
+}
+
+tasks.withType(Checkstyle) {
+    exclude '**/module-info.java'
+}
+
+checkstyle {
+    toolVersion "${project.checkstylePluginVersion}"
+    configFile rootProject.file("build-config/checkstyle/build/checkstyle.xml")
+    configProperties = ["suppressionFile": file("${rootDir}/build-config/checkstyle/build/suppressions.xml")]
+}
+
+checkstyleTest.dependsOn(":checkstyle:downloadCheckstyleRuleFiles")
+
+spotbugsTest {
+    def classLoader = plugins["com.github.spotbugs"].class.classLoader
+    def SpotBugsConfidence = classLoader.findLoadedClass("com.github.spotbugs.snom.Confidence")
+    def SpotBugsEffort = classLoader.findLoadedClass("com.github.spotbugs.snom.Effort")
+    effort = SpotBugsEffort.MAX
+    reportLevel = SpotBugsConfidence.LOW
+    reportsDir = layout.buildDirectory.dir("reports/spotbugs")
+    reports {
+        html.enabled true
+        text.enabled = true
+    }
+    def excludeFile = file("${rootDir}/spotbugs-exclude.xml")
+    if (excludeFile.exists()) {
+        excludeFilter = excludeFile
+    }
+}
+
+spotbugsMain {
+    enabled false
+}
+
+checkstyleMain {
+    enabled false
+}
+
+// The package version as in Ballerina.toml, computed as ballerina/build.gradle does (it strips `-SNAPSHOT` and the
+// timestamp suffix of a timestamped build).
+def stripBallerinaExtensionVersion(String extVersion) {
+    if (extVersion.matches(project.ext.timestampedVersionRegex)) {
+        def splitVersion = extVersion.split('-')
+        if (splitVersion.length > 3) {
+            def strippedValues = splitVersion[0..-4]
+            return strippedValues.join('-')
+        } else {
+            return extVersion
+        }
+    } else {
+        return extVersion.replace("${project.ext.snapshotVersion}", "")
+    }
+}
+
+def packageVersion = stripBallerinaExtensionVersion("${project.version}")
+def balaPrefix = "ballerinax-ai.azure-"
+def balaSuffix = "-${packageVersion}.bala"
+def balaDir = file("${rootDir}/ballerina/build/bal_build_target/bala")
+def distributionDir = layout.buildDirectory.dir("ballerina-runtime")
+// The packed bala, `ballerinax-ai.azure-<platform>-<version>.bala`. The Ballerina Gradle plugin recreates
+// ballerina/build in every build that runs :ai.azure-ballerina:build, so the tests always see the bala of the same
+// build.
+def balaFiles = { fileTree(dir: balaDir, include: "${balaPrefix}*${balaSuffix}") }
+// The platform directory of the bala in a distribution repository, taken from the bala's file name (the platform is
+// set in ballerina/build.gradle). It is computed once, on first use, which is when the task runs.
+def balaPlatform = {
+    def balas = balaFiles().files
+    if (balas.size() != 1) {
+        throw new GradleException("Expected one ${balaPrefix}<platform>${balaSuffix} in ${balaDir}, found " +
+                "${balas.collect { it.name }}")
+    }
+    def name = balas.iterator().next().name
+    return name.substring(balaPrefix.length(), name.length() - balaSuffix.length())
+}.memoize()
+
+// Prepares a Ballerina distribution for the tests: the jballerina-tools distribution of this build's Ballerina
+// version, with the freshly packed ai.azure bala (which carries the freshly built compiler plugin jar) in its
+// repository, where the package resolver finds it before Ballerina Central. Every other dependency (http, ai, ...)
+// is resolved from Ballerina Central, as `bal build` would. Nothing here depends on a locally installed Ballerina.
+def prepareBallerinaDistribution = tasks.register('prepareBallerinaDistribution', Sync) {
+    dependsOn ':ai.azure-ballerina:build'
+    from({ configurations.jbalTools.collect { zipTree(it) } }) {
+        // Drop the archive's top-level `jballerina-tools-<version>` directory.
+        eachFile { details ->
+            details.relativePath = new RelativePath(true, details.relativePath.segments.drop(1))
+        }
+        includeEmptyDirs = false
+    }
+    // Each distribution library archive holds `bala/` and `cache/` directories laid out as in a distribution's repo.
+    from({ configurations.ballerinaDistributionLibs.collect { zipTree(it) } }) {
+        include 'bala/**', 'cache/**'
+        into 'repo'
+    }
+    from({ balaFiles().collect { zipTree(it) } }) {
+        // Into repo/bala/ballerinax/ai.azure/<version>/<platform>, resolved when the task runs (the bala doesn't
+        // exist while the build is configured).
+        eachFile { details ->
+            def prefix = ['repo', 'bala', 'ballerinax', 'ai.azure', packageVersion, balaPlatform()]
+            details.relativePath = new RelativePath(true, (prefix + details.relativePath.segments.toList())
+                    as String[])
+        }
+        includeEmptyDirs = false
+    }
+    into distributionDir
+}
+
+// The compiler plugin jar shares its output directory with the copied OpenAPI jar, so every task that reads it
+// declares the copy task as a dependency (as in ballerina/ai).
+compileTestJava.dependsOn ':ai.azure-compiler-plugin:copyOpenApiJar'
+spotbugsTest.dependsOn ':ai.azure-compiler-plugin:copyOpenApiJar'
+
+test {
+    dependsOn ':ai.azure-compiler-plugin:copyOpenApiJar'
+    dependsOn prepareBallerinaDistribution
+    // Rerun the tests whenever the package (and so the compiler plugin jar it carries) is packed again.
+    inputs.files(balaFiles())
+    systemProperty 'ai.azure.test.distribution', distributionDir.get().asFile.absolutePath
+    useTestNG() {
+        suites 'src/test/resources/testng.xml'
+    }
+    testLogging {
+        events "PASSED", "FAILED", "SKIPPED"
+        exceptionFormat = "full"
+        showStandardStreams = true
+        afterSuite { desc, result ->
+            if (!desc.parent) { // will match the outermost suite
+                def output = "Compiler Plugin Tests: ${result.resultType} (${result.testCount} tests, " +
+                        "${result.successfulTestCount} successes, ${result.failedTestCount} failures, " +
+                        "${result.skippedTestCount} skipped)"
+                def startItem = '|  ', endItem = '  |'
+                def repeatLength = startItem.length() + output.length() + endItem.length()
+                println('\n' + ('-' * repeatLength) + '\n' + startItem + output + endItem + '\n' + ('-' * repeatLength))
+            }
+        }
+    }
+}
