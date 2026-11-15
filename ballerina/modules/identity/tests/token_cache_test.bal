@@ -26,10 +26,12 @@ isolated class FakeSource {
     private int now = T0;
     private final int lifetime;
     private final decimal delay;
+    private final int? refreshOn;
 
-    isolated function init(int lifetime = 3600, decimal delay = 0) {
+    isolated function init(int lifetime = 3600, decimal delay = 0, int? refreshOn = ()) {
         self.lifetime = lifetime;
         self.delay = delay;
+        self.refreshOn = refreshOn;
     }
 
     isolated function fetch(readonly & string[] scopes) returns AccessToken|Error {
@@ -39,7 +41,10 @@ isolated class FakeSource {
             if self.failing {
                 return error Error("source unavailable", credential = "fake");
             }
-            return {token: string `token-${self.fetches}`, expiresOn: self.now + self.lifetime};
+            int? refreshOn = self.refreshOn;
+            return refreshOn is int
+                ? {token: string `token-${self.fetches}`, expiresOn: self.now + self.lifetime, refreshOn}
+                : {token: string `token-${self.fetches}`, expiresOn: self.now + self.lifetime};
         }
     }
 
@@ -185,4 +190,17 @@ function testFailedFetchIsSharedBriefly() returns error? {
     AccessToken token = check cache.getToken(["scope/.default"]);
     test:assertEquals('source.fetchCount(), 2, "the failure is remembered only briefly");
     test:assertEquals(token.token, "token-2");
+}
+
+@test:Config
+function testEpochRefreshOnIsNotARefreshHint() returns error? {
+    // azure-identity reports the epoch as refreshOn when the source gives no refresh hint. Such a token must be served
+    // from the cache like any other, not fetched again on every call.
+    FakeSource 'source = new (refreshOn = 0);
+    TokenCache cache = newCache('source);
+    _ = check cache.getToken(["scope/.default"]);
+    'source.advance(60);
+    AccessToken token = check cache.getToken(["scope/.default"]);
+    test:assertEquals(token.token, "token-1");
+    test:assertEquals('source.fetchCount(), 1, "a token with refreshOn = 0 must be served from the cache");
 }

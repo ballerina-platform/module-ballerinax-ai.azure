@@ -114,7 +114,8 @@ isolated function isUsable(AccessToken token, int now) returns boolean => token.
 
 isolated function isDue(AccessToken token, int now) returns boolean {
     int? refreshOn = token?.refreshOn;
-    int refreshAt = refreshOn is int ? int:min(refreshOn, token.expiresOn - REFRESH_WINDOW)
+    // A non-positive refreshOn is no hint at all (azure-identity reports the epoch when there is none).
+    int refreshAt = refreshOn is int && refreshOn > 0 ? int:min(refreshOn, token.expiresOn - REFRESH_WINDOW)
         : token.expiresOn - REFRESH_WINDOW;
     return now >= refreshAt;
 }

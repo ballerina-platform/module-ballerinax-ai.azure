@@ -165,10 +165,13 @@ public final class Credentials {
     private static BMap<BString, Object> toTokenMap(AccessToken token) {
         BMap<BString, Object> map = ValueCreator.createMapValue(
                 TypeCreator.createMapType(PredefinedTypes.TYPE_ANYDATA));
+        long expiresOn = token.getExpiresAt().toEpochSecond();
         map.put(TOKEN, StringUtils.fromString(token.getToken()));
-        map.put(EXPIRES_ON, token.getExpiresAt().toEpochSecond());
+        map.put(EXPIRES_ON, expiresOn);
+        // azure-identity reports the epoch when the source gave no refresh hint; only a real hint is passed on,
+        // otherwise every token would look due for an early refresh.
         OffsetDateTime refreshAt = token.getRefreshAt();
-        if (refreshAt != null) {
+        if (refreshAt != null && refreshAt.toEpochSecond() > 0 && refreshAt.toEpochSecond() < expiresOn) {
             map.put(REFRESH_ON, refreshAt.toEpochSecond());
         }
         return map;

@@ -143,6 +143,10 @@ function testManagedIdentityTokenComesThroughOurHttpClient() returns error? {
     identity:AccessToken token = check credential.getToken([scope]);
     test:assertEquals(token.token, MI_TOKEN_PREFIX + "https://mi-direct.example");
     test:assertTrue(token.expiresOn > time:utcNow()[0]);
+    // The mock gives no refresh hint, so the token must not carry one either: an epoch refreshOn would make the cache
+    // fetch a new token on every call.
+    int? refreshOn = token?.refreshOn;
+    test:assertTrue(refreshOn is () || refreshOn > time:utcNow()[0], string `refreshOn: ${refreshOn.toString()}`);
 
     MiRequest request = check lastMiRequest().ensureType();
     test:assertTrue(request.identityHeaderValid, "the X-IDENTITY-HEADER must be sent");
