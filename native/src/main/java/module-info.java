@@ -19,4 +19,9 @@
 module io.ballerina.lib.ai.azure {
     requires io.ballerina.lang;
     requires io.ballerina.runtime;
+    requires com.azure.core;
+    requires com.azure.core.http.jdk.httpclient;
+    requires com.azure.identity;
+    requires java.net.http;
+    requires reactor.core;
 }

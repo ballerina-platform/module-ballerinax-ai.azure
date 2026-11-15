@@ -77,18 +77,17 @@ public type ConnectionConfig record {|
     boolean validation = true;
 |};
 
-# The Azure OpenAI API surface used by the `OpenAiModelProvider`.
-#
-# The concrete wire route is derived from both this value and the shape of the `serviceUrl`:
-#
-# | `apiType` | `serviceUrl` ends with `/v1` (v1 GA) | otherwise (legacy) |
-# | --- | --- | --- |
-# | `CHAT_COMPLETIONS` | `POST {serviceUrl}/chat/completions` via the `azure.openai.chat` connector | `POST {legacyBase}/deployments/{deploymentId}/chat/completions?api-version={apiVersion}` |
-# | `RESPONSES` | `POST {serviceUrl}/responses` via the `azure.openai.responses` connector | `POST {legacyBase}/responses?api-version={apiVersion}` |
-#
-# On the legacy surface `legacyBase` is the `serviceUrl` completed with `/openai` when it is a bare origin
-# (e.g. `https://<resource>.openai.azure.com`) and used verbatim when it already carries a path (e.g. an API
-# Management base path).
+# Connection configuration of `OpenAiModelProvider`.
+@display {label: "Connection Configuration"}
+public type OpenAiModelConnectionConfig record {|
+    *ConnectionConfig;
+
+    # Microsoft Entra ID token scope for credential authentication; derived from the service URL when not set
+    @display {label: "Token Scope"}
+    string tokenScope?;
+|};
+
+# Defines which Azure OpenAI API to use for model interactions.
 @display {label: "OpenAI API Type"}
 public enum ApiType {
     # Use the OpenAI Chat Completions API (`/chat/completions`)
