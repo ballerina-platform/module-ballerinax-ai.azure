@@ -230,14 +230,15 @@ function testProviderWithManagedIdentityEndToEnd() returns error? {
     if !miConfigured {
         return;
     }
-    // Over HTTPS the CA comes from the provider's `secureSocket` alone, which proves that setting reaches the
-    // credential's token requests.
-    check os:unsetEnv("SSL_CERT_FILE");
+    // The Foundry setup: SSL_CERT_FILE names the egress proxy's CA, and the endpoint trusts the same bundle. Token
+    // requests trust SSL_CERT_FILE themselves; the endpoint's secureSocket is not applied to them.
     string scope = "https://cognitiveservices.azure.com/.default";
     OpenAiModelProvider provider;
     if miOverHttps {
+        check os:setEnv("SSL_CERT_FILE", caBundle);
         provider = check new (AUTH_MOCK_URL, {'type: "managedIdentity"}, DEPLOYMENT_ID, API_VERSION,
             tokenScope = scope, secureSocket = {cert: caBundle});
+        check os:unsetEnv("SSL_CERT_FILE");
     } else {
         provider = check new (AUTH_MOCK_URL, {'type: "managedIdentity"}, DEPLOYMENT_ID, API_VERSION,
             tokenScope = scope);
@@ -255,6 +256,24 @@ function testProviderWithManagedIdentityEndToEnd() returns error? {
 }
 
 @test:Config {groups: [MI_GROUP], dependsOn: [testProviderWithManagedIdentityEndToEnd]}
+function testEndpointTlsDisabledKeepsTokenTlsVerified() returns error? {
+    if !miConfigured || !miOverHttps {
+        return;
+    }
+    // Turning TLS checks off for the model endpoint must not turn them off for token requests: without the CA in
+    // SSL_CERT_FILE, the token request to the HTTPS mock still fails certificate validation.
+    check os:unsetEnv("SSL_CERT_FILE");
+    OpenAiModelProvider provider = check new (AUTH_MOCK_URL, {'type: "managedIdentity"}, DEPLOYMENT_ID, API_VERSION,
+        tokenScope = "https://endpoint-tls-off.example/.default", secureSocket = {enable: false});
+    ai:ChatAssistantMessage|ai:Error reply = provider->chat([{role: ai:USER, content: "Hi"}]);
+    if reply !is ai:Error {
+        return error("the token request must not trust the mock without its CA");
+    }
+    test:assertTrue(reply.toString().toLowerAscii().includes("certification path"), reply.toString());
+    test:assertTrue(takeRecordedAuth(ROUTE_CHAT_LEGACY) is error, "no model request without a token");
+}
+
+@test:Config {groups: [MI_GROUP], dependsOn: [testEndpointTlsDisabledKeepsTokenTlsVerified]}
 function testSlf4jHasAProviderAfterCredentialsRan() {
     if !miConfigured {
         return;

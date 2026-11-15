@@ -33,9 +33,12 @@ identity:AccessToken token = check credential.getToken(["https://cognitiveservic
 ```
 
 Token requests trust the JVM's default certificates plus those in the file named by the `SSL_CERT_FILE` environment
-variable and in `secureSocket.cert`, and use the configured `proxy` (HTTP proxies only). Local managed identity
-endpoints are always reached without the proxy. `authorityHost` selects the cloud: `AZURE_PUBLIC_CLOUD` (the
-default), `AZURE_US_GOVERNMENT`, `AZURE_CHINA`, or a URL.
+variable and in `secureSocket.cert`, and use the configured `proxy` (HTTP proxies only). TLS is always verified:
+`secureSocket.enable = false`, a client key, DTLS and the other options token requests can't honour are rejected.
+Proxy authentication needs the JVM option `-Djdk.http.auth.tunneling.disabledSchemes=`, because the JDK disables
+Basic authentication for HTTPS tunnels by default; without it, a proxy `userName` is rejected. Local managed identity
+endpoints are always reached without the proxy. `authorityHost` is the Microsoft Entra ID authority:
+`AZURE_PUBLIC_CLOUD` (the default) or another cloud's authority URL.
 
 Tokens and secrets never appear in errors. An `Error` carries the credential type and, when the service returned
 one, the Microsoft Entra ID error code (`AADSTS...`). `CredentialUnavailableError` means no credential source is

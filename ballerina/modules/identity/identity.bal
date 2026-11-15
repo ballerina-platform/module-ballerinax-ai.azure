@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/http;
+import ballerina/jballerina.java;
 import ballerina/os;
 
 # Environment variable naming a PEM bundle of extra trusted CA certificates, e.g. the CA of a TLS-inspecting proxy.
@@ -56,6 +57,13 @@ isolated function toNativeTransport(string credentialType, CredentialOptions opt
             return error Error(string `a '${protocol}' proxy is not supported for token requests; use an HTTP proxy`,
                 credential = credentialType);
         }
+        // The JDK HTTP client won't send Basic credentials to a proxy for HTTPS tunnels unless the JVM allows it,
+        // so a proxy login fails up front instead of as a 407 at the first token request.
+        if proxy.userName != "" && isBasicProxyTunnelingDisabled() {
+            return error Error("proxy authentication for token requests needs Basic authentication for HTTPS " +
+                "tunnels, which the JDK disables by default; start the JVM with " +
+                "'-Djdk.http.auth.tunneling.disabledSchemes=' to allow it", credential = credentialType);
+        }
         transport.proxy = {host: proxy.host, port: proxy.port, userName: proxy.userName, password: proxy.password};
     }
     return transport;
@@ -71,8 +79,8 @@ isolated function toNativeTransport(string credentialType, CredentialOptions opt
 isolated function applySecureSocket(string credentialType, http:ClientSecureSocket secureSocket,
         NativeTransport transport) returns Error? {
     if !secureSocket.enable {
-        transport.trustAll = true;
-        return;
+        // Token requests carry secrets and tokens, so their TLS is always verified.
+        return unsupportedTlsOption(credentialType, "'enable = false'");
     }
     if secureSocket.key !is () {
         return unsupportedTlsOption(credentialType, "a client certificate ('key')");
@@ -94,6 +102,9 @@ isolated function applySecureSocket(string credentialType, http:ClientSecureSock
         transport.trustStores.push({path: cert.path, password: cert.password});
     }
     var protocol = secureSocket.protocol;
+    if protocol !is () && protocol.name == http:DTLS {
+        return unsupportedTlsOption(credentialType, "the DTLS protocol");
+    }
     if protocol !is () {
         // Already JSSE protocol names, e.g. `TLSv1.3`
         transport.protocols = protocol.versions.clone();
@@ -103,6 +114,11 @@ isolated function applySecureSocket(string credentialType, http:ClientSecureSock
         transport.ciphers = ciphers;
     }
 }
+
+isolated function isBasicProxyTunnelingDisabled() returns boolean = @java:Method {
+    'class: NATIVE_CLASS,
+    name: "isBasicProxyTunnelingDisabled"
+} external;
 
 isolated function unsupportedTlsOption(string credentialType, string option) returns Error =>
     error Error(string `${option} in 'secureSocket' is not supported for token requests`,

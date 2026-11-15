@@ -78,7 +78,6 @@ final class TokenTransport {
 
     private static final BString TRUSTED_CERT_FILES = StringUtils.fromString("trustedCertFiles");
     private static final BString TRUST_STORES = StringUtils.fromString("trustStores");
-    private static final BString TRUST_ALL = StringUtils.fromString("trustAll");
     private static final BString PROTOCOLS = StringUtils.fromString("protocols");
     private static final BString CIPHERS = StringUtils.fromString("ciphers");
     private static final BString TIMEOUT = StringUtils.fromString("timeout");
@@ -141,9 +140,13 @@ final class TokenTransport {
         for (String variable : MANAGED_IDENTITY_ENDPOINT_VARIABLES) {
             String endpoint = System.getenv(variable);
             if (endpoint != null && !endpoint.isBlank()) {
-                String host = URI.create(endpoint.strip()).getHost();
-                if (host != null) {
-                    nonProxyHosts.add(host);
+                try {
+                    String host = URI.create(endpoint.strip()).getHost();
+                    if (host != null) {
+                        nonProxyHosts.add(host);
+                    }
+                } catch (IllegalArgumentException e) {
+                    // A malformed endpoint isn't added; the credential that needs it reports the problem itself.
                 }
             }
         }
@@ -154,10 +157,6 @@ final class TokenTransport {
     private static SSLContext sslContext(BMap<BString, Object> transport)
             throws GeneralSecurityException, IOException {
         SSLContext context = SSLContext.getInstance("TLS");
-        if (transport.getBooleanValue(TRUST_ALL)) {
-            context.init(null, new TrustManager[]{new TrustAllManager()}, null);
-            return context;
-        }
         String[] pemFiles = ((BArray) transport.get(TRUSTED_CERT_FILES)).getStringArray();
         BArray trustStores = (BArray) transport.get(TRUST_STORES);
         if (pemFiles.length == 0 && trustStores.size() == 0) {
@@ -267,23 +266,6 @@ final class TokenTransport {
             request.setHeader(HttpHeaderName.USER_AGENT,
                     userAgent == null || userAgent.isBlank() ? USER_AGENT_MARK : userAgent + " " + USER_AGENT_MARK);
             return request;
-        }
-    }
-
-    /** Used only when TLS is disabled ({@code secureSocket.enable = false}), mirroring {@code ballerina/http}. */
-    private static final class TrustAllManager implements X509TrustManager {
-
-        @Override
-        public void checkClientTrusted(X509Certificate[] chain, String authType) {
-        }
-
-        @Override
-        public void checkServerTrusted(X509Certificate[] chain, String authType) {
-        }
-
-        @Override
-        public X509Certificate[] getAcceptedIssuers() {
-            return new X509Certificate[0];
         }
     }
 }

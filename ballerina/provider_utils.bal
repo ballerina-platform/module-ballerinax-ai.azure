@@ -383,7 +383,7 @@ isolated function postChatCompletion(chat:Client? chatClient, http:Client? rawCh
         // The same serialization as the generated connector.
         json body = jsondata:toJson(request);
         chat:InlineResponse200 result = check llmClient->post(v1Path("/chat/completions", v1ApiVersion), body,
-                check auth.headers());
+                check authHeaders(auth));
         return result;
     }
 

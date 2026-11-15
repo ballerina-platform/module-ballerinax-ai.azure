@@ -314,7 +314,7 @@ isolated function postResponsesRequest(responses:Client? responsesClient, http:C
         // The same serialization as the generated connector.
         json body = jsondata:toJson(request);
         responses:InlineResponse200 response = check llmClient->post(v1Path("/responses", v1ApiVersion), body,
-                check auth.headers());
+                check authHeaders(auth));
         return response;
     }
 

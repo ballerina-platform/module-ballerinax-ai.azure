@@ -22,7 +22,6 @@ const PROJECT_PATH_SEGMENT = "/api/projects/";
 const AI_AZURE_SCOPE = "https://ai.azure.com/.default";
 const SEARCH_SCOPE = "https://search.azure.com/.default";
 const COGNITIVE_SERVICES_SCOPE = "https://cognitiveservices.azure.com/.default";
-const COGNITIVE_SERVICES_US_GOV_SCOPE = "https://cognitiveservices.azure.us/.default";
 
 # Microsoft Entra ID bearer authentication for one service: a token credential and the scope its tokens are
 # requested for. Tokens are fetched per request; caching and refresh are the credential's job.
@@ -62,8 +61,11 @@ isolated function authHeaders(string|BearerAuth auth) returns map<string>|ai:Err
 # Resolves the `apiKey`/credential argument of a provider into what requests are authenticated with.
 #
 # A `string` is an API key and is returned unchanged. A credential configuration is turned into a credential whose
-# token requests use the provider's TLS and proxy settings; a ready-made `identity:TokenCredential` is used as is.
-# Either way the token scope is `tokenScope` when set, and is otherwise derived from the service URL.
+# token requests use the provider's proxy, and trust the JVM's default CAs plus `SSL_CERT_FILE`: the endpoint's
+# `secureSocket` describes the model endpoint, not Microsoft Entra ID, so it is not applied to token requests. Custom
+# TLS for token requests goes through `identity:createCredential(config, secureSocket = ...)` and the resulting
+# `identity:TokenCredential`, which is used as is. Either way the token scope is `tokenScope` when set, and is
+# otherwise derived from the service URL.
 #
 # A credential needs an `https://` service URL, so bearer tokens never cross the network in clear text; `http://` is
 # accepted only for a loopback host (`localhost`, `127.0.0.0/8` or `[::1]`), e.g. a local mock or gateway.
@@ -72,7 +74,7 @@ isolated function authHeaders(string|BearerAuth auth) returns map<string>|ai:Err
 # + serviceUrl - The provider's service URL
 # + config - The provider's connection configuration
 # + return - The API key or the bearer authentication, or an `ai:Error` if the credential, scope or URL is invalid
-isolated function resolveAuth(string|identity:Credential auth, string serviceUrl, ConnectionConfig config)
+isolated function resolveAuth(string|identity:Credential auth, string serviceUrl, OpenAiModelConnectionConfig config)
         returns string|BearerAuth|ai:Error {
     if auth is string {
         return auth;
@@ -86,10 +88,6 @@ isolated function resolveAuth(string|identity:Credential auth, string serviceUrl
         return new BearerAuth(auth, scope);
     }
     identity:CredentialOptions options = {};
-    http:ClientSecureSocket? secureSocket = config.secureSocket;
-    if secureSocket is http:ClientSecureSocket {
-        options.secureSocket = secureSocket;
-    }
     http:ProxyConfig? proxy = config.proxy;
     if proxy is http:ProxyConfig {
         options.proxy = proxy;
@@ -157,9 +155,8 @@ isolated function resolveTokenScope(string serviceUrl, string? tokenScope) retur
 # | path contains `/api/projects/` (a Foundry project endpoint) | `https://ai.azure.com/.default` |
 # | host `*.search.windows.net` | `https://search.azure.com/.default` |
 # | host `*.openai.azure.com`, `*.cognitiveservices.azure.com` or `*.services.ai.azure.com` | `https://cognitiveservices.azure.com/.default` |
-# | host `*.openai.azure.us` | `https://cognitiveservices.azure.us/.default` |
 #
-# Any other host (an API Management gateway, a custom domain, a local endpoint) has no default, because a wrong
+# Any other host (an API Management gateway, a custom domain, a local endpoint, another cloud) has no default, because a wrong
 # audience only shows up later as a confusing 401; the caller must set `tokenScope` instead.
 #
 # + serviceUrl - The service URL
@@ -175,9 +172,6 @@ isolated function deriveTokenScope(string serviceUrl) returns string|ai:Error {
     if host.endsWith(".openai.azure.com") || host.endsWith(".cognitiveservices.azure.com")
             || host.endsWith(".services.ai.azure.com") {
         return COGNITIVE_SERVICES_SCOPE;
-    }
-    if host.endsWith(".openai.azure.us") {
-        return COGNITIVE_SERVICES_US_GOV_SCOPE;
     }
     return error ai:Error(string `Cannot derive the Entra ID token scope for host '${host}'; set 'tokenScope' ` +
             string `in the connection configuration (for example, "${COGNITIVE_SERVICES_SCOPE}")`);

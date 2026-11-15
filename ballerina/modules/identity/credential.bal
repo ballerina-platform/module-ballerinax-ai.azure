@@ -28,8 +28,6 @@ type NativeTransport record {|
     string[] trustedCertFiles = [];
     # PKCS#12 trust stores whose certificates are trusted in addition to the JVM's defaults
     record {|string path; string password;|}[] trustStores = [];
-    # `true` when TLS is disabled (`secureSocket.enable = false`): any server certificate is accepted
-    boolean trustAll = false;
     # JSSE protocol names to enable (e.g. `TLSv1.3`); empty for the JVM's defaults
     string[] protocols = [];
     # Cipher suites to enable; empty for the JVM's defaults

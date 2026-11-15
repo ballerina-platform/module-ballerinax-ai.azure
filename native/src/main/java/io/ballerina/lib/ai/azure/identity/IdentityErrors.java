@@ -63,7 +63,8 @@ final class IdentityErrors {
 
     static BError toError(Throwable throwable) {
         String kind = KIND_OTHER;
-        for (Throwable t = throwable; t != null; t = t.getCause() == t ? null : t.getCause()) {
+        Set<Throwable> seen = new LinkedHashSet<>();
+        for (Throwable t = throwable; t != null && seen.add(t); t = t.getCause()) {
             if (t instanceof CredentialUnavailableException) {
                 kind = KIND_UNAVAILABLE;
                 break;

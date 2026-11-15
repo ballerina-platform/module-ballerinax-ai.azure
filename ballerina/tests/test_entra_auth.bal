@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/ai;
+import ballerina/file;
 import ballerina/http;
 import ballerina/test;
 import ballerina/time;
@@ -345,7 +346,8 @@ function testDeriveTokenScope() {
         ["https://res.services.ai.azure.com/api/projects/demo/openai/v1", "https://ai.azure.com/.default"],
         ["https://res.services.ai.azure.com/API/Projects/demo", "https://ai.azure.com/.default"],
         ["https://svc.search.windows.net", "https://search.azure.com/.default"],
-        ["https://res.openai.azure.us/openai", "https://cognitiveservices.azure.us/.default"],
+        // Other clouds have no default; they set `tokenScope`.
+        ["https://res.openai.azure.us/openai", ()],
         // No default: gateways, custom domains, local endpoints and look-alike hosts.
         ["https://my-gateway.azure-api.net/openai", ()],
         ["https://llm.example.com/openai/v1", ()],
@@ -414,13 +416,23 @@ function testCredentialConfigErrorsAtInit() {
     error? cause = socks.cause();
     test:assertTrue(cause is error && cause.message().includes("'SOCKS5' proxy is not supported"), socks.toString());
 
-    // TLS options that token requests can't honour are rejected, which shows `secureSocket` reaches the credential.
-    OpenAiModelProvider|ai:Error insecure = new ("https://res.openai.azure.com/openai/v1", {'type: "default"},
-        DEPLOYMENT_ID, secureSocket = {verifyHostName: false});
-    if insecure !is ai:Error {
-        test:assertFail("an unsupported secureSocket option must fail at init");
+}
+
+@test:Config {groups: ["entra-auth"]}
+function testEndpointTlsSettingsDoNotReachTokenRequests() returns error? {
+    // The endpoint's secureSocket describes the model endpoint only, so options that token requests can't honour
+    // (or must not honour) no longer stop a credential from being used.
+    http:ClientSecureSocket[] endpointTls = [{verifyHostName: false}, {enable: false}];
+    foreach http:ClientSecureSocket secureSocket in endpointTls {
+        _ = check new OpenAiModelProvider("https://res.openai.azure.com/openai/v1", {'type: "default"},
+            DEPLOYMENT_ID, secureSocket = secureSocket);
     }
-    test:assertTrue(insecure.toString().includes("verifyHostName"), insecure.toString());
+
+    // An endpoint behind mutual TLS (a client key) can use a credential too.
+    string dir = check file:createTempDir();
+    [string, string] [_, keystore] = check generateTestCertificates(dir);
+    _ = check new OpenAiModelProvider("https://res.openai.azure.com/openai/v1", {'type: "managedIdentity"},
+        DEPLOYMENT_ID, secureSocket = {key: {path: keystore, password: KEYSTORE_PASSWORD}});
 }
 
 // ===== No secrets in errors =====

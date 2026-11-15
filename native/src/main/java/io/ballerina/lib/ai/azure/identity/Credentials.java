@@ -51,6 +51,7 @@ public final class Credentials {
     private static final String TYPE_MANAGED_IDENTITY = "managedIdentity";
     private static final String SOURCES_ALL = "all";
     private static final String AZURE_TOKEN_CREDENTIALS = "AZURE_TOKEN_CREDENTIALS";
+    private static final String TUNNELING_DISABLED_SCHEMES = "jdk.http.auth.tunneling.disabledSchemes";
     private static final String AZURE_PUBLIC_CLOUD = "https://login.microsoftonline.com/";
 
     private static final BString SOURCES = StringUtils.fromString("sources");
@@ -90,6 +91,23 @@ public final class Credentials {
         } catch (Exception | LinkageError e) {
             return IdentityErrors.toError(e);
         }
+    }
+
+    /**
+     * Tells whether the JDK HTTP client refuses Basic proxy authentication for HTTPS tunnels, which it does unless the
+     * JVM is started with {@code -Djdk.http.auth.tunneling.disabledSchemes=} (the JDK's default value is
+     * {@code Basic}).
+     *
+     * @return {@code true} if Basic is disabled for HTTPS tunnels
+     */
+    public static boolean isBasicProxyTunnelingDisabled() {
+        String schemes = System.getProperty(TUNNELING_DISABLED_SCHEMES, "Basic");
+        for (String scheme : schemes.split(",")) {
+            if (scheme.strip().equalsIgnoreCase("Basic")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

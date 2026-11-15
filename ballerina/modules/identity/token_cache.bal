@@ -22,6 +22,9 @@ const int REFRESH_WINDOW = 300;
 const int REFRESH_RETRY_INTERVAL = 30;
 # A token with fewer seconds than this left is treated as expired, so it doesn't lapse mid-request.
 const int EXPIRY_MARGIN = 10;
+# Seconds a failed fetch is remembered when there is no usable token, so waiting callers get that error instead of
+# each running their own fetch against a failing source.
+const int FAILED_FETCH_CACHE_SECONDS = 5;
 
 # Fetches a new token from the credential source.
 type TokenFetcher isolated function (readonly & string[] scopes) returns AccessToken|Error;
@@ -35,11 +38,15 @@ type CacheEntry record {|
     boolean refreshing = false;
     # Epoch seconds of the last failed refresh, `0` if none
     int lastFailure = 0;
+    # The last failed fetch without a usable token, and when it failed (epoch seconds)
+    Error? fetchError = ();
+    int fetchErrorAt = 0;
 |};
 
 # Caches tokens per scope set in front of a credential source.
 #
-# - Without a usable token, exactly one fetch runs, under the lock; concurrent callers wait for it.
+# - Without a usable token, exactly one fetch runs, under the lock; concurrent callers wait for it. If it fails,
+#   callers within `FAILED_FETCH_CACHE_SECONDS` get the same error instead of fetching again.
 # - A token is refreshed early: at its `refreshOn` time, or `REFRESH_WINDOW` seconds before it expires. During an
 #   early refresh other callers keep getting the still-usable token, and a failed refresh is retried at most every
 #   `REFRESH_RETRY_INTERVAL` seconds.
@@ -62,11 +69,19 @@ isolated class TokenCache {
             self.entries[key] = entry;
             AccessToken? current = entry.token;
             if current is () || !isUsable(current, now) {
+                Error? recentError = entry.fetchError;
+                if recentError is Error && now - entry.fetchErrorAt < FAILED_FETCH_CACHE_SECONDS {
+                    return recentError;
+                }
                 // Fetched while holding the lock, so concurrent callers wait for this one fetch.
                 AccessToken|Error fetched = self.fetcher(requested);
                 if fetched is AccessToken {
                     entry.token = fetched;
                     entry.lastFailure = 0;
+                    entry.fetchError = ();
+                } else {
+                    entry.fetchError = fetched;
+                    entry.fetchErrorAt = self.clock();
                 }
                 return fetched;
             }

@@ -163,3 +163,26 @@ function testExpiredTokenAndFailingSourceReturnsError() returns error? {
     }
     test:assertEquals(token.message(), "source unavailable");
 }
+
+@test:Config
+function testFailedFetchIsSharedBriefly() returns error? {
+    FakeSource 'source = new (delay = 0.2);
+    'source.setFailing(true);
+    TokenCache cache = newCache('source);
+    future<AccessToken|Error>[] calls = [];
+    foreach int i in 0 ..< 10 {
+        future<AccessToken|Error> call = start cache.getToken(["scope/.default"]);
+        calls.push(call);
+    }
+    foreach future<AccessToken|Error> call in calls {
+        AccessToken|Error result = wait call;
+        test:assertTrue(result is Error, "every caller gets the failure");
+    }
+    test:assertEquals('source.fetchCount(), 1, "callers waiting on a failed fetch must not each fetch again");
+
+    'source.advance(FAILED_FETCH_CACHE_SECONDS);
+    'source.setFailing(false);
+    AccessToken token = check cache.getToken(["scope/.default"]);
+    test:assertEquals('source.fetchCount(), 2, "the failure is remembered only briefly");
+    test:assertEquals(token.token, "token-2");
+}

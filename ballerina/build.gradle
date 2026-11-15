@@ -117,7 +117,7 @@ task testManagedIdentityMock {
                 }
             }
             def passing = (log =~ /(\d+) passing/).collect { it[1] as int }.sum() ?: 0
-            if (passing < 7) {
+            if (passing < 8) {
                 throw new GradleException("expected the ${managedIdentityMockGroup} tests to run against ${endpoint}, " +
                         "but only ${passing} passed")
             }

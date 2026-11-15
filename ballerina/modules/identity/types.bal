@@ -18,10 +18,6 @@ import ballerina/http;
 
 # Microsoft Entra ID authority host of the Azure public cloud.
 public const AZURE_PUBLIC_CLOUD = "https://login.microsoftonline.com/";
-# Microsoft Entra ID authority host of Azure Government.
-public const AZURE_US_GOVERNMENT = "https://login.microsoftonline.us/";
-# Microsoft Entra ID authority host of Microsoft Azure operated by 21Vianet (China).
-public const AZURE_CHINA = "https://login.chinacloudapi.cn/";
 
 # A Microsoft Entra ID access token.
 #
@@ -97,11 +93,12 @@ public type Credential CredentialConfig|TokenCredential;
 
 # Options for the token requests of a credential.
 public type CredentialOptions record {|
-    # Microsoft Entra ID authority host
+    # Microsoft Entra ID authority host URL; another cloud's host here needs a matching token scope
     string authorityHost = AZURE_PUBLIC_CLOUD;
     # SSL/TLS-related options for token requests
     http:ClientSecureSocket secureSocket?;
-    # HTTP proxy for token requests
+    # HTTP proxy for token requests; proxy authentication needs the JVM option
+    # `-Djdk.http.auth.tunneling.disabledSchemes=`
     http:ProxyConfig proxy?;
     # Timeout (in seconds) for each token request
     decimal timeout = 30;

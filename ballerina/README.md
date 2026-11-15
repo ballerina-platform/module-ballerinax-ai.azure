@@ -83,18 +83,24 @@ final ai:ModelProvider managedIdentityModel = check new azure:OpenAiModelProvide
 With a credential:
 
 - The token scope is derived from the service URL. For any other host, such as an API Management gateway or a
-  custom domain, set `tokenScope` in the connection configuration.
+  custom domain, set `tokenScope` in the connection configuration (`OpenAiModelConnectionConfig`).
 
   | Service URL | Token scope |
   | --- | --- |
   | path contains `/api/projects/` (a Foundry project endpoint) | `https://ai.azure.com/.default` |
   | `*.openai.azure.com`, `*.cognitiveservices.azure.com`, `*.services.ai.azure.com` | `https://cognitiveservices.azure.com/.default` |
-  | `*.openai.azure.us` | `https://cognitiveservices.azure.us/.default` |
   | `*.search.windows.net` | `https://search.azure.com/.default` |
 
 - The service URL must use `https://`. `http://` is accepted only for a loopback host (`localhost`, `127.0.0.0/8`
   or `[::1]`), so a bearer token is never sent in clear text over the network.
-- Token requests use the provider's `secureSocket` and `proxy` settings. Only HTTP proxies are supported for them.
+- Token requests use the provider's `proxy` (HTTP proxies only). They don't use its `secureSocket`, which
+  describes the model endpoint: they trust the JVM's default certificates plus those in the file named by the
+  `SSL_CERT_FILE` environment variable. For other TLS settings on token requests, create the credential with
+  `identity:createCredential(config, secureSocket = ...)` and pass the resulting `identity:TokenCredential`.
+- Proxy authentication (`userName`/`password`) for token requests needs Basic authentication for HTTPS tunnels,
+  which the JDK disables by default: start the JVM with `-Djdk.http.auth.tunneling.disabledSchemes=`.
+- Other clouds (for example Azure Government): create the credential with `identity:createCredential` and that
+  cloud's `authorityHost`, pass the `identity:TokenCredential`, and set `tokenScope`.
 - Requests to the v1 GA surface are sent through a raw HTTP client instead of the generated connectors, because the
   connectors always send the `api-key` header.
 

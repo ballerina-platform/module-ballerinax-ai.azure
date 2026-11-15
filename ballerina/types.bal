@@ -75,6 +75,12 @@ public type ConnectionConfig record {|
     # Enables the inbound payload validation functionality which provided by the constraint package. Enabled by default
     @display {label: "Payload Validation"}
     boolean validation = true;
+|};
+
+# Connection configuration of `OpenAiModelProvider`.
+@display {label: "Connection Configuration"}
+public type OpenAiModelConnectionConfig record {|
+    *ConnectionConfig;
 
     # Microsoft Entra ID token scope for credential authentication; derived from the service URL when not set
     @display {label: "Token Scope"}

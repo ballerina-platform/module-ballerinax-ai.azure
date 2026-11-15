@@ -15,6 +15,7 @@
 // under the License.
 
 import ballerina/http;
+import ballerina/jballerina.java;
 import ballerina/test;
 
 @test:Config
@@ -71,14 +72,75 @@ function testTlsProtocolVersionsArePassedThroughUnchanged() returns error? {
 @test:Config
 function testHttpProxyIsPassedToTheTokenClient() returns error? {
     http:ProxyConfig[] proxies = [
-        {host: "proxy.example", port: 3128, userName: "user", password: "pw"},
-        {host: "proxy.example", port: 3128, userName: "user", password: "pw", protocol: http:HTTP}
+        {host: "proxy.example", port: 3128},
+        {host: "proxy.example", port: 3128, protocol: http:HTTP}
     ];
     foreach http:ProxyConfig proxy in proxies {
         NativeTransport transport = check toNativeTransport("managedIdentity", {proxy});
-        test:assertEquals(transport.proxy, {host: "proxy.example", port: 3128, userName: "user", password: "pw"});
+        test:assertEquals(transport.proxy, {host: "proxy.example", port: 3128, userName: "", password: ""});
     }
 }
+
+@test:Config
+function testProxyLoginNeedsBasicTunneling() returns error? {
+    http:ProxyConfig proxy = {host: "proxy.example", port: 3128, userName: "user", password: "do-not-leak-proxy-pw"};
+    handle property = java:fromString(TUNNELING_PROPERTY);
+    if java:isNull(getSystemProperty(property)) {
+        TokenCredential|Error credential = createCredential({'type: "managedIdentity"}, proxy = proxy);
+        if credential !is Error {
+            test:assertFail("a proxy login must be rejected while the JDK disables Basic for HTTPS tunnels");
+        }
+        test:assertTrue(credential.message().includes("-Djdk.http.auth.tunneling.disabledSchemes="),
+            credential.message());
+        test:assertFalse(credential.toString().includes("do-not-leak-proxy-pw"), "the proxy password must not leak");
+    }
+
+    // With the JVM option given (an empty list of disabled schemes), the login reaches the token client.
+    _ = setSystemProperty(property, java:fromString(""));
+    NativeTransport|Error transport = toNativeTransport("managedIdentity", {proxy});
+    _ = clearSystemProperty(property);
+    test:assertEquals((check transport).proxy,
+        {host: "proxy.example", port: 3128, userName: "user", password: "do-not-leak-proxy-pw"});
+}
+
+@test:Config
+function testDisabledTlsIsRejected() {
+    TokenCredential|Error credential = createCredential({'type: "default"}, secureSocket = {enable: false});
+    if credential !is Error {
+        test:assertFail("token requests must always verify TLS");
+    }
+    test:assertEquals(credential.message(), "'enable = false' in 'secureSocket' is not supported for token requests");
+}
+
+@test:Config
+function testDtlsIsRejected() {
+    TokenCredential|Error credential = createCredential({'type: "managedIdentity"},
+        secureSocket = {protocol: {name: http:DTLS, versions: ["1.2"]}});
+    if credential !is Error {
+        test:assertFail("DTLS can't be used for HTTPS token requests");
+    }
+    test:assertEquals(credential.message(), "the DTLS protocol in 'secureSocket' is not supported for token requests");
+}
+
+const TUNNELING_PROPERTY = "jdk.http.auth.tunneling.disabledSchemes";
+
+function getSystemProperty(handle name) returns handle = @java:Method {
+    'class: "java.lang.System",
+    name: "getProperty",
+    paramTypes: ["java.lang.String"]
+} external;
+
+function setSystemProperty(handle name, handle value) returns handle = @java:Method {
+    'class: "java.lang.System",
+    name: "setProperty",
+    paramTypes: ["java.lang.String", "java.lang.String"]
+} external;
+
+function clearSystemProperty(handle name) returns handle = @java:Method {
+    'class: "java.lang.System",
+    name: "clearProperty",
+    paramTypes: ["java.lang.String"]
+} external;
 
 @test:Config
 function testSocksProxyIsRejected() {

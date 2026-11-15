@@ -83,7 +83,8 @@ public isolated client class OpenAiModelProvider {
             @display {label: "Temperature"} decimal? temperature = (),
             @display {label: "Reasoning Effort"} ReasoningEffort? reasoningEffort = (),
             @display {label: "API Type"} ApiType apiType = CHAT_COMPLETIONS,
-            @display {label: "Connection Configuration"} *ConnectionConfig connectionConfig) returns ai:Error? {
+            @display {label: "Connection Configuration"} *OpenAiModelConnectionConfig connectionConfig)
+            returns ai:Error? {
 
         self.deploymentId = deploymentId;
         self.temperature = temperature;
@@ -103,6 +104,7 @@ public isolated client class OpenAiModelProvider {
 
         string|BearerAuth auth = check resolveAuth(apiKey, trimmedUrl, connectionConfig);
         self.auth = auth;
+        var {tokenScope: _, ...httpConfig} = connectionConfig;
 
         // Base for the legacy raw-HTTP routes (the deployment/route segments are appended per request). A bare
         // origin is completed with `/openai`; a URL that already has a path is used verbatim.
@@ -111,7 +113,7 @@ public isolated client class OpenAiModelProvider {
         // Create only the client required by the selected (apiType, surface) combination; unused fields stay `()`.
         [chat:Client?, http:Client?, responses:Client?, http:Client?] [chatClient, rawChatClient, responsesClient,
                 rawResponsesClient] = check createClients(apiType, isV1, auth, trimmedUrl, legacyBase,
-                connectionConfig);
+                httpConfig);
         self.chatClient = chatClient;
         self.rawChatClient = rawChatClient;
         self.responsesClient = responsesClient;
