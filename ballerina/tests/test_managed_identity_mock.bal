@@ -29,7 +29,7 @@ import ballerinax/ai.azure.identity;
 //
 // azure-identity (through MSAL) reads `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` from the real process environment,
 // so these tests only run in their own `bal test --groups managed-identity-mock` process with both set; the
-// `testManagedIdentityMock` Gradle task does that once over HTTP and once over HTTPS. Over HTTPS the mock's
+// `testCredentialMocks` Gradle task does that once over HTTP and once over HTTPS. Over HTTPS the mock's
 // certificate is signed by a throwaway CA generated here at test time, standing in for a TLS-inspecting proxy.
 
 const MI_GROUP = "managed-identity-mock";

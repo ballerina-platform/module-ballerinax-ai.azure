@@ -85,8 +85,25 @@ public type ManagedIdentityConfig record {|
     string clientId?;
 |};
 
+# A service principal that authenticates with a client secret.
+@display {label: "Client Secret"}
+public type ClientSecretConfig record {|
+    # The credential type
+    @display {label: "Type"}
+    "clientSecret" 'type;
+    # Microsoft Entra ID tenant ID
+    @display {label: "Tenant ID"}
+    string tenantId;
+    # Client (application) ID of the service principal
+    @display {label: "Client ID"}
+    string clientId;
+    # Client secret of the service principal
+    @display {label: "Client Secret"}
+    string clientSecret;
+|};
+
 # The configuration of a credential.
-public type CredentialConfig DefaultCredentialConfig|ManagedIdentityConfig;
+public type CredentialConfig DefaultCredentialConfig|ManagedIdentityConfig|ClientSecretConfig;
 
 # A credential configuration or a `TokenCredential`.
 public type Credential CredentialConfig|TokenCredential;

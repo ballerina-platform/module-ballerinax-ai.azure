@@ -23,6 +23,7 @@ import com.azure.core.credential.TokenCredential;
 import com.azure.core.credential.TokenRequestContext;
 import com.azure.core.http.HttpClient;
 import com.azure.core.util.ConfigurationBuilder;
+import com.azure.identity.ClientSecretCredentialBuilder;
 import com.azure.identity.DefaultAzureCredentialBuilder;
 import com.azure.identity.ManagedIdentityCredentialBuilder;
 import io.ballerina.runtime.api.Environment;
@@ -35,7 +36,14 @@ import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BObject;
 import io.ballerina.runtime.api.values.BString;
 
+import java.io.IOException;
+import java.security.GeneralSecurityException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Builds Java azure-identity credentials for the {@code ai.azure.identity} module and fetches tokens from them.
@@ -47,16 +55,22 @@ import java.time.OffsetDateTime;
 public final class Credentials {
 
     private static final String NATIVE_CREDENTIAL = "credential";
+    private static final String NATIVE_SECRETS = "secrets";
     private static final String TYPE_DEFAULT = "default";
     private static final String TYPE_MANAGED_IDENTITY = "managedIdentity";
+    private static final String TYPE_CLIENT_SECRET = "clientSecret";
     private static final String SOURCES_ALL = "all";
     private static final String AZURE_TOKEN_CREDENTIALS = "AZURE_TOKEN_CREDENTIALS";
     private static final String TUNNELING_DISABLED_SCHEMES = "jdk.http.auth.tunneling.disabledSchemes";
     private static final String AZURE_PUBLIC_CLOUD = "https://login.microsoftonline.com/";
+    /** Authority hosts MSAL knows; for any other host it would ask the public cloud for instance metadata. */
+    private static final Set<String> KNOWN_AUTHORITY_HOSTS = Set.of(AZURE_PUBLIC_CLOUD,
+            "https://login.microsoftonline.us/", "https://login.chinacloudapi.cn/");
 
     private static final BString SOURCES = StringUtils.fromString("sources");
     private static final BString TENANT_ID = StringUtils.fromString("tenantId");
     private static final BString CLIENT_ID = StringUtils.fromString("clientId");
+    private static final BString CLIENT_SECRET = StringUtils.fromString("clientSecret");
     private static final BString AUTHORITY_HOST = StringUtils.fromString("authorityHost");
     private static final BString TOKEN = StringUtils.fromString("token");
     private static final BString EXPIRES_ON = StringUtils.fromString("expiresOn");
@@ -76,19 +90,22 @@ public final class Credentials {
      */
     public static Object init(BObject credential, BString credentialType, BMap<BString, Object> config,
                               BMap<BString, Object> transport) {
+        List<String> secrets = secretsOf(config);
         try {
             HttpClient httpClient = TokenTransport.httpClient(transport);
             String authorityHost = transport.getStringValue(AUTHORITY_HOST).getValue();
             TokenCredential tokenCredential = switch (credentialType.getValue()) {
                 case TYPE_DEFAULT -> defaultCredential(config, httpClient, authorityHost);
                 case TYPE_MANAGED_IDENTITY -> managedIdentityCredential(config, httpClient);
+                case TYPE_CLIENT_SECRET -> clientSecretCredential(config, httpClient, authorityHost);
                 default -> throw new IllegalArgumentException(
                         "credential type '" + credentialType.getValue() + "' is not supported");
             };
             credential.addNativeData(NATIVE_CREDENTIAL, tokenCredential);
+            credential.addNativeData(NATIVE_SECRETS, secrets);
             return null;
-        } catch (Exception | LinkageError e) {
-            return IdentityErrors.toError(e);
+        } catch (GeneralSecurityException | IOException | RuntimeException | LinkageError e) {
+            return IdentityErrors.toError(e, secrets);
         }
     }
 
@@ -120,12 +137,14 @@ public final class Credentials {
      */
     public static Object getToken(Environment env, BObject credential, BArray scopes) {
         TokenCredential tokenCredential = (TokenCredential) credential.getNativeData(NATIVE_CREDENTIAL);
+        @SuppressWarnings("unchecked")
+        List<String> secrets = (List<String>) credential.getNativeData(NATIVE_SECRETS);
         TokenRequestContext context = new TokenRequestContext().addScopes(scopes.getStringArray());
         return env.yieldAndRun(() -> {
             try {
                 return toTokenMap(tokenCredential.getTokenSync(context));
             } catch (Exception | LinkageError e) {
-                return IdentityErrors.toError(e);
+                return IdentityErrors.toError(e, secrets);
             }
         });
     }
@@ -161,6 +180,41 @@ public final class Credentials {
         return builder.build();
     }
 
+    private static TokenCredential clientSecretCredential(BMap<BString, Object> config, HttpClient httpClient,
+                                                          String authorityHost) {
+        ClientSecretCredentialBuilder builder = new ClientSecretCredentialBuilder()
+                .tenantId(requireString(config, TENANT_ID))
+                .clientId(requireString(config, CLIENT_ID))
+                .clientSecret(requireString(config, CLIENT_SECRET))
+                .httpClient(httpClient);
+        applyAuthority(authorityHost, builder::authorityHost, builder::disableInstanceDiscovery);
+        return builder.build();
+    }
+
+    // An explicit non-default authority overrides AZURE_AUTHORITY_HOST. MSAL sends instance discovery for an unknown
+    // host to the public cloud, which fails for private clouds and local endpoints alike, so it is turned off for
+    // any authority host other than the known clouds.
+    private static void applyAuthority(String authorityHost, Consumer<String> setAuthorityHost,
+                                       Runnable disableInstanceDiscovery) {
+        if (!AZURE_PUBLIC_CLOUD.equals(authorityHost)) {
+            setAuthorityHost.accept(authorityHost);
+        }
+        String normalized = authorityHost.toLowerCase(Locale.ROOT);
+        if (!KNOWN_AUTHORITY_HOSTS.contains(normalized.endsWith("/") ? normalized : normalized + "/")) {
+            disableInstanceDiscovery.run();
+        }
+    }
+
+    // Values from the configuration that must never appear in an error message.
+    private static List<String> secretsOf(BMap<BString, Object> config) {
+        List<String> secrets = new ArrayList<>();
+        String clientSecret = optString(config, CLIENT_SECRET);
+        if (clientSecret != null) {
+            secrets.add(clientSecret);
+        }
+        return List.copyOf(secrets);
+    }
+
     private static BMap<BString, Object> toTokenMap(AccessToken token) {
         BMap<BString, Object> map = ValueCreator.createMapValue(
                 TypeCreator.createMapType(PredefinedTypes.TYPE_ANYDATA));
@@ -174,6 +228,15 @@ public final class Credentials {
             map.put(REFRESH_ON, refreshAt.toEpochSecond());
         }
         return map;
+    }
+
+    // A required field: present and not blank. The message names the field, never its value.
+    private static String requireString(BMap<BString, Object> record, BString field) {
+        String value = optString(record, field);
+        if (value == null) {
+            throw new IllegalArgumentException("'" + field.getValue() + "' must not be empty");
+        }
+        return value;
     }
 
     private static String optString(BMap<BString, Object> record, BString field) {

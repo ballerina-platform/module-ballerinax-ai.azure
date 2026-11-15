@@ -29,6 +29,7 @@ import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
 
+import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -55,6 +56,8 @@ final class IdentityErrors {
     /** JSON Web Tokens, e.g. an access token echoed back by a misbehaving endpoint. */
     private static final Pattern JWT = Pattern.compile("eyJ[A-Za-z0-9_-]{4,}\\.[A-Za-z0-9_-]{4,}\\.[A-Za-z0-9_-]*");
     /** Secret-bearing variables whose values must never appear in a message. */
+    /** MSAL's exception for a request Entra ID rejected, matched by name (msal4j is not a direct dependency). */
+    private static final String MSAL_SERVICE_EXCEPTION = "com.microsoft.aad.msal4j.MsalServiceException";
     private static final List<String> SECRET_VARIABLES = List.of("IDENTITY_HEADER", "MSI_SECRET",
             "AZURE_CLIENT_SECRET", "AZURE_CLIENT_CERTIFICATE_PASSWORD", "AZURE_PASSWORD");
 
@@ -62,6 +65,17 @@ final class IdentityErrors {
     }
 
     static BError toError(Throwable throwable) {
+        return toError(throwable, List.of());
+    }
+
+    /**
+     * Converts a failure into an error, also redacting configuration values such as a client secret.
+     *
+     * @param throwable the failure
+     * @param secrets   values that must not appear in the message
+     * @return the error
+     */
+    static BError toError(Throwable throwable, Collection<String> secrets) {
         String kind = KIND_OTHER;
         Set<Throwable> seen = new LinkedHashSet<>();
         for (Throwable t = throwable; t != null && seen.add(t); t = t.getCause()) {
@@ -69,12 +83,18 @@ final class IdentityErrors {
                 kind = KIND_UNAVAILABLE;
                 break;
             }
-            if (t instanceof ClientAuthenticationException) {
+            if (t instanceof ClientAuthenticationException || isMsalServiceException(t)) {
                 kind = KIND_AUTHENTICATION;
                 break;
             }
         }
-        String message = sanitize(describe(throwable));
+        String message = describe(throwable);
+        for (String secret : secrets) {
+            if (secret.length() >= 4) {
+                message = message.replace(secret, REDACTED);
+            }
+        }
+        message = sanitize(message);
         BMap<BString, Object> detail = ValueCreator.createMapValue(
                 TypeCreator.createMapType(PredefinedTypes.TYPE_ANYDATA));
         detail.put(KIND, StringUtils.fromString(kind));
@@ -83,6 +103,15 @@ final class IdentityErrors {
             detail.put(CODE, StringUtils.fromString(code.group()));
         }
         return ErrorCreator.createError(StringUtils.fromString(message), detail);
+    }
+
+    private static boolean isMsalServiceException(Throwable throwable) {
+        for (Class<?> type = throwable.getClass(); type != null; type = type.getSuperclass()) {
+            if (MSAL_SERVICE_EXCEPTION.equals(type.getName())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // The top-level message plus the root cause (e.g. a TLS failure), which azure-identity often wraps.
