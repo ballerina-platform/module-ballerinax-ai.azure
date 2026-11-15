@@ -119,9 +119,29 @@ public type WorkloadIdentityConfig record {|
     string tokenFilePath?;
 |};
 
+# A service principal that authenticates with a certificate.
+@display {label: "Client Certificate"}
+public type ClientCertificateConfig record {|
+    # The credential type
+    @display {label: "Type"}
+    "clientCertificate" 'type;
+    # Microsoft Entra ID tenant ID
+    @display {label: "Tenant ID"}
+    string tenantId;
+    # Client (application) ID of the service principal
+    @display {label: "Client ID"}
+    string clientId;
+    # Path of the certificate file: a PEM file, or a PKCS#12 (PFX) file when `certificatePassword` is set
+    @display {label: "Certificate Path"}
+    string certificatePath;
+    # Password of a PKCS#12 (PFX) file; omit it for a PEM file
+    @display {label: "Certificate Password"}
+    string certificatePassword?;
+|};
+
 # The configuration of a credential.
 public type CredentialConfig DefaultCredentialConfig|ManagedIdentityConfig|ClientSecretConfig
-        |WorkloadIdentityConfig;
+        |WorkloadIdentityConfig|ClientCertificateConfig;
 
 # A credential configuration or a `TokenCredential`.
 public type Credential CredentialConfig|TokenCredential;

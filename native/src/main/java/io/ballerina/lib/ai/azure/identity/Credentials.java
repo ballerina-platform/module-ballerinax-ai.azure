@@ -23,6 +23,7 @@ import com.azure.core.credential.TokenCredential;
 import com.azure.core.credential.TokenRequestContext;
 import com.azure.core.http.HttpClient;
 import com.azure.core.util.ConfigurationBuilder;
+import com.azure.identity.ClientCertificateCredentialBuilder;
 import com.azure.identity.ClientSecretCredentialBuilder;
 import com.azure.identity.DefaultAzureCredentialBuilder;
 import com.azure.identity.ManagedIdentityCredentialBuilder;
@@ -38,6 +39,7 @@ import io.ballerina.runtime.api.values.BObject;
 import io.ballerina.runtime.api.values.BString;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -64,6 +66,8 @@ public final class Credentials {
     private static final String TYPE_MANAGED_IDENTITY = "managedIdentity";
     private static final String TYPE_CLIENT_SECRET = "clientSecret";
     private static final String TYPE_WORKLOAD_IDENTITY = "workloadIdentity";
+    private static final String TYPE_CLIENT_CERTIFICATE = "clientCertificate";
+    private static final String PEM_PREFIX = "-----BEGIN";
     private static final String SOURCES_ALL = "all";
     private static final String AZURE_TOKEN_CREDENTIALS = "AZURE_TOKEN_CREDENTIALS";
     private static final String TUNNELING_DISABLED_SCHEMES = "jdk.http.auth.tunneling.disabledSchemes";
@@ -77,6 +81,8 @@ public final class Credentials {
     private static final BString CLIENT_ID = StringUtils.fromString("clientId");
     private static final BString CLIENT_SECRET = StringUtils.fromString("clientSecret");
     private static final BString TOKEN_FILE_PATH = StringUtils.fromString("tokenFilePath");
+    private static final BString CERTIFICATE_PATH = StringUtils.fromString("certificatePath");
+    private static final BString CERTIFICATE_PASSWORD = StringUtils.fromString("certificatePassword");
     private static final BString AUTHORITY_HOST = StringUtils.fromString("authorityHost");
     private static final BString TOKEN = StringUtils.fromString("token");
     private static final BString EXPIRES_ON = StringUtils.fromString("expiresOn");
@@ -105,6 +111,7 @@ public final class Credentials {
                 case TYPE_MANAGED_IDENTITY -> managedIdentityCredential(config, httpClient);
                 case TYPE_CLIENT_SECRET -> clientSecretCredential(config, httpClient, authorityHost);
                 case TYPE_WORKLOAD_IDENTITY -> workloadIdentityCredential(config, httpClient, authorityHost);
+                case TYPE_CLIENT_CERTIFICATE -> clientCertificateCredential(config, httpClient, authorityHost);
                 default -> throw new IllegalArgumentException(
                         "credential type '" + credentialType.getValue() + "' is not supported");
             };
@@ -218,6 +225,36 @@ public final class Credentials {
         return builder.build();
     }
 
+    // A PKCS#12 (PFX) file when a password is given, as in azure.storage.blob; a PEM file otherwise.
+    private static TokenCredential clientCertificateCredential(BMap<BString, Object> config, HttpClient httpClient,
+                                                               String authorityHost) throws IOException {
+        String certificatePath = requireString(config, CERTIFICATE_PATH);
+        ClientCertificateCredentialBuilder builder = new ClientCertificateCredentialBuilder()
+                .tenantId(requireString(config, TENANT_ID))
+                .clientId(requireString(config, CLIENT_ID))
+                .httpClient(httpClient);
+        String password = optString(config, CERTIFICATE_PASSWORD);
+        if (password != null) {
+            builder.pfxCertificate(certificatePath).clientCertificatePassword(password);
+        } else if (isPem(Path.of(certificatePath))) {
+            builder.pemCertificate(certificatePath);
+        } else {
+            throw new IllegalArgumentException("'certificatePath' is not a PEM file; a PKCS#12 (PFX) file needs "
+                    + "'certificatePassword'");
+        }
+        applyAuthority(authorityHost, builder::authorityHost, builder::disableInstanceDiscovery);
+        return builder.build();
+    }
+
+    private static boolean isPem(Path path) throws IOException {
+        byte[] head = new byte[64];
+        int read;
+        try (InputStream in = Files.newInputStream(path)) {
+            read = in.readNBytes(head, 0, head.length);
+        }
+        return new String(head, 0, read, StandardCharsets.US_ASCII).stripLeading().startsWith(PEM_PREFIX);
+    }
+
     // An explicit non-default authority overrides AZURE_AUTHORITY_HOST. MSAL sends instance discovery for an unknown
     // host to the public cloud, which fails for private clouds and local endpoints alike, so it is turned off for
     // any authority host other than the known clouds.
@@ -238,6 +275,10 @@ public final class Credentials {
         String clientSecret = optString(config, CLIENT_SECRET);
         if (clientSecret != null) {
             secrets.add(clientSecret);
+        }
+        String certificatePassword = optString(config, CERTIFICATE_PASSWORD);
+        if (certificatePassword != null) {
+            secrets.add(certificatePassword);
         }
         // The federated token as it is now; a rotated token is a JWT, which the sanitiser redacts anyway.
         String tokenFilePath = optString(config, TOKEN_FILE_PATH);

@@ -18,6 +18,7 @@ import ballerina/file;
 import ballerina/http;
 import ballerina/io;
 import ballerina/jballerina.java;
+import ballerina/lang.array;
 import ballerina/lang.runtime;
 import ballerina/os;
 import ballerina/test;
@@ -43,6 +44,8 @@ const CLIENT_SECRET_VALUE = "do-not-leak-client-secret-1b";
 const CLIENT_SECRET_APP = "secret-app";
 const FEDERATED_TOKEN_VALUE = "do-not-leak-federated-token-1b";
 const WORKLOAD_APP = "workload-app";
+const CERTIFICATE_APP = "cert-app";
+const CERTIFICATE_PASSWORD_VALUE = "do-not-leak-cert-password-1b";
 
 // A token request the mock received.
 type EntraRequest record {|
@@ -57,6 +60,8 @@ type EntraRequest record {|
 |};
 
 isolated EntraRequest[] entraRequests = [];
+// Base64url SHA-1 and SHA-256 thumbprints of the client certificate the mock accepts for CERTIFICATE_APP.
+isolated [string, string] acceptedThumbprints = ["", ""];
 isolated string[] unexpectedEntraPaths = [];
 
 isolated function recordEntraRequest(EntraRequest request) {
@@ -126,12 +131,57 @@ isolated function assertionAnswer(EntraRequest request) returns http:Ok|http:Bad
         return entraError("invalid_client", "AADSTS7000216: client_assertion or client_secret is required");
     }
     string assertion = request.clientAssertion ?: "";
+    if clientId == CERTIFICATE_APP {
+        string? problem = certificateAssertionProblem(assertion);
+        return problem is () ? tokenResponse(clientId) : entraError("invalid_client", "AADSTS700027: " + problem);
+    }
     if clientId == WORKLOAD_APP {
         return assertion == FEDERATED_TOKEN_VALUE ? tokenResponse(clientId)
             : entraError("invalid_client",
                 string `AADSTS700213: No matching federated identity record for '${assertion}'.`);
     }
     return entraError("unauthorized_client", "AADSTS700016: application not found in the directory");
+}
+
+// Checks a certificate-signed client assertion: its claims, and that its header names the accepted certificate.
+isolated function certificateAssertionProblem(string assertion) returns string? {
+    string[] parts = re `\.`.split(assertion);
+    if parts.length() != 3 {
+        return "the client assertion is not a JWT";
+    }
+    map<json>|error header = decodeJwtPart(parts[0]);
+    map<json>|error claims = decodeJwtPart(parts[1]);
+    if header is error || claims is error {
+        return "the client assertion cannot be decoded";
+    }
+    // MSAL encodes the thumbprint as standard Base64; compare it in base64url form, without padding.
+    string x5t = toBase64Url(header["x5t"] is string ? <string>header["x5t"] : "");
+    string x5tS256 = toBase64Url(header["x5t#S256"] is string ? <string>header["x5t#S256"] : "");
+    [string, string] accepted;
+    lock {
+        accepted = acceptedThumbprints.clone();
+    }
+    if !((x5t != "" && x5t == accepted[0]) || (x5tS256 != "" && x5tS256 == accepted[1])) {
+        return "the client assertion was signed with an unknown certificate";
+    }
+    if claims["iss"] != CERTIFICATE_APP || claims["sub"] != CERTIFICATE_APP {
+        return "the client assertion has the wrong issuer or subject";
+    }
+    json audience = claims["aud"];
+    if audience !is string || !audience.endsWith(string `/${MOCK_TENANT}/oauth2/v2.0/token`) {
+        return "the client assertion has the wrong audience";
+    }
+    return ();
+}
+
+isolated function toBase64Url(string value) returns string =>
+    re `/`.replaceAll(re `\+`.replaceAll(re `=+$`.replaceAll(value, ""), "-"), "_");
+
+isolated function decodeJwtPart(string part) returns map<json>|error {
+    string encoded = re `-`.replaceAll(re `_`.replaceAll(part, "/"), "+");
+    int padding = (4 - encoded.length() % 4) % 4;
+    byte[] bytes = check array:fromBase64(encoded + "===".substring(0, padding));
+    return (check string:fromBytes(bytes)).fromJsonStringWithType();
 }
 
 isolated service class MockEntraService {

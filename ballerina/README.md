@@ -80,6 +80,9 @@ final ai:ModelProvider managedIdentityModel = check new azure:OpenAiModelProvide
     "deployment-id");
 ```
 
+The credential types are `default`, `managedIdentity`, `clientSecret`, `workloadIdentity` and `clientCertificate`;
+see the `ai.azure.identity` module for their settings.
+
 With a credential:
 
 - The token scope is derived from the service URL. For any other host, such as an API Management gateway or a
