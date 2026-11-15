@@ -215,7 +215,7 @@ service http:InterceptableService /probe on foundryProbeListener {
         error httpscerr:DefaultStatusCodeError("wrapped", error httpscerr:ConflictError("inner"));
 
     // An http:Client call that gets a 4xx returns an http:ApplicationResponseError carrying the
-    // upstream response's headers.
+    // upstream response's status and headers, which the listener must not pass on.
     resource function get upstream() returns json|error {
         json body = check foundryUpstreamClient->get("/limited");
         return body;
@@ -225,7 +225,8 @@ service http:InterceptableService /probe on foundryProbeListener {
 // A plain upstream service (no Foundry interceptors) that rate-limits every call.
 service /upstream on foundryProbeListener {
     resource function get limited() returns http:TooManyRequests =>
-        {headers: {"retry-after": "7"}, body: "slow down"};
+        {headers: {"retry-after": "7", "set-cookie": "upstream=1", "www-authenticate": "Bearer"},
+            body: "slow down"};
 }
 
 final http:Client foundryProbeClient = check new (string `http://localhost:${FOUNDRY_PROBE_PORT}/probe`);
@@ -282,14 +283,16 @@ function testFoundryStatusCodeErrorUsesCauseStatus() returns error? {
 }
 
 @test:Config {groups: ["foundry"]}
-function testFoundryApplicationResponseErrorKeepsHeaders() returns error? {
+function testFoundryApplicationResponseErrorIsInternalError() returns error? {
+    // The backend's 429 and its headers are not the agent's own: the error is a 500 without them.
     http:Response response = check foundryProbeClient->get("/upstream", {"x-request-id": "probe-upstream"});
-    test:assertEquals(response.statusCode, 429);
-    test:assertEquals(check response.getHeader("retry-after"), "7");
-    // The upstream's body headers are not copied: the body is the Foundry error envelope.
+    test:assertEquals(response.statusCode, 500);
+    test:assertFalse(response.hasHeader("retry-after"));
+    test:assertFalse(response.hasHeader("set-cookie"));
+    test:assertFalse(response.hasHeader("www-authenticate"));
     test:assertEquals(check response.getHeader("content-type"), "application/json");
-    json body = check response.getJsonPayload();
-    test:assertEquals(check body.'error.code, "invalid_request");
+    test:assertEquals(check response.getJsonPayload(),
+            {'error: {code: "internal_error", message: "Internal server error"}});
     assertPlatformServer(response);
     test:assertEquals(check response.getHeader("x-request-id"), "probe-upstream");
 }

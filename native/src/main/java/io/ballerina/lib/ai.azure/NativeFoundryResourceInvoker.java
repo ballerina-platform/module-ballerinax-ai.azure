@@ -76,6 +76,9 @@ public final class NativeFoundryResourceInvoker {
     static final String PATH_PARAM_SEGMENT = "^";
     static final String REST_PATH_PARAM_SEGMENT = "^^";
     // The annotations of a resource parameter are stored on the resource under this prefix plus the parameter name.
+    // This key format, the http annotation key below and the private `request` field of `http:Headers` are internals
+    // of the runtime and the http module, which have no public API for them; `foundry_http_internals_test.bal` fails
+    // when any of them changes.
     private static final String PARAM_ANNOTATION_PREFIX = "$param$.";
     // An http annotation key is `ballerina/http:<major version>:<annotation name>`.
     private static final String HTTP_ANNOTATION_PREFIX = "ballerina/http:";

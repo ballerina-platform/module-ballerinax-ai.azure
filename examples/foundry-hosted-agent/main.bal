@@ -38,6 +38,36 @@ final ai:Agent agent = check new ({
     memory: check new ai:ShortTermMemory()
 });
 
+// `ai:Agent.run` requires the calls for one memory key to run one after another. A `lock` on an
+// isolated object holds that object only, so each memory key gets its own `ConversationTurns`:
+// turns of one conversation wait for each other, and different conversations run concurrently.
+isolated class ConversationTurns {
+    private int count = 0;
+
+    isolated function run(string message, string memoryKey) returns string|error {
+        lock {
+            self.count += 1;
+            return agent.run(message, memoryKey);
+        }
+    }
+}
+
+// One `ConversationTurns` per memory key. Like the in-memory history, it is kept for the life of the
+// process.
+isolated map<ConversationTurns> conversations = {};
+
+isolated function conversationTurns(string memoryKey) returns ConversationTurns {
+    lock {
+        ConversationTurns? turns = conversations[memoryKey];
+        if turns is ConversationTurns {
+            return turns;
+        }
+        ConversationTurns created = new;
+        conversations[memoryKey] = created;
+        return created;
+    }
+}
+
 // Listens on the port in the `PORT` environment variable, else on 8088.
 listener azure:FoundryListener foundryListener = new;
 
@@ -50,11 +80,12 @@ service azure:FoundryInvocationService on foundryListener {
     resource function post invocations(@http:Payload json payload, azure:FoundryContext ctx)
             returns json|error {
         string message = check payload.message;
-        // Keep a separate history per session and, when Foundry sends one, per user.
-        string? userId = ctx.userId;
-        string memoryKey = userId is string ? string `${userId}:${ctx.sessionId}` : ctx.sessionId;
+        // Keep a separate history per session and, when Foundry sends one, per user. The key is the
+        // JSON array `[userId, sessionId]` (`null` when there is no user ID), so no two user/session
+        // pairs share a key, whatever characters the IDs contain.
+        string memoryKey = [ctx.userId, ctx.sessionId].toJsonString();
         // A failed model call is returned as an error, which the listener answers with a 500.
-        string reply = check agent.run(message, memoryKey);
+        string reply = check conversationTurns(memoryKey).run(message, memoryKey);
         return {reply, sessionId: ctx.sessionId, invocationId: ctx.invocationId};
     }
 }

@@ -620,18 +620,18 @@ function testFoundryUserErrorResponsesAreUpstream() returns error? {
 }
 
 @test:Config {groups: ["foundry"]}
-function testFoundryRelayedErrorDropsListenerHeaders() returns error? {
-    // The classification and ID headers of another service's response (here another Foundry agent's)
-    // describe that service's request, so they are not copied; its other headers are.
+function testFoundryRelayedErrorIsInternalError() returns error? {
+    // An error from another service's response (here another Foundry agent's) is a 500, as in the
+    // reference: its status and headers describe that service's request, so none are copied.
     http:Response response = check foundryRoutesClient->get("/invocations/relayed");
-    test:assertEquals(response.statusCode, 502);
+    test:assertEquals(response.statusCode, 500);
     test:assertEquals(check response.getJsonPayload(),
             {'error: {code: "internal_error", message: "Internal server error"}});
     assertUpstreamError(response);
     test:assertEquals(check response.getHeaders("x-platform-error-source"), ["upstream"]);
     assertGetOrCancelHeaders(response, "relayed");
     test:assertEquals(check response.getHeaders("x-agent-invocation-id"), ["relayed"]);
-    test:assertEquals(check response.getHeader("retry-after"), "3");
+    test:assertFalse(response.hasHeader("retry-after"));
 }
 
 @test:Config {groups: ["foundry"]}

@@ -75,8 +75,10 @@ function testFoundryPlatformHeadersFromContextRecord() returns error? {
 @test:Config {}
 function testFoundryPlatformHeadersReturnsNewMap() returns error? {
     FoundryContext ctx = check foundryContextWithHeaders({"x-agent-foundry-call-id": TEST_CALL_ID});
-    map<string> first = foundryPlatformHeaders(ctx);
+    map<string|string[]> first = foundryPlatformHeaders(ctx);
     first["authorization"] = "Bearer token";
+    // A multi-valued header can be added, as the documented usage shows.
+    first["accept"] = ["application/json", "text/plain"];
     test:assertEquals(foundryPlatformHeaders(ctx), {"x-agent-foundry-call-id": TEST_CALL_ID});
     // The result is assignable to the headers parameter of the http:Client methods.
     map<string|string[]>? clientHeaders = foundryPlatformHeaders(ctx);

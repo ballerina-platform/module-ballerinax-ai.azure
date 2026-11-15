@@ -266,5 +266,4 @@ few differences. For example: a `4xx`/`5xx` response your resource returns is cl
 (the reference leaves it unclassified); the request body is bound to the declared payload type, and a body
 that doesn't fit is a `400` classified as `user`; the `404`/`405` bodies use the error envelope instead of
 plain text; and a graceful stop always waits the full timeout. The WebSocket transport, streaming
-responses and the Responses protocol are not included. See the [design document](https://github.com/ballerina-platform/module-ballerinax-ai.azure/blob/main/docs/proposals/foundry-hosted-agent-listener.md) for the
-full list and the reasons.
+responses and the Responses protocol are not included.

@@ -17,6 +17,14 @@
 import ballerina/http;
 import ballerina/os;
 
+// The Foundry listener follows the Microsoft `azure-ai-agentserver-core` and
+// `azure-ai-agentserver-invocations` Python libraries (the reference). Code comments in the Foundry
+// files cite the reference as `core/<file>:<lines>` and `inv/<file>:<lines>`, where `core/` is
+// `sdk/agentserver/azure-ai-agentserver-core/azure/ai/agentserver/core/` and `inv/` is
+// `sdk/agentserver/azure-ai-agentserver-invocations/azure/ai/agentserver/invocations/` in
+// `Azure/azure-sdk-for-python` at commit `815c4b283a6013c803d0d3bd051c7bea6f4e6464`. The line numbers
+// refer to that commit.
+
 # A listener that runs a `FoundryInvocationService` as a Microsoft Foundry hosted agent.
 #
 # The listener serves the Foundry Invocations protocol over HTTP: `POST /invocations`, the
@@ -185,21 +193,12 @@ isolated function validatePort(int port, string sourceName) returns int|error {
 # + config - The Foundry listener configuration
 # + return - The `http:Listener` configuration
 isolated function toHttpListenerConfiguration(FoundryListenerConfiguration config)
-        returns http:ListenerConfiguration => {
-    host: config.host,
-    http1Settings: config.http1Settings,
-    secureSocket: config.secureSocket,
-    httpVersion: config.httpVersion,
-    timeout: config.timeout,
-    server: config.server,
-    requestLimits: config.requestLimits,
-    gracefulStopTimeout: config.gracefulStopTimeout,
-    socketConfig: config.socketConfig,
-    http2InitialWindowSize: config.http2InitialWindowSize,
-    http2MaxActiveStreams: config.http2MaxActiveStreams,
-    minIdleTimeInStaleState: config.minIdleTimeInStaleState,
-    timeBetweenStaleEviction: config.timeBetweenStaleEviction
-};
+        returns http:ListenerConfiguration {
+    // A rest binding keeps every `http:ListenerConfiguration` field, including any the http module
+    // adds later; only the Foundry-specific fields are left out.
+    var {agent: _, openApiSpec: _, ...httpConfig} = config;
+    return httpConfig;
+}
 
 # Extracts what the dispatcher needs from the Foundry listener configuration, as read-only data.
 #

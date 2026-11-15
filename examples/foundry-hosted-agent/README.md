@@ -13,6 +13,8 @@ replicas. Use a persistent `ai:ShortTermMemoryStore` for production.
 ## Prerequisites
 
 - Ballerina Swan Lake Update 14 (2201.14.x) or later.
+- `ballerinax/ai.azure` 1.6.0 or later, the first version with `azure:FoundryListener`. Until 1.6.0 is
+  published to Ballerina Central, use a local build of the package (see below).
 - An [Azure OpenAI resource](https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/create-resource)
   with a chat model deployment, and its endpoint and API key.
 - Docker, to build the container image.
@@ -35,6 +37,28 @@ apiVersion = "2024-10-21"
 `apiVersion` is required for a legacy service URL (`https://<resource>.openai.azure.com/openai`) and
 ignored for a v1 service URL (`https://<resource>.services.ai.azure.com/openai/v1`). `Config.toml` is
 git-ignored; don't commit it.
+
+## Use a local build of `ballerinax/ai.azure`
+
+Skip this step once `ballerinax/ai.azure` 1.6.0 is on Ballerina Central. Before that, `bal run` resolves
+the latest published version, which lacks the Foundry listener, and fails to compile `main.bal`.
+
+Build the package from the repository root and publish it to the local repository
+(`~/.ballerina/repositories/local`):
+
+```bash
+./gradlew clean build -x test -PpublishToLocalCentral=true
+```
+
+Then make the example use it, by adding this to `Ballerina.toml`:
+
+```toml
+[[dependency]]
+org = "ballerinax"
+name = "ai.azure"
+version = "1.6.0"
+repository = "local"
+```
 
 ## Run locally
 
@@ -117,7 +141,7 @@ Pass the configuration when the container starts, either as environment variable
 configurable `x` of the root module from `BAL_CONFIG_VAR_X`):
 
 ```bash
-docker run --rm -p 8088:8088 \
+docker run --rm -p 8088:8088 --stop-timeout 40 \
     -e BAL_CONFIG_VAR_SERVICEURL="https://<resource>.openai.azure.com/openai" \
     -e BAL_CONFIG_VAR_APIKEY="$AZURE_OPENAI_API_KEY" \
     -e BAL_CONFIG_VAR_DEPLOYMENTID="<MODEL_DEPLOYMENT_NAME>" \
@@ -127,7 +151,7 @@ docker run --rm -p 8088:8088 \
 or by mounting your `Config.toml` read-only:
 
 ```bash
-docker run --rm -p 8088:8088 \
+docker run --rm -p 8088:8088 --stop-timeout 40 \
     -v "$(pwd)/Config.toml:/home/ballerina/config/Config.toml:ro" \
     -e BAL_CONFIG_FILES=/home/ballerina/config/Config.toml \
     foundry-hosted-agent:v1
@@ -135,7 +159,9 @@ docker run --rm -p 8088:8088 \
 
 Then use the same `curl` commands as above. Stopping the container (`docker stop`) waits the full
 graceful-stop timeout, 30 seconds by default, before the agent exits; set
-`AGENTSERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS` to change it.
+`AGENTSERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS` to change it. Docker kills a container that is still
+running 10 seconds after `docker stop` unless told otherwise, so the commands above set
+`--stop-timeout 40`. Keep it above the graceful-stop timeout.
 
 ## Deploy to Foundry (optional)
 

@@ -536,20 +536,13 @@ isolated function toReadinessResponse(any|error result, http:Request request) re
 # with, a readiness resource declared in a way the listener can't call, or a failure of the listener
 # itself. The status follows the http module's mapping (see `errorToResponse`), so a plain error is a
 # `500` with the generic message. Readiness responses are not classified, so no
-# `x-platform-error-source` or `x-platform-error-detail` is added, and the listener-owned headers an
-# `http:ApplicationResponseError` carries from another service's response are dropped.
+# `x-platform-error-source` or `x-platform-error-detail` is added.
 #
 # + err - The error
 # + request - The request, for logging
 # + return - The error response
 isolated function readinessErrorResponse(error err, http:Request request) returns http:Response {
-    http:Response response = errorToResponse(err, request);
-    if err is http:ApplicationResponseError {
-        foreach string name in LISTENER_OWNED_HEADERS {
-            response.removeHeader(name);
-        }
-    }
-    return response;
+    return errorToResponse(err, request);
 }
 
 # Builds a response with the standard error envelope `{"error":{"code":...,"message":...}}`
@@ -798,8 +791,11 @@ isolated service class FoundryResponseErrorInterceptor {
 }
 
 # Maps an error to a response with the error envelope. The status code follows the http module's
-# own mapping; a `4xx` keeps the error message (it describes the caller's mistake), while a `5xx`
-# carries a generic message so internal details don't leak.
+# own mapping, except that an `http:ApplicationResponseError` (an outbound `http:Client` call of the
+# agent that got a 4xx/5xx) is a `500`, as in the reference: the backend's status and headers (for
+# example `set-cookie` or `www-authenticate`) are not the agent's own. A `4xx` keeps the error message
+# (it describes the caller's mistake), while a `5xx` carries a generic message so internal details
+# don't leak.
 #
 # + err - The error
 # + request - The request
@@ -818,12 +814,10 @@ isolated function errorToResponse(error err, http:Request request) returns http:
                 : ERROR_CODE_INVALID_REQUEST;
         response = errorResponse(statusCode, code, err.message());
     }
-    // Keep the headers the error carries, as the http module's `getErrorResponse` does. An
-    // `http:ApplicationResponseError` (an http:Client call that got a 4xx/5xx) carries the upstream
-    // response's headers, for example `www-authenticate` or `retry-after`.
-    if err is http:ApplicationResponseError {
-        copyErrorHeaders(response, err.detail().headers);
-    } else if err is httpscerr:StatusCodeError {
+    // Keep the headers an `httpscerr` status-code error carries, as the http module's
+    // `getErrorResponse` does: the agent chose them. The headers of an `http:ApplicationResponseError`
+    // come from another service's response, so they are not copied.
+    if err is httpscerr:StatusCodeError {
         map<string|string[]>? headers = err.detail()?.headers;
         if headers is map<string|string[]> {
             copyErrorHeaders(response, headers);
@@ -854,14 +848,12 @@ isolated function copyErrorHeaders(http:Response response, map<string|string[]> 
 }
 
 # Returns the HTTP status code the http module uses for an error (`getStatusCode` in
-# http module), so an error keeps its status when the Foundry error interceptor handles it.
+# http module), so an error keeps its status when the Foundry error interceptor handles it. An
+# `http:ApplicationResponseError` is a `500`: the status is the backend's, not the agent's.
 #
 # + err - The error
 # + return - The status code; `500` for an error that carries none
 isolated function statusCodeOf(error err) returns int {
-    if err is http:ApplicationResponseError {
-        return err.detail().statusCode;
-    }
     if err is httpscerr:'4XXStatusCodeError {
         return clientErrorStatusCodeOf(err);
     }

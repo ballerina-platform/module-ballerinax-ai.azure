@@ -45,9 +45,14 @@
 #
 # + ctx - The platform context of the invocation that makes the outbound call
 # + return - The headers to add to the outbound request, keyed by header name
-public isolated function foundryPlatformHeaders(FoundryContext ctx) returns map<string> {
+public isolated function foundryPlatformHeaders(FoundryContext ctx) returns map<string|string[]> {
     // `platform_headers()` in the reference (`core/_request_context.py:221-239`): only the call ID, and
-    // only when it is present.
+    // only when it is present. The map is built as `map<string|string[]>` so a caller can add a
+    // multi-valued header to it.
+    map<string|string[]> headers = {};
     string? callId = ctx.callId;
-    return callId is string ? {[HEADER_FOUNDRY_CALL_ID]: callId} : {};
+    if callId is string {
+        headers[HEADER_FOUNDRY_CALL_ID] = callId;
+    }
+    return headers;
 }

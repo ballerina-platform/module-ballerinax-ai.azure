@@ -37,13 +37,6 @@ const PROTOCOL_CONTEXT_KEY = "ballerinax.ai.azure.foundry.protocol";
 
 const INVALID_PATH_MESSAGE = "The request path could not be decoded.";
 
-// The headers the listener owns on a protocol response. An `http:ApplicationResponseError` (an
-// `http:Client` call of the agent that got a 4xx/5xx) carries the headers of that other service's
-// response, which may be another Foundry agent: these describe that service's request, not this one,
-// so they are not copied onto the error response.
-final readonly & string[] LISTENER_OWNED_HEADERS = [HEADER_ERROR_SOURCE, HEADER_ERROR_DETAIL, HEADER_INVOCATION_ID,
-    HEADER_SESSION_ID];
-
 # A failure of the Foundry listener itself: not of the agent's code and not of the caller's request.
 # It is the counterpart of the reference's platform-tagged exceptions (`PLATFORM_ERROR_TAG`), so the
 # response is a `500` with `x-platform-error-source: platform` and an `x-platform-error-detail` of
@@ -99,13 +92,14 @@ isolated function setErrorSource(http:Response response, string errorSource, str
 #
 # - A `FoundryPlatformError` gives a `500` with `x-platform-error-source: platform` and the detail.
 # - Any other error is `upstream`. Its status follows the http module's mapping, so an
-#   `httpscerr` status-code error (for example `httpscerr:NotFoundError`) or an
-#   `http:ApplicationResponseError` keeps its status and headers, and any other error is a `500` with
-#   the generic message `Internal server error`. The error message is never sent in a header.
-# - The headers of an `http:ApplicationResponseError` come from another service's response, so the
-#   ones the listener owns (`LISTENER_OWNED_HEADERS`) are dropped. The headers of an `httpscerr` error
-#   are the agent's choice, as those of an `http:Response` it returns are, so an
-#   `x-platform-error-source` the agent set there is kept.
+#   `httpscerr` status-code error (for example `httpscerr:NotFoundError`) keeps its status and headers,
+#   and any other error is a `500` with the generic message `Internal server error`. The error message
+#   is never sent in a header.
+# - An `http:ApplicationResponseError` (an outbound `http:Client` call of the agent that got a 4xx/5xx)
+#   is a `500`, as in the reference: the backend's status and headers are not the agent's own, so none
+#   of them are passed on.
+# - The headers of an `httpscerr` error are the agent's choice, as those of an `http:Response` it
+#   returns are, so an `x-platform-error-source` the agent set there is kept.
 #
 # + err - The error
 # + request - The request, for logging
@@ -117,11 +111,6 @@ isolated function foundryErrorResponse(error err, http:Request request) returns 
         return platformErrorResponse(err);
     }
     http:Response response = errorToResponse(err, request);
-    if err is http:ApplicationResponseError {
-        foreach string name in LISTENER_OWNED_HEADERS {
-            response.removeHeader(name);
-        }
-    }
     if !response.hasHeader(HEADER_ERROR_SOURCE) {
         setErrorSource(response, ERROR_SOURCE_UPSTREAM);
     }

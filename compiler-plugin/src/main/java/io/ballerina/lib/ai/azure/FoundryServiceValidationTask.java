@@ -131,10 +131,6 @@ public class FoundryServiceValidationTask implements AnalysisTask<SyntaxNodeAnal
     @Override
     public void perform(SyntaxNodeAnalysisContext context) {
         SemanticModel semanticModel = context.semanticModel();
-        if (hasCompilationErrors(semanticModel)) {
-            // The types the rules depend on may not be resolvable, and the compiler already reports the errors.
-            return;
-        }
         Optional<TypeSymbol> foundryServiceType = resolveType(semanticModel, BALLERINAX_ORG, AI_AZURE_MODULE,
                 FOUNDRY_SERVICE_TYPE);
         if (foundryServiceType.isEmpty()) {
@@ -155,7 +151,8 @@ public class FoundryServiceValidationTask implements AnalysisTask<SyntaxNodeAnal
 
     private static void validateServiceDeclaration(SyntaxNodeAnalysisContext context, SemanticModel semanticModel,
                                                    TypeSymbol foundryServiceType, ServiceDeclarationNode service) {
-        if (!isFoundryServiceDeclaration(semanticModel, foundryServiceType, service)) {
+        if (!isFoundryServiceDeclaration(semanticModel, foundryServiceType, service)
+                || hasCompilationErrors(semanticModel)) {
             return;
         }
         validateBasePath(context, service.absoluteResourcePath());
@@ -214,7 +211,7 @@ public class FoundryServiceValidationTask implements AnalysisTask<SyntaxNodeAnal
         }
         Optional<Symbol> symbol = semanticModel.symbol(serviceClass);
         if (symbol.isEmpty() || !(symbol.get() instanceof TypeSymbol classType)
-                || !classType.subtypeOf(foundryServiceType)) {
+                || !classType.subtypeOf(foundryServiceType) || hasCompilationErrors(semanticModel)) {
             return;
         }
         new ServiceValidator(context, semanticModel).validate(serviceClass.members(),
@@ -228,7 +225,7 @@ public class FoundryServiceValidationTask implements AnalysisTask<SyntaxNodeAnal
             return;
         }
         Optional<TypeSymbol> type = semanticModel.typeOf(constructor);
-        if (type.isEmpty() || !type.get().subtypeOf(foundryServiceType)) {
+        if (type.isEmpty() || !type.get().subtypeOf(foundryServiceType) || hasCompilationErrors(semanticModel)) {
             return;
         }
         Node first = constructor.objectTypeQualifiers().isEmpty() ? constructor.objectKeyword()
@@ -648,6 +645,9 @@ public class FoundryServiceValidationTask implements AnalysisTask<SyntaxNodeAnal
         return false;
     }
 
+    // Checked only once a node is known to be a Foundry service, so the other services and classes of a package that
+    // imports `ai.azure` don't pay for collecting the module's diagnostics. With compilation errors, the types the
+    // rules depend on may not be resolvable, and the compiler already reports the errors.
     private static boolean hasCompilationErrors(SemanticModel semanticModel) {
         return semanticModel.diagnostics().stream()
                 .anyMatch(diagnostic -> diagnostic.diagnosticInfo().severity() == DiagnosticSeverity.ERROR);
