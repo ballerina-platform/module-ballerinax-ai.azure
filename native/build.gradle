@@ -26,6 +26,11 @@ description = 'Ballerina - Azure OpenAI package Java Utils'
 dependencies {
     implementation group: 'org.ballerinalang', name: 'ballerina-lang', version: "${ballerinaLangVersion}"
     implementation group: 'org.ballerinalang', name: 'ballerina-runtime', version: "${ballerinaLangVersion}"
+    implementation(group: 'com.azure', name: 'azure-identity', version: "${azureIdentityVersion}") {
+        // Token requests go through the JDK HTTP client below; Netty would clash with ballerina/http's.
+        exclude group: 'com.azure', module: 'azure-core-http-netty'
+    }
+    implementation group: 'com.azure', name: 'azure-core-http-jdk-httpclient', version: "${azureCoreHttpJdkHttpClientVersion}"
     checkstyle project(":checkstyle")
     checkstyle "com.puppycrawl.tools:checkstyle:${checkstylePluginVersion}"
 }

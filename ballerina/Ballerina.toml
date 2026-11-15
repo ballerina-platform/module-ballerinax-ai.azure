@@ -1,19 +1,100 @@
 [package]
 authors = ["Ballerina"]
-distribution = "2201.12.0"
+distribution = "2201.14.0"
 keywords = ["Agent", "Azure", "Model", "Provider", "Vendor/Microsoft", "Area/AI & Machine Learning", "Type/Embedding Provider", "Type/Model Provider", "Type/Connector", "Name/Azure Model/Embedding Provider"]
 license = ["Apache-2.0"]
 icon="icon.png"
 name = "ai.azure"
 org = "ballerinax"
 repository = "https://github.com/ballerina-platform/module-ballerinax-ai.azure"
-version = "1.5.1"
+version = "1.6.0"
+export = ["ai.azure", "ai.azure.identity"]
 
-[platform.java21]
+[platform.java25]
 graalvmCompatible = true
 
-[[platform.java21.dependency]]
+[[platform.java25.dependency]]
 groupId = "io.ballerina.lib"
 artifactId = "ai.azure-native"
+version = "1.6.0"
+path = "../native/build/libs/ai.azure-native-1.6.0-SNAPSHOT.jar"
+
+# ai.azure.identity: Java azure-identity and its runtime tree. Token requests use the JDK HTTP client, so no Netty
+# or Reactor Netty jars are listed (ballerina/http brings its own Netty). slf4j comes from the Ballerina runtime.
+# JNA and msal4j-persistence-extension are required by azure-identity's module descriptor and the default chain's
+# developer-tool credentials; they are candidates for slimming once a test proves the default chain without them.
+
+[[platform.java25.dependency]]
+groupId = "com.azure"
+artifactId = "azure-identity"
+version = "1.18.4"
+
+[[platform.java25.dependency]]
+groupId = "com.azure"
+artifactId = "azure-core"
+version = "1.58.1"
+
+[[platform.java25.dependency]]
+groupId = "com.azure"
+artifactId = "azure-core-http-jdk-httpclient"
+version = "1.1.5"
+
+[[platform.java25.dependency]]
+groupId = "com.azure"
+artifactId = "azure-json"
 version = "1.5.1"
-path = "../native/build/libs/ai.azure-native-1.5.1.jar"
+
+[[platform.java25.dependency]]
+groupId = "com.azure"
+artifactId = "azure-xml"
+version = "1.2.1"
+
+[[platform.java25.dependency]]
+groupId = "com.microsoft.azure"
+artifactId = "msal4j"
+version = "1.23.1"
+
+[[platform.java25.dependency]]
+groupId = "com.microsoft.azure"
+artifactId = "msal4j-persistence-extension"
+version = "1.3.0"
+
+[[platform.java25.dependency]]
+groupId = "net.java.dev.jna"
+artifactId = "jna"
+version = "5.17.0"
+
+[[platform.java25.dependency]]
+groupId = "net.java.dev.jna"
+artifactId = "jna-platform"
+version = "5.17.0"
+
+[[platform.java25.dependency]]
+groupId = "com.fasterxml.jackson.core"
+artifactId = "jackson-annotations"
+version = "2.18.7"
+
+[[platform.java25.dependency]]
+groupId = "com.fasterxml.jackson.core"
+artifactId = "jackson-core"
+version = "2.18.7"
+
+[[platform.java25.dependency]]
+groupId = "com.fasterxml.jackson.core"
+artifactId = "jackson-databind"
+version = "2.18.7"
+
+[[platform.java25.dependency]]
+groupId = "com.fasterxml.jackson.datatype"
+artifactId = "jackson-datatype-jsr310"
+version = "2.18.7"
+
+[[platform.java25.dependency]]
+groupId = "io.projectreactor"
+artifactId = "reactor-core"
+version = "3.7.18"
+
+[[platform.java25.dependency]]
+groupId = "org.reactivestreams"
+artifactId = "reactive-streams"
+version = "1.0.4"

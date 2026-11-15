@@ -19,40 +19,39 @@ import ballerina/ai.observe;
 import ballerina/http;
 import ballerina/jballerina.java;
 import ballerina/log;
+import ballerinax/ai.azure.identity;
 import ballerinax/azure.openai.chat;
 import ballerinax/azure.openai.responses;
 
 const DEFAULT_MAX_TOKEN_COUNT = 4096;
 
-# `OpenAiModelProvider` is a client class that provides an interface for interacting with Azure-hosted OpenAI
-# language models.
-#
-# The provider can target either the Azure OpenAI **Chat Completions API** (the default) or the **Responses API**,
-# selected through the `apiType` parameter. The concrete wire route additionally depends on the shape of the
-# `serviceUrl`: a URL ending with `/v1` targets the Azure OpenAI **v1 GA** surface through the generated
-# `ballerinax/azure.openai.chat` / `ballerinax/azure.openai.responses` connectors, while any other URL targets the
-# **legacy** route (`?api-version=...`) through a raw HTTP client. See the `ApiType` documentation for the full
-# routing matrix.
+# `OpenAiModelProvider` is a client class that provides an interface for interacting with Azure OpenAI Large Language
+# Models.
 public isolated client class OpenAiModelProvider {
     *ai:ModelProvider;
     # Generated Chat Completions connector for the v1 GA surface (`POST {serviceUrl}/chat/completions`).
-    # Created only when `apiType` is `CHAT_COMPLETIONS` and the `serviceUrl` targets the v1 GA surface; `()` otherwise.
+    # Created only when `apiType` is `CHAT_COMPLETIONS`, the `serviceUrl` targets the v1 GA surface and an API key is
+    # used; `()` otherwise.
     private final chat:Client? chatClient;
-    # Raw HTTP client for the legacy Chat Completions route
-    # (`POST {legacyBase}/deployments/{deploymentId}/chat/completions?api-version=...`). Created only when
-    # `apiType` is `CHAT_COMPLETIONS` and the `serviceUrl` targets the legacy surface; `()` otherwise. A raw client
+    # Raw HTTP client for Chat Completions. On the legacy surface it posts
+    # `{legacyBase}/deployments/{deploymentId}/chat/completions?api-version=...` (with either authentication); on
+    # the v1 GA surface it posts `{serviceUrl}/chat/completions` when a credential is used. Created only when
+    # `apiType` is `CHAT_COMPLETIONS`; `()` otherwise or when `chatClient` is used. On the legacy route a raw client
     # (rather than the connector) is used so the request body can be serialized here and the correct token-limit
     # field (`max_tokens` vs `max_completion_tokens`) selected per api-version.
-    private final http:Client? legacyChatClient;
+    private final http:Client? rawChatClient;
     # Generated Responses connector for the v1 GA surface (`POST {serviceUrl}/responses`).
-    # Created only when `apiType` is `RESPONSES` and the `serviceUrl` targets the v1 GA surface; `()` otherwise.
+    # Created only when `apiType` is `RESPONSES`, the `serviceUrl` targets the v1 GA surface and an API key is used;
+    # `()` otherwise.
     private final responses:Client? responsesClient;
-    # Raw HTTP client for the legacy Responses route (`POST {legacyBase}/responses?api-version=...`).
-    # Created only when `apiType` is `RESPONSES` and the `serviceUrl` targets the legacy surface; `()` otherwise.
-    private final http:Client? legacyResponsesClient;
+    # Raw HTTP client for Responses. On the legacy surface it posts `{legacyBase}/responses?api-version=...` (with
+    # either authentication); on the v1 GA surface it posts `{serviceUrl}/responses` when a credential is used.
+    # Created only when `apiType` is `RESPONSES`; `()` otherwise or when `responsesClient` is used.
+    private final http:Client? rawResponsesClient;
     # `true` when the `serviceUrl` targets the v1 GA surface (ends with `/v1`); `false` for the legacy surface.
     private final boolean useV1;
-    private final string apiKey;
+    # The API key, or the Entra ID bearer authentication built from a credential.
+    private final string|BearerAuth auth;
     private final string deploymentId;
     # Date-based `api-version` used on the legacy routes; `()` on the v1 GA surface.
     private final string? apiVersion;
@@ -65,36 +64,28 @@ public isolated client class OpenAiModelProvider {
 
     # Initializes the Azure OpenAI model with the given connection configuration and model configuration.
     #
-    # + serviceUrl - The base URL of the Azure OpenAI API endpoint. Use the new v1 GA URL
-    #              (`https://<resource>.services.ai.azure.com/openai/v1`) or the legacy URL
-    #              (`https://<resource>.openai.azure.com/openai`).
-    # + apiKey - The Azure OpenAI API key
+    # + serviceUrl - The base URL of the Azure OpenAI API endpoint
+    # + apiKey - The API key, or a Microsoft Entra ID credential for keyless authentication
     # + deploymentId - The deployment identifier for the specific model deployment in Azure
-    # + apiVersion - The Azure OpenAI `api-version`. **Required** for legacy (non-`/v1`) service URLs
-    #              (e.g. `"2024-10-21"`). For v1 (`/v1`) service URLs the value is optional and normally
-    #              omitted; pass `"preview"` or `"v1"` to opt into a specific v1 surface (any other value is
-    #              ignored on v1 URLs).
+    # + apiVersion - The Azure OpenAI API version; required for service URLs that do not end with `/v1`
     # + maxTokens - The upper limit for the number of tokens in the response generated by the model
-    # + temperature - The temperature for controlling randomness in the model's output. Higher values (e.g., 0.8)
-    #               make output more random, while lower values (e.g., 0.2) make it more focused and deterministic.
-    #               Set it to `()` for models that do not support this parameter (e.g. GPT-5/o-series reasoning
-    #               models).
-    # + reasoningEffort - Reasoning effort level for reasoning models.
-    # + apiType - The Azure OpenAI API surface to use. Defaults to `CHAT_COMPLETIONS`. Set to `RESPONSES` to use the
-    #           Responses API instead.
+    # + temperature - The temperature for controlling randomness in the model's output; leave it unset for models
+    #               that do not support it
+    # + reasoningEffort - Reasoning effort level for reasoning models
+    # + apiType - The Azure OpenAI API to use; either the Chat Completions API (default) or the Responses API
     # + connectionConfig - Additional HTTP connection configuration
     # + return - `nil` on successful initialization; otherwise, returns an `ai:Error`
     public isolated function init(@display {label: "Service URL"} string serviceUrl,
-            @display {label: "API Key"} string apiKey,
+            @display {label: "Authentication"} string|identity:Credential apiKey,
             @display {label: "Deployment ID"} string deploymentId,
             @display {label: "API Version"} string? apiVersion = (),
             @display {label: "Maximum Tokens"} int maxTokens = DEFAULT_MAX_TOKEN_COUNT,
             @display {label: "Temperature"} decimal? temperature = (),
             @display {label: "Reasoning Effort"} ReasoningEffort? reasoningEffort = (),
             @display {label: "API Type"} ApiType apiType = CHAT_COMPLETIONS,
-            @display {label: "Connection Configuration"} *ConnectionConfig connectionConfig) returns ai:Error? {
+            @display {label: "Connection Configuration"} *OpenAiModelConnectionConfig connectionConfig)
+            returns ai:Error? {
 
-        self.apiKey = apiKey;
         self.deploymentId = deploymentId;
         self.temperature = temperature;
         self.maxTokens = maxTokens;
@@ -111,18 +102,22 @@ public isolated client class OpenAiModelProvider {
         self.apiVersion = resolvedApiVersion;
         self.v1ApiVersion = resolvedV1ApiVersion;
 
+        string|BearerAuth auth = check resolveAuth(apiKey, trimmedUrl, connectionConfig);
+        self.auth = auth;
+        var {tokenScope: _, ...httpConfig} = connectionConfig;
+
         // Base for the legacy raw-HTTP routes (the deployment/route segments are appended per request). A bare
         // origin is completed with `/openai`; a URL that already has a path is used verbatim.
         string legacyBase = resolveLegacyBase(trimmedUrl);
 
         // Create only the client required by the selected (apiType, surface) combination; unused fields stay `()`.
-        [chat:Client?, http:Client?, responses:Client?, http:Client?] [chatClient, legacyChatClient, responsesClient,
-                legacyResponsesClient] = check createClients(apiType, isV1, apiKey, trimmedUrl, legacyBase,
-                connectionConfig);
+        [chat:Client?, http:Client?, responses:Client?, http:Client?] [chatClient, rawChatClient, responsesClient,
+                rawResponsesClient] = check createClients(apiType, isV1, auth, trimmedUrl, legacyBase,
+                httpConfig);
         self.chatClient = chatClient;
-        self.legacyChatClient = legacyChatClient;
+        self.rawChatClient = rawChatClient;
         self.responsesClient = responsesClient;
-        self.legacyResponsesClient = legacyResponsesClient;
+        self.rawResponsesClient = rawResponsesClient;
     }
 
     # Sends a chat request to the OpenAI model with the given messages and tools.
@@ -203,8 +198,8 @@ public isolated client class OpenAiModelProvider {
         }
         applyMaxTokens(request, self.maxTokens, self.useV1 || usesMaxCompletionTokens(self.apiVersion ?: ""));
 
-        chat:InlineResponse200|error response = postChatCompletion(self.chatClient, self.legacyChatClient, self.useV1,
-                self.apiKey, self.deploymentId, self.apiVersion, self.v1ApiVersion, request);
+        chat:InlineResponse200|error response = postChatCompletion(self.chatClient, self.rawChatClient, self.useV1,
+                self.auth, self.deploymentId, self.apiVersion, self.v1ApiVersion, request);
         if response is error {
             ai:Error err = error ai:LlmConnectionError("Error while connecting to the model", response);
             log:printError("Error response received from Chat Completions API", err);
@@ -304,7 +299,7 @@ public isolated client class OpenAiModelProvider {
         }
 
         responses:InlineResponse200|error response = postResponsesRequest(self.responsesClient,
-                self.legacyResponsesClient, self.useV1, self.apiKey, self.apiVersion, self.v1ApiVersion, request);
+                self.rawResponsesClient, self.useV1, self.auth, self.apiVersion, self.v1ApiVersion, request);
         if response is error {
             ai:Error err = error ai:LlmConnectionError("Error while connecting to the model", response);
             log:printError("Error response received from Responses API", err);
@@ -508,44 +503,50 @@ isolated function hasPathSegment(string url) returns boolean {
 # Creates only the client required by the selected `(apiType, surface)` combination; unused clients are returned as
 # `()`.
 #
+# On the v1 GA surface an API key uses the generated connector and a credential uses a raw HTTP client on the
+# `serviceUrl`; the legacy surface always uses a raw HTTP client on the legacy base.
+#
 # + apiType - The Azure OpenAI API surface to use
 # + isV1 - `true` when the `serviceUrl` targets the v1 GA surface (ends with `/v1`); `false` for the legacy surface
-# + apiKey - The Azure OpenAI API key
-# + trimmedUrl - The trailing-slash-trimmed service URL (base for the v1 GA connectors)
+# + auth - The API key, or the Entra ID bearer authentication
+# + trimmedUrl - The trailing-slash-trimmed service URL (base for the v1 GA routes)
 # + legacyBase - The base URL for the legacy raw-HTTP routes
 # + connectionConfig - Additional HTTP connection configuration
-# + return - A `[chatClient, legacyChatClient, responsesClient, legacyResponsesClient]` tuple, or an `ai:Error` when
+# + return - A `[chatClient, rawChatClient, responsesClient, rawResponsesClient]` tuple, or an `ai:Error` when
 #          client initialization fails
-isolated function createClients(ApiType apiType, boolean isV1, string apiKey, string trimmedUrl, string legacyBase,
-        ConnectionConfig connectionConfig)
+isolated function createClients(ApiType apiType, boolean isV1, string|BearerAuth auth, string trimmedUrl,
+        string legacyBase, ConnectionConfig connectionConfig)
         returns [chat:Client?, http:Client?, responses:Client?, http:Client?]|ai:Error {
+    string rawBase = isV1 ? trimmedUrl : legacyBase;
     if apiType == CHAT_COMPLETIONS {
-        if isV1 {
-            chat:Client|error chatClient = new (toChatConnectionConfig(apiKey, connectionConfig), trimmedUrl);
+        if isV1 && auth is string {
+            chat:Client|error chatClient = new (toChatConnectionConfig(auth, connectionConfig), trimmedUrl);
             if chatClient is error {
                 return error ai:Error("Failed to initialize Azure OpenAI Chat Completions (v1) client", chatClient);
             }
             return [chatClient, (), (), ()];
         }
-        http:Client|error legacyChatClient = new (legacyBase, toRawHttpConfig(connectionConfig));
-        if legacyChatClient is error {
-            return error ai:Error("Failed to initialize Azure OpenAI Chat Completions client", legacyChatClient);
+        http:Client|error rawChatClient = new (rawBase, toRawHttpConfig(connectionConfig));
+        if rawChatClient is error {
+            return error ai:Error(isV1 ? "Failed to initialize Azure OpenAI Chat Completions (v1) client"
+                : "Failed to initialize Azure OpenAI Chat Completions client", rawChatClient);
         }
-        return [(), legacyChatClient, (), ()];
+        return [(), rawChatClient, (), ()];
     }
-    if isV1 {
+    if isV1 && auth is string {
         responses:Client|error responsesClient =
-                new (toResponsesConnectionConfig(apiKey, connectionConfig), trimmedUrl);
+                new (toResponsesConnectionConfig(auth, connectionConfig), trimmedUrl);
         if responsesClient is error {
             return error ai:Error("Failed to initialize Azure OpenAI Responses (v1) client", responsesClient);
         }
         return [(), (), responsesClient, ()];
     }
-    http:Client|error legacyResponsesClient = new (legacyBase, toRawHttpConfig(connectionConfig));
-    if legacyResponsesClient is error {
-        return error ai:Error("Failed to initialize Azure OpenAI Responses client", legacyResponsesClient);
+    http:Client|error rawResponsesClient = new (rawBase, toRawHttpConfig(connectionConfig));
+    if rawResponsesClient is error {
+        return error ai:Error(isV1 ? "Failed to initialize Azure OpenAI Responses (v1) client"
+            : "Failed to initialize Azure OpenAI Responses client", rawResponsesClient);
     }
-    return [(), (), (), legacyResponsesClient];
+    return [(), (), (), rawResponsesClient];
 }
 
 isolated function getChatMessageStringContent(ai:Prompt|string prompt) returns string|ai:Error {
