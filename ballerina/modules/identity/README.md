@@ -13,7 +13,7 @@ A credential is described by a plain record whose `type` field selects it, or su
 `default` tries environment variables, workload identity, managed identity, then developer tools such as the Azure
 CLI, and uses the first source that works. `sources` narrows the chain: `prod` keeps environment variables, workload
 identity and managed identity, and `dev` keeps the developer tools; the `AZURE_TOKEN_CREDENTIALS` environment
-variable can narrow it as well. `managedIdentityClientId` defaults to the `AZURE_CLIENT_ID` environment variable.
+variable can narrow it as well. `clientId` (a user-assigned managed identity) defaults to the `AZURE_CLIENT_ID` environment variable.
 
 `managedIdentity` covers Azure compute (VMs, App Service, Container Apps, AKS, Functions) and Azure AI Foundry hosted
 agents. Omit `clientId` to use the system-assigned identity.

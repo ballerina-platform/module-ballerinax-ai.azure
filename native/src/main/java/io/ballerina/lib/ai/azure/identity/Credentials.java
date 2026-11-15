@@ -55,7 +55,6 @@ public final class Credentials {
     private static final String AZURE_PUBLIC_CLOUD = "https://login.microsoftonline.com/";
 
     private static final BString SOURCES = StringUtils.fromString("sources");
-    private static final BString MANAGED_IDENTITY_CLIENT_ID = StringUtils.fromString("managedIdentityClientId");
     private static final BString TENANT_ID = StringUtils.fromString("tenantId");
     private static final BString CLIENT_ID = StringUtils.fromString("clientId");
     private static final BString AUTHORITY_HOST = StringUtils.fromString("authorityHost");
@@ -142,7 +141,7 @@ public final class Credentials {
         if (!SOURCES_ALL.equals(sources)) {
             builder.configuration(new ConfigurationBuilder().putProperty(AZURE_TOKEN_CREDENTIALS, sources).build());
         }
-        String managedIdentityClientId = optString(config, MANAGED_IDENTITY_CLIENT_ID);
+        String managedIdentityClientId = optString(config, CLIENT_ID);
         if (managedIdentityClientId != null) {
             builder.managedIdentityClientId(managedIdentityClientId);
         }

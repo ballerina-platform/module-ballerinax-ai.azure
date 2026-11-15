@@ -68,7 +68,7 @@ public type DefaultCredentialConfig record {|
     "all"|"prod"|"dev" sources = "all";
     # Client ID of a user-assigned managed identity
     @display {label: "Managed Identity Client ID"}
-    string managedIdentityClientId?;
+    string clientId?;
     # Microsoft Entra ID tenant to request tokens from
     @display {label: "Tenant ID"}
     string tenantId?;

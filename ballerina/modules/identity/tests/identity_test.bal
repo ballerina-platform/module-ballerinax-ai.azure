@@ -29,7 +29,7 @@ function testCreateDefaultCredentialWithOptions() {
     TokenCredential|Error credential = createCredential({
         'type: "default",
         sources: "prod",
-        managedIdentityClientId: "00000000-0000-0000-0000-000000000001",
+        clientId: "00000000-0000-0000-0000-000000000001",
         tenantId: "00000000-0000-0000-0000-000000000002"
     }, timeout = 5);
     test:assertTrue(credential is TokenCredential);
