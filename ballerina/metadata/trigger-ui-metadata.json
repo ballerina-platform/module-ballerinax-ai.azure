@@ -1,0 +1,232 @@
+{
+  "version": "v1.0",
+  "metadata": {
+    "kind": "ai"
+  },
+  "trigger": {
+    "displayName": "Microsoft Foundry Hosted Agent",
+    "shortDisplayName": "Foundry Agent",
+    "description": "Create a service that runs as a Microsoft Foundry hosted agent over the Invocations protocol.",
+    "type": "foundry"
+  },
+  "listeners": [
+    {
+      "target": "$listener",
+      "metadata": {
+        "label": "Foundry Listener",
+        "description": "Serves the Foundry Invocations protocol and the readiness probe over HTTP."
+      },
+      "form": {
+        "section": {
+          "label": "Foundry Listener",
+          "description": "Attach the agent to a new or existing Foundry listener."
+        },
+        "createNew": {
+          "label": "Create New Listener",
+          "description": "Define a new Foundry listener in the project."
+        },
+        "useExisting": {
+          "label": "Use Existing Listener",
+          "description": "Attach to a Foundry listener already declared in the project."
+        },
+        "listenerConfig": {
+          "label": "Listener Configuration",
+          "description": "Configure the Foundry listener. The agent's project, name and version are read from the environment variables Foundry sets on the container."
+        },
+        "existingListener": {
+          "label": "Listener",
+          "description": "Select an existing Foundry listener to attach the agent to."
+        }
+      },
+      "formFields": {
+        "listenerVarName": {
+          "key": "listenerVarName",
+          "default": "foundryListener",
+          "metadata": {
+            "label": "Listener Name",
+            "description": "Provide a name for the listener being created"
+          },
+          "state": {
+            "enabled": true,
+            "editable": true,
+            "optional": false,
+            "advanced": false
+          }
+        },
+        "listenOn": {
+          "key": "listenOn",
+          "placeholder": "8088",
+          "metadata": {
+            "label": "Port",
+            "description": "The port to listen on, or an existing http:Listener to share. Leave it empty to use the PORT environment variable, else 8088, which is what Foundry expects."
+          },
+          "state": {
+            "enabled": true,
+            "editable": true,
+            "optional": true,
+            "advanced": true
+          }
+        }
+      }
+    }
+  ],
+  "serviceTypes": [
+    {
+      "target": "$service",
+      "metadata": {
+        "label": "Foundry Hosted Agent",
+        "description": "Handles Foundry invocations through fixed resources. The listener manages session and invocation IDs, platform headers and error responses, so the resources contain only agent logic."
+      },
+      "handlers": [
+        {
+          "target": "$service.invoke",
+          "metadata": {
+            "label": "Invoke",
+            "description": "Handles POST /invocations: runs the agent for each request and returns its result.",
+            "badge": "POST"
+          },
+          "state": {
+            "editable": false
+          },
+          "nameEditable": false,
+          "canAddParameters": false,
+          "parameters": [
+            {
+              "target": "$service.invoke.payload",
+              "metadata": {
+                "label": "Payload",
+                "description": "The request body, bound to the type you declare, such as json or a record."
+              },
+              "state": {
+                "editable": false,
+                "typeEditable": false
+              }
+            },
+            {
+              "target": "$service.invoke.ctx",
+              "metadata": {
+                "label": "Foundry Context",
+                "description": "The session and invocation IDs, user ID and other platform values of the invocation."
+              },
+              "state": {
+                "editable": false,
+                "typeEditable": false
+              }
+            }
+          ],
+          "returnType": {
+            "target": "$service.invoke.returns",
+            "state": {
+              "editable": false,
+              "typeEditable": false
+            }
+          }
+        },
+        {
+          "target": "$service.readiness",
+          "metadata": {
+            "label": "Readiness Probe",
+            "description": "Handles GET /readiness, Foundry's readiness probe. Keep it cheap and never call the model here.",
+            "badge": "GET"
+          },
+          "state": {
+            "editable": false
+          },
+          "nameEditable": false,
+          "canAddParameters": false,
+          "returnType": {
+            "target": "$service.readiness.returns",
+            "state": {
+              "editable": false,
+              "typeEditable": false
+            }
+          }
+        },
+        {
+          "target": "$service.getInvocation",
+          "metadata": {
+            "label": "Get Invocation",
+            "description": "Handles GET /invocations/{invocationId}: returns the status or result of an earlier invocation, such as one answered with 202 Accepted.",
+            "badge": "GET"
+          },
+          "state": {
+            "editable": false
+          },
+          "nameEditable": false,
+          "canAddParameters": false,
+          "parameters": [
+            {
+              "target": "$service.getInvocation.ctx",
+              "metadata": {
+                "label": "Foundry Context",
+                "description": "The platform values of the request. Its invocation ID is the one in the path."
+              },
+              "state": {
+                "editable": false,
+                "typeEditable": false
+              }
+            }
+          ],
+          "returnType": {
+            "target": "$service.getInvocation.returns",
+            "state": {
+              "editable": false,
+              "typeEditable": false
+            }
+          }
+        },
+        {
+          "target": "$service.cancelInvocation",
+          "metadata": {
+            "label": "Cancel Invocation",
+            "description": "Handles POST /invocations/{invocationId}/cancel: cancels an invocation that is still running.",
+            "badge": "POST"
+          },
+          "state": {
+            "editable": false
+          },
+          "nameEditable": false,
+          "canAddParameters": false,
+          "parameters": [
+            {
+              "target": "$service.cancelInvocation.payload",
+              "metadata": {
+                "label": "Payload",
+                "description": "The request body, if the caller sends one."
+              },
+              "state": {
+                "editable": false,
+                "typeEditable": false
+              }
+            },
+            {
+              "target": "$service.cancelInvocation.ctx",
+              "metadata": {
+                "label": "Foundry Context",
+                "description": "The platform values of the request. Its invocation ID is the one in the path."
+              },
+              "state": {
+                "editable": false,
+                "typeEditable": false
+              }
+            }
+          ],
+          "returnType": {
+            "target": "$service.cancelInvocation.returns",
+            "state": {
+              "editable": false,
+              "typeEditable": false
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "artifactInfo": {
+    "displayLabel": "Foundry Hosted Agent",
+    "icon": {
+      "lightPath": "icons/light.svg",
+      "darkPath": "icons/dark.svg"
+    }
+  }
+}
