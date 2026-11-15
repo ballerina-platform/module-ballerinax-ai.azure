@@ -18,7 +18,7 @@ graalvmCompatible = true
 groupId = "io.ballerina.lib"
 artifactId = "ai.azure-native"
 version = "1.6.0"
-path = "../native/build/libs/ai.azure-native-1.6.0-SNAPSHOT.jar"
+path = "../native/build/libs/ai.azure-native-1.6.0.jar"
 
 # ai.azure.identity: Java azure-identity and its runtime tree. Token requests use the JDK HTTP client, so no Netty
 # or Reactor Netty jars are listed (ballerina/http brings its own Netty). slf4j comes from the Ballerina runtime.
