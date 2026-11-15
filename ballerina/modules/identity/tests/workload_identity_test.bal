@@ -51,7 +51,8 @@ function testWorkloadIdentityToken() returns error? {
 
 @test:Config {groups: [ENTRA_MOCK_GROUP]}
 function testRejectedFederatedTokenIsNotInTheError() returns error? {
-    string rejected = "do-not-leak-rejected-federated-token-1b";
+    // Federated tokens are JWTs, which errors redact; this one also carries the leak marker.
+    string rejected = "eyJhbGciOiJub25lIn0.do-not-leak-rejected-federated-token-1b.c2lnbmF0dXJl";
     string tokenFile = check federatedTokenFile("rejected-federated-token", rejected);
     TokenCredential credential = check createCredential(workloadIdentityConfig(tokenFile), mockOptions());
     AccessToken|Error token = credential.getToken(["api://workload-rejected/.default"]);

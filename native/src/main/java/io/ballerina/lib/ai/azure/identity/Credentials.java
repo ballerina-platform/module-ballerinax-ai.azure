@@ -68,6 +68,10 @@ public final class Credentials {
     private static final String TYPE_WORKLOAD_IDENTITY = "workloadIdentity";
     private static final String TYPE_CLIENT_CERTIFICATE = "clientCertificate";
     private static final String PEM_PREFIX = "-----BEGIN";
+    /** How much of a certificate file is searched for a PEM block. */
+    private static final int PEM_SEARCH_LENGTH = 8192;
+    /** A DER-encoded PKCS#12 file starts with an ASN.1 SEQUENCE. */
+    private static final int DER_SEQUENCE = 0x30;
     private static final String SOURCES_ALL = "all";
     private static final String AZURE_TOKEN_CREDENTIALS = "AZURE_TOKEN_CREDENTIALS";
     private static final String TUNNELING_DISABLED_SCHEMES = "jdk.http.auth.tunneling.disabledSchemes";
@@ -83,6 +87,7 @@ public final class Credentials {
     private static final BString TOKEN_FILE_PATH = StringUtils.fromString("tokenFilePath");
     private static final BString CERTIFICATE_PATH = StringUtils.fromString("certificatePath");
     private static final BString CERTIFICATE_PASSWORD = StringUtils.fromString("certificatePassword");
+    private static final BString SEND_CERTIFICATE_CHAIN = StringUtils.fromString("sendCertificateChain");
     private static final BString AUTHORITY_HOST = StringUtils.fromString("authorityHost");
     private static final BString TOKEN = StringUtils.fromString("token");
     private static final BString EXPIRES_ON = StringUtils.fromString("expiresOn");
@@ -105,7 +110,7 @@ public final class Credentials {
         List<String> secrets = secretsOf(config);
         try {
             HttpClient httpClient = TokenTransport.httpClient(transport);
-            String authorityHost = transport.getStringValue(AUTHORITY_HOST).getValue();
+            String authorityHost = normalizeAuthority(transport.getStringValue(AUTHORITY_HOST).getValue());
             TokenCredential tokenCredential = switch (credentialType.getValue()) {
                 case TYPE_DEFAULT -> defaultCredential(config, httpClient, authorityHost);
                 case TYPE_MANAGED_IDENTITY -> managedIdentityCredential(config, httpClient);
@@ -166,14 +171,12 @@ public final class Credentials {
     private static TokenCredential defaultCredential(BMap<BString, Object> config, HttpClient httpClient,
                                                      String authorityHost) {
         DefaultAzureCredentialBuilder builder = new DefaultAzureCredentialBuilder().httpClient(httpClient);
-        // Only an explicit non-default authority overrides AZURE_AUTHORITY_HOST from the environment.
-        if (!AZURE_PUBLIC_CLOUD.equals(authorityHost)) {
-            builder.authorityHost(authorityHost);
-        }
         String sources = config.getStringValue(SOURCES).getValue();
         if (!SOURCES_ALL.equals(sources)) {
             builder.configuration(new ConfigurationBuilder().putProperty(AZURE_TOKEN_CREDENTIALS, sources).build());
         }
+        // After the configuration, which resets the authority host to AZURE_AUTHORITY_HOST or the public cloud.
+        applyAuthority(authorityHost, builder::authorityHost, builder::disableInstanceDiscovery);
         String managedIdentityClientId = optString(config, CLIENT_ID);
         if (managedIdentityClientId != null) {
             builder.managedIdentityClientId(managedIdentityClientId);
@@ -225,7 +228,7 @@ public final class Credentials {
         return builder.build();
     }
 
-    // A PKCS#12 (PFX) file when a password is given, as in azure.storage.blob; a PEM file otherwise.
+    // The format is detected from the file: PEM, or PKCS#12 (PFX) with or without a password.
     private static TokenCredential clientCertificateCredential(BMap<BString, Object> config, HttpClient httpClient,
                                                                String authorityHost) throws IOException {
         String certificatePath = requireString(config, CERTIFICATE_PATH);
@@ -237,26 +240,45 @@ public final class Credentials {
                 .tenantId(requireString(config, TENANT_ID))
                 .clientId(requireString(config, CLIENT_ID))
                 .httpClient(httpClient);
-        String password = optSecret(config, CERTIFICATE_PASSWORD);
-        if (password != null) {
-            builder.pfxCertificate(certificatePath).clientCertificatePassword(password);
-        } else if (isPem(path)) {
+        // azure-identity reads a PEM file when no password is set, and a PKCS#12 file otherwise.
+        Object password = config.get(CERTIFICATE_PASSWORD);
+        byte[] head = readHead(path);
+        if (isPem(head)) {
+            if (password != null) {
+                throw new IllegalArgumentException("'certificatePath' is a PEM file, which takes no "
+                        + "'certificatePassword'");
+            }
             builder.pemCertificate(certificatePath);
+        } else if (head.length > 0 && (head[0] & 0xFF) == DER_SEQUENCE) {
+            builder.pfxCertificate(certificatePath)
+                    .clientCertificatePassword(password instanceof BString string ? string.getValue() : "");
         } else {
-            throw new IllegalArgumentException("'certificatePath' is not a PEM file; a PKCS#12 (PFX) file needs "
-                    + "'certificatePassword'");
+            throw new IllegalArgumentException("'certificatePath' is neither a PEM nor a PKCS#12 (PFX) file");
+        }
+        if (config.get(SEND_CERTIFICATE_CHAIN) instanceof Boolean send) {
+            builder.sendCertificateChain(send);
         }
         applyAuthority(authorityHost, builder::authorityHost, builder::disableInstanceDiscovery);
         return builder.build();
     }
 
-    private static boolean isPem(Path path) throws IOException {
-        byte[] head = new byte[64];
-        int read;
+    private static byte[] readHead(Path path) throws IOException {
         try (InputStream in = Files.newInputStream(path)) {
-            read = in.readNBytes(head, 0, head.length);
+            return in.readNBytes(PEM_SEARCH_LENGTH);
         }
-        return new String(head, 0, read, StandardCharsets.US_ASCII).stripLeading().startsWith(PEM_PREFIX);
+    }
+
+    // A PEM block anywhere near the start, after an optional UTF-8 BOM: OpenSSL writes "Bag Attributes" lines first.
+    private static boolean isPem(byte[] head) {
+        int start = head.length >= 3 && (head[0] & 0xFF) == 0xEF && (head[1] & 0xFF) == 0xBB
+                && (head[2] & 0xFF) == 0xBF ? 3 : 0;
+        return new String(head, start, head.length - start, StandardCharsets.US_ASCII).contains(PEM_PREFIX);
+    }
+
+    // Lower case with a trailing slash, so that every comparison sees one spelling of a host.
+    private static String normalizeAuthority(String authorityHost) {
+        String normalized = authorityHost.strip().toLowerCase(Locale.ROOT);
+        return normalized.endsWith("/") ? normalized : normalized + "/";
     }
 
     // An explicit non-default authority overrides AZURE_AUTHORITY_HOST. MSAL sends instance discovery for an unknown
@@ -267,8 +289,7 @@ public final class Credentials {
         if (!AZURE_PUBLIC_CLOUD.equals(authorityHost)) {
             setAuthorityHost.accept(authorityHost);
         }
-        String normalized = authorityHost.toLowerCase(Locale.ROOT);
-        if (!KNOWN_AUTHORITY_HOSTS.contains(normalized.endsWith("/") ? normalized : normalized + "/")) {
+        if (!KNOWN_AUTHORITY_HOSTS.contains(authorityHost)) {
             disableInstanceDiscovery.run();
         }
     }
@@ -283,15 +304,7 @@ public final class Credentials {
                 secrets.add(secret.strip());
             }
         }
-        // The federated token as it is now; a rotated token is a JWT, which the sanitiser redacts anyway.
-        String tokenFilePath = optString(config, TOKEN_FILE_PATH);
-        if (tokenFilePath != null) {
-            try {
-                secrets.add(Files.readString(Path.of(tokenFilePath), StandardCharsets.UTF_8).strip());
-            } catch (IOException | RuntimeException e) {
-                // Unreadable now: the credential reports that itself when it reads the file.
-            }
-        }
+        // The federated token isn't listed: it is a JWT, which the sanitiser redacts.
         return List.copyOf(secrets);
     }
 

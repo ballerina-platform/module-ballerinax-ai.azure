@@ -112,7 +112,72 @@ function testRemoteTokenRequestsGoThroughTheProxy() returns error? {
 }
 
 @test:Config {groups: [ENTRA_MOCK_GROUP]}
+function testAuthorityHostIsNormalized() returns error? {
+    // Upper case and no trailing slash: still the mock's host, so instance discovery stays off.
+    CredentialOptions options = mockOptions();
+    options.authorityHost = "HTTPS://LOCALHOST:8095";
+    TokenCredential credential = check createCredential(clientSecretConfig(), options);
+    AccessToken token = check credential.getToken(["api://normalized-authority/.default"]);
+    test:assertEquals(token.token, "entra-token-for-" + CLIENT_SECRET_APP);
+    test:assertEquals((check lastEntraRequest()).path, string `/${MOCK_TENANT}/oauth2/v2.0/token`);
+}
+
+@test:Config {groups: [ENTRA_MOCK_GROUP]}
 function testBlankClientSecretIsRejectedAtCreation() {
     TokenCredential|Error credential = createCredential(clientSecretConfig(" "), mockOptions());
     test:assertTrue(credential is Error, "a blank client secret must be rejected");
+}
+
+@test:Config {groups: [ENTRA_MOCK_GROUP]}
+function testShortClientSecretIsRedacted() returns error? {
+    TokenCredential credential = check createCredential(clientSecretConfig("q7z"), mockOptions());
+    AccessToken|Error token = credential.getToken(["api://short-secret/.default"]);
+    if token !is Error {
+        return error("a wrong client secret must fail");
+    }
+    test:assertFalse(token.toString().includes("q7z"), token.toString());
+    test:assertTrue(token.message().includes("Received '[redacted]'"), token.message());
+}
+
+@test:Config {groups: [ENTRA_MOCK_GROUP]}
+function testThrottledTokenRequestIsNotAnAuthenticationError() returns error? {
+    check assertTemporaryFailure(THROTTLED_APP, "api://throttled/.default");
+}
+
+@test:Config {groups: [ENTRA_MOCK_GROUP]}
+function testUnavailableEntraIdIsNotAnAuthenticationError() returns error? {
+    check assertTemporaryFailure(UNAVAILABLE_APP, "api://unavailable/.default");
+}
+
+// A 429 or 5xx from Entra ID is temporary: a plain `Error`, not an `AuthenticationError`.
+function assertTemporaryFailure(string clientId, string scope) returns error? {
+    TokenCredential credential = check createCredential({
+        'type: "clientSecret",
+        tenantId: MOCK_TENANT,
+        clientId,
+        clientSecret: CLIENT_SECRET_VALUE
+    }, mockOptions());
+    AccessToken|Error token = credential.getToken([scope]);
+    if token !is Error {
+        return error("a temporary failure must not give a token");
+    }
+    test:assertFalse(token is AuthenticationError, token.message());
+    test:assertFalse(token is CredentialUnavailableError, token.message());
+    test:assertEquals((check lastEntraRequest()).clientId, clientId);
+}
+
+@test:Config {groups: [ENTRA_ENV_MOCK_GROUP]}
+function testDefaultCredentialTurnsOffInstanceDiscoveryForOtherHosts() returns error? {
+    // The chain's environment credential uses the client secret from the environment. With instance discovery on, MSAL
+    // would first ask the public cloud about the mock's host, which fails at the dead proxy.
+    if os:getEnv("AZURE_CLIENT_ID") != ENV_SECRET_APP {
+        return error("run this group with AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_CLIENT_SECRET set "
+            + "(see testCredentialMocks in build.gradle)");
+    }
+    TokenCredential credential = check createCredential({'type: "default", sources: "prod"}, mockOptions());
+    AccessToken token = check credential.getToken(["api://default-chain/.default"]);
+    test:assertEquals(token.token, "entra-token-for-" + ENV_SECRET_APP);
+    EntraRequest request = check lastEntraRequest();
+    test:assertEquals(request.clientSecret, ENV_CLIENT_SECRET_VALUE);
+    test:assertTrue(request.userAgent.includes(USER_AGENT_MARKER), "User-Agent: " + request.userAgent);
 }

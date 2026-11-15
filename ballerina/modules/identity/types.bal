@@ -131,13 +131,16 @@ public type ClientCertificateConfig record {|
     # Client (application) ID of the service principal
     @display {label: "Client ID"}
     string clientId;
-    # Path of the certificate file: a PEM file with the certificate and its unencrypted PKCS#8 private key, or a
-    # PKCS#12 (PFX) file when `certificatePassword` is set
+    # Path of the certificate file: PEM (the certificate and its unencrypted PKCS#8 private key) or PKCS#12 (PFX);
+    # the format is detected from the file
     @display {label: "Certificate Path"}
     string certificatePath;
-    # Password of a PKCS#12 (PFX) file; omit it for a PEM file
+    # Password of a PKCS#12 (PFX) file; omit it for a PEM file or a PFX without a password
     @display {label: "Certificate Password"}
     string certificatePassword?;
+    # Send the certificate chain (`x5c`), as needed for subject name and issuer authentication
+    @display {label: "Send Certificate Chain"}
+    boolean sendCertificateChain = false;
 |};
 
 # The configuration of a credential.

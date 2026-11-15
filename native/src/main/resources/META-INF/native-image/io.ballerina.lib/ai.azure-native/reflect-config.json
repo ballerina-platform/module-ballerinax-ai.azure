@@ -1,5 +1,14 @@
 [
   {
+    "name": "com.microsoft.aad.msal4j.MsalServiceException",
+    "methods": [
+      {
+        "name": "statusCode",
+        "parameterTypes": []
+      }
+    ]
+  },
+  {
     "name": "com.azure.json.JsonSerializable"
   },
   {

@@ -64,16 +64,21 @@ ballerina {
     platform = "java25"
 }
 
-// Credential tests against local mocks. The managed-identity tests need IDENTITY_ENDPOINT and IDENTITY_HEADER in the
-// real process environment (MSAL reads them directly), so the regular test run leaves these groups out and
-// `testCredentialMocks` runs each one in its own `bal test` process. Every test secret contains the leak marker, and a
-// run fails if that marker (or the run's identity header) appears anywhere in its output.
+// Credential tests against local mocks. The managed-identity tests need IDENTITY_ENDPOINT and IDENTITY_HEADER, and the
+// default credential test the AZURE_* client secret variables, in the real process environment (azure-identity reads
+// them directly), so the regular test run leaves these groups out and `testCredentialMocks` runs each one in its own
+// `bal test` process. Every test secret contains the leak marker, and a run fails if that marker (or the run's
+// identity header) appears anywhere in its output.
 def credentialMockRuns = [
         [label: "managed identity over HTTP", group: "managed-identity-mock", minPassing: 8,
          env: [IDENTITY_ENDPOINT: "http://localhost:8093/msi/token"], identityHeader: true],
         [label: "managed identity over HTTPS", group: "managed-identity-mock", minPassing: 8,
          env: [IDENTITY_ENDPOINT: "https://localhost:8094/msi/token"], identityHeader: true],
-        [label: "Entra ID token endpoint", group: "entra-mock", minPassing: 18, env: [:]]
+        [label: "Entra ID token endpoint", group: "entra-mock", minPassing: 29, env: [:]],
+        // Values the tests expect (ENV_SECRET_APP and ENV_CLIENT_SECRET_VALUE in mock_entra.bal).
+        [label: "default credential from the environment", group: "entra-env-mock", minPassing: 1,
+         env: [AZURE_TENANT_ID: "mock-tenant", AZURE_CLIENT_ID: "env-secret-app",
+               AZURE_CLIENT_SECRET: "do-not-leak-env-client-secret-1b"]]
 ]
 def leakMarker = "do-not-leak-"
 def groupsProperty = { String name ->

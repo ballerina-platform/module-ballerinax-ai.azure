@@ -32,6 +32,9 @@ import ballerina/time;
 // so the mock is reached directly, while any request that would leave the machine fails at the proxy.
 
 const ENTRA_MOCK_GROUP = "entra-mock";
+// Tests that need AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_CLIENT_SECRET in the real process environment (as
+// `testCredentialMocks` sets them), because azure-identity doesn't see variables set at run time.
+const ENTRA_ENV_MOCK_GROUP = "entra-env-mock";
 const ENTRA_MOCK_PORT = 8095;
 const ENTRA_MOCK_AUTHORITY = "https://localhost:8095/";
 const DEAD_PROXY_PORT = 8097;
@@ -48,6 +51,12 @@ const FEDERATED_TOKEN_VALUE = "do-not-leak-federated-token-1b";
 const WORKLOAD_APP = "workload-app";
 const CERTIFICATE_APP = "cert-app";
 const CERTIFICATE_PASSWORD_VALUE = " do-not-leak-cert-password-1b ";
+// The application and secret that `testCredentialMocks` puts in the environment for ENTRA_ENV_MOCK_GROUP.
+const ENV_SECRET_APP = "env-secret-app";
+const ENV_CLIENT_SECRET_VALUE = "do-not-leak-env-client-secret-1b";
+// Applications for which the mock answers with a temporary failure.
+const THROTTLED_APP = "throttled-app";
+const UNAVAILABLE_APP = "unavailable-app";
 
 // A token request the mock received.
 type EntraRequest record {|
@@ -110,11 +119,23 @@ isolated function entraError(string code, string description) returns http:BadRe
     return code == "invalid_client" ? <http:Unauthorized>{body} : <http:BadRequest>{body};
 }
 
+type TokenAnswer http:Ok|http:BadRequest|http:Unauthorized|http:TooManyRequests|http:ServiceUnavailable;
+
 // Decides how the mock answers each test application.
-isolated function answerTokenRequest(EntraRequest request) returns http:Ok|http:BadRequest|http:Unauthorized {
+isolated function answerTokenRequest(EntraRequest request) returns TokenAnswer {
     string clientId = request.clientId ?: "";
     if request.grantType != "client_credentials" {
         return entraError("unsupported_grant_type", "AADSTS70003: unexpected grant type");
+    }
+    if clientId == THROTTLED_APP {
+        return <http:TooManyRequests>{body: {'error: "temporarily_unavailable", error_description: "throttled"}};
+    }
+    if clientId == UNAVAILABLE_APP {
+        return <http:ServiceUnavailable>{body: {'error: "temporarily_unavailable", error_description: "unavailable"}};
+    }
+    if clientId == ENV_SECRET_APP {
+        return request.clientSecret == ENV_CLIENT_SECRET_VALUE ? tokenResponse(clientId)
+            : entraError("invalid_client", "AADSTS7000215: Invalid client secret provided.");
     }
     if clientId == CLIENT_SECRET_APP {
         string? secret = request.clientSecret;
@@ -235,7 +256,7 @@ isolated service class MockEntraService {
     *http:Service;
 
     resource function post [string tenant]/oauth2/v2\.0/token(http:Request req)
-            returns http:Ok|http:BadRequest|http:Unauthorized|error {
+            returns TokenAnswer|error {
         map<string> form = check formFields(req);
         string|http:HeaderNotFoundError userAgent = req.getHeader("User-Agent");
         EntraRequest request = {
@@ -269,8 +290,11 @@ string mockCaBundle = "";
 string mockCertDir = "";
 http:Listener? entraListener = ();
 
-@test:BeforeGroups {value: [ENTRA_MOCK_GROUP]}
+@test:BeforeGroups {value: [ENTRA_MOCK_GROUP, ENTRA_ENV_MOCK_GROUP]}
 function startEntraMock() returns error? {
+    if entraListener is http:Listener {
+        return;
+    }
     mockCertDir = check file:createTempDir();
     string serverKeystore;
     [mockCaBundle, serverKeystore] = check generateTestCertificates(mockCertDir);
@@ -283,7 +307,7 @@ function startEntraMock() returns error? {
     entraListener = 'listener;
 }
 
-@test:AfterGroups {value: [ENTRA_MOCK_GROUP]}
+@test:AfterGroups {value: [ENTRA_MOCK_GROUP, ENTRA_ENV_MOCK_GROUP]}
 function stopEntraMock() returns error? {
     test:assertEquals(unexpectedPaths(), [], "only the token endpoint may be called");
     http:Listener? 'listener = entraListener;
