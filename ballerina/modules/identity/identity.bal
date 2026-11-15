@@ -57,6 +57,12 @@ isolated function toNativeTransport(string credentialType, CredentialOptions opt
 
     http:ProxyConfig? proxy = options.proxy;
     if proxy is http:ProxyConfig && proxy.host != "" {
+        // The JDK HTTP client ignores SOCKS proxies and would connect directly, so they are rejected instead.
+        http:ProxyProtocol? protocol = proxy.protocol;
+        if protocol is http:SOCKS4|http:SOCKS5 {
+            return error Error(string `a '${protocol}' proxy is not supported for token requests; use an HTTP proxy`,
+                credential = credentialType);
+        }
         transport.proxy = {host: proxy.host, port: proxy.port, userName: proxy.userName, password: proxy.password};
     }
     return transport;
@@ -96,9 +102,8 @@ isolated function applySecureSocket(string credentialType, http:ClientSecureSock
     }
     var protocol = secureSocket.protocol;
     if protocol !is () {
-        // JSSE protocol names, e.g. `TLSv1.3`
-        string name = protocol.name;
-        transport.protocols = from string version in protocol.versions select string `${name}v${version}`;
+        // Already JSSE protocol names, e.g. `TLSv1.3`
+        transport.protocols = protocol.versions.clone();
     }
     string[]? ciphers = secureSocket.ciphers;
     if ciphers is string[] {

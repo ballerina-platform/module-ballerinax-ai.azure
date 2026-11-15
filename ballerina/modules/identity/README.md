@@ -22,4 +22,5 @@ identity:AccessToken token = check credential.getToken(["https://cognitiveservic
 ```
 
 Token requests trust the JVM's default certificates plus those in the file named by the `SSL_CERT_FILE` environment
-variable and in `secureSocket.cert`, and use the configured `proxy`. Tokens and secrets never appear in errors.
+variable and in `secureSocket.cert`, and use the configured `proxy` (HTTP proxies only). Tokens and secrets never
+appear in errors.

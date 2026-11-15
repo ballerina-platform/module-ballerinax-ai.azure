@@ -65,14 +65,21 @@ isolated function authHeaders(string|BearerAuth auth) returns map<string>|ai:Err
 # token requests use the provider's TLS and proxy settings; a ready-made `identity:TokenCredential` is used as is.
 # Either way the token scope is `tokenScope` when set, and is otherwise derived from the service URL.
 #
+# A credential needs an `https://` service URL, so bearer tokens never cross the network in clear text; `http://` is
+# accepted only for a loopback host (`localhost`, `127.0.0.0/8` or `[::1]`), e.g. a local mock or gateway.
+#
 # + auth - The API key or credential passed to the provider
 # + serviceUrl - The provider's service URL
 # + config - The provider's connection configuration
-# + return - The API key or the bearer authentication, or an `ai:Error` if the credential or scope is invalid
+# + return - The API key or the bearer authentication, or an `ai:Error` if the credential, scope or URL is invalid
 isolated function resolveAuth(string|identity:Credential auth, string serviceUrl, ConnectionConfig config)
         returns string|BearerAuth|ai:Error {
     if auth is string {
         return auth;
+    }
+    if !isSecureOrLoopbackUrl(serviceUrl) {
+        return error ai:Error("Entra ID authentication requires an 'https://' service URL; 'http://' is allowed " +
+                "only for a loopback host (localhost, 127.0.0.0/8 or [::1])");
     }
     string scope = check resolveTokenScope(serviceUrl, config.tokenScope);
     if auth is identity:TokenCredential {
@@ -92,6 +99,39 @@ isolated function resolveAuth(string|identity:Credential auth, string serviceUrl
         return error ai:Error("Failed to create the Entra ID credential", credential);
     }
     return new BearerAuth(credential, scope);
+}
+
+# Returns `true` for an `https://` URL, and for an `http://` URL whose host is loopback.
+#
+# + url - The service URL
+# + return - `true` when a bearer token may be sent to this URL
+isolated function isSecureOrLoopbackUrl(string url) returns boolean {
+    string lowered = url.trim().toLowerAscii();
+    if lowered.startsWith("https://") {
+        return true;
+    }
+    if !lowered.startsWith("http://") {
+        return false;
+    }
+    string host = splitUrl(lowered)[0];
+    return host == "localhost" || host == "[::1]" || isIpv4Loopback(host);
+}
+
+# Returns `true` for a dotted IPv4 address in `127.0.0.0/8`.
+#
+# + host - The host, without a port
+# + return - `true` for a loopback IPv4 address
+isolated function isIpv4Loopback(string host) returns boolean {
+    if !re `127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}`.isFullMatch(host) {
+        return false;
+    }
+    foreach string octet in re `\.`.split(host) {
+        int|error value = int:fromString(octet);
+        if value !is int || value > 255 {
+            return false;
+        }
+    }
+    return true;
 }
 
 # Returns the explicit token scope if one is set, and otherwise the scope derived from the service URL.

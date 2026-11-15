@@ -246,6 +246,89 @@ function testApiKeyInitsOnHostsWithoutADerivableScope() returns error? {
     }
 }
 
+// ===== Service URL scheme: no bearer token over cleartext HTTP to a remote host =====
+
+@test:Config {groups: ["entra-auth"]}
+function testCredentialAcceptsHttpsAndLoopbackHttp() returns error? {
+    // Initialisation makes no network call, so unreachable hosts are fine here.
+    string[] urls = [
+        "https://res.openai.azure.com/openai/v1",
+        "https://my-gateway.azure-api.net/openai",
+        "http://localhost:9999/openai/v1",
+        "http://127.0.0.1:9999/openai",
+        "http://[::1]:9999/openai/v1"
+    ];
+    foreach string url in urls {
+        OpenAiModelProvider|ai:Error withCredential = new (url, new MockCredential(), DEPLOYMENT_ID, API_VERSION,
+            tokenScope = MOCK_SCOPE);
+        test:assertTrue(withCredential is OpenAiModelProvider, string `a credential on ${url} must init`);
+        OpenAiModelProvider|ai:Error withConfig = new (url, {'type: "managedIdentity"}, DEPLOYMENT_ID, API_VERSION,
+            tokenScope = MOCK_SCOPE);
+        test:assertTrue(withConfig is OpenAiModelProvider, string `a credential configuration on ${url} must init`);
+    }
+}
+
+@test:Config {groups: ["entra-auth"]}
+function testCredentialRejectsHttpToARemoteHost() {
+    string[] urls = [
+        "http://res.openai.azure.com/openai/v1",
+        "http://user:url-s3cr3t@res.openai.azure.com/openai",
+        "http://10.0.0.5:8080/openai/v1",
+        "http://localhost.example.com/openai/v1"
+    ];
+    foreach string url in urls {
+        OpenAiModelProvider|ai:Error withCredential = new (url, new MockCredential(), DEPLOYMENT_ID, API_VERSION,
+            tokenScope = MOCK_SCOPE);
+        if withCredential !is ai:Error {
+            test:assertFail(string `a credential on ${url} must be rejected`);
+        }
+        test:assertTrue(withCredential.message().startsWith(
+            "Entra ID authentication requires an 'https://' service URL"), withCredential.message());
+        test:assertFalse(withCredential.toString().includes("url-s3cr3t"), "the URL's user info must not leak");
+
+        OpenAiModelProvider|ai:Error withConfig = new (url, {'type: "managedIdentity"}, DEPLOYMENT_ID, API_VERSION,
+            tokenScope = MOCK_SCOPE);
+        test:assertTrue(withConfig is ai:Error, string `a credential configuration on ${url} must be rejected`);
+    }
+}
+
+@test:Config {groups: ["entra-auth"]}
+function testApiKeyStillAcceptsHttpToARemoteHost() {
+    OpenAiModelProvider|ai:Error provider = new ("http://res.openai.azure.com/openai", API_KEY, DEPLOYMENT_ID,
+        API_VERSION);
+    test:assertTrue(provider is OpenAiModelProvider, "API-key mode must not check the URL scheme");
+}
+
+@test:Config {groups: ["entra-auth"]}
+function testIsSecureOrLoopbackUrl() {
+    [string, boolean][] cases = [
+        ["https://res.openai.azure.com/openai/v1", true],
+        ["HTTPS://RES.OpenAI.Azure.COM/openai", true],
+        ["http://localhost", true],
+        ["http://LOCALHOST:8080/openai", true],
+        ["http://127.0.0.1/openai", true],
+        ["http://127.255.10.1:8080/openai", true],
+        ["http://[::1]/openai", true],
+        ["http://[::1]:8080/openai", true],
+        ["http://user:pw@localhost:8080/openai", true],
+        ["http://res.openai.azure.com/openai", false],
+        ["http://localhost.example.com/openai", false],
+        ["http://localhost@res.openai.azure.com/openai", false],
+        ["http://res.openai.azure.com/localhost", false],
+        ["http://res.openai.azure.com?host=localhost", false],
+        ["http://res.openai.azure.com#@localhost", false],
+        ["http://127.0.0.1.example.com/openai", false],
+        ["http://127.0.0.256/openai", false],
+        ["http://128.0.0.1/openai", false],
+        ["http://[::2]/openai", false],
+        ["ftp://localhost/openai", false],
+        ["res.openai.azure.com/openai", false]
+    ];
+    foreach [string, boolean] [url, expected] in cases {
+        test:assertEquals(isSecureOrLoopbackUrl(url), expected, url);
+    }
+}
+
 // ===== Token scope =====
 
 @test:Config {groups: ["entra-auth"]}

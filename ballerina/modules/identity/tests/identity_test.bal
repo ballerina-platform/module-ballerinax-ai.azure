@@ -14,6 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import ballerina/http;
 import ballerina/test;
 
 @test:Config
@@ -85,6 +86,43 @@ function testUnsupportedTlsOptionsAreRejected() {
         test:assertFail("a client key should be rejected");
     }
     test:assertTrue(withKey.message().startsWith("a client certificate ('key')"));
+}
+
+@test:Config
+function testTlsProtocolVersionsArePassedThroughUnchanged() returns error? {
+    // `http:ClientSecureSocket` already uses JSSE names, so they must reach the token client as they are.
+    CredentialOptions options = {secureSocket: {protocol: {name: http:TLS, versions: ["TLSv1.2"]}}};
+    NativeTransport transport = check toNativeTransport("managedIdentity", options);
+    test:assertEquals(transport.protocols, ["TLSv1.2"]);
+    test:assertTrue(createCredential({'type: "managedIdentity"}, options) is TokenCredential);
+}
+
+@test:Config
+function testHttpProxyIsPassedToTheTokenClient() returns error? {
+    http:ProxyConfig[] proxies = [
+        {host: "proxy.example", port: 3128, userName: "user", password: "pw"},
+        {host: "proxy.example", port: 3128, userName: "user", password: "pw", protocol: http:HTTP}
+    ];
+    foreach http:ProxyConfig proxy in proxies {
+        NativeTransport transport = check toNativeTransport("managedIdentity", {proxy});
+        test:assertEquals(transport.proxy, {host: "proxy.example", port: 3128, userName: "user", password: "pw"});
+    }
+}
+
+@test:Config
+function testSocksProxyIsRejected() {
+    http:ProxyProtocol[] socksProtocols = [http:SOCKS4, http:SOCKS5];
+    foreach http:ProxyProtocol protocol in socksProtocols {
+        TokenCredential|Error credential = createCredential({'type: "managedIdentity"},
+            proxy = {host: "proxy.example", port: 1080, userName: "user", password: "proxy-s3cr3t", protocol});
+        if credential !is Error {
+            test:assertFail(string `a ${protocol} proxy should be rejected`);
+        }
+        test:assertEquals(credential.message(),
+            string `a '${protocol}' proxy is not supported for token requests; use an HTTP proxy`);
+        test:assertEquals(credential.detail().credential, "managedIdentity");
+        test:assertFalse(credential.toString().includes("proxy-s3cr3t"), "the proxy password must not leak");
+    }
 }
 
 @test:Config

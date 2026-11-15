@@ -43,7 +43,7 @@ type MiRequest record {|
     string? 'resource;
     string? apiVersion;
     boolean identityHeaderValid;
-    boolean clientIdPresent;
+    string? clientId;
     string userAgent;
 |};
 
@@ -81,7 +81,7 @@ isolated function miMockService() returns http:Service => service object {
             'resource,
             apiVersion: api\-version,
             identityHeaderValid: headerValid,
-            clientIdPresent: req.getQueryParamValue("client_id") !is (),
+            clientId: req.getQueryParamValue("client_id"),
             userAgent: userAgent is string ? userAgent : ""
         });
         if !headerValid {
@@ -148,13 +148,47 @@ function testManagedIdentityTokenComesThroughOurHttpClient() returns error? {
     test:assertTrue(request.identityHeaderValid, "the X-IDENTITY-HEADER must be sent");
     test:assertEquals(request.apiVersion, "2019-08-01");
     test:assertEquals(request.'resource, "https://mi-direct.example");
-    test:assertFalse(request.clientIdPresent, "no client_id unless one is configured");
+    test:assertEquals(request.clientId, (), "no client_id unless one is configured");
     // azure-identity routes managed identity through MSAL; the marker proves MSAL used the HTTP client we injected
     // (with our trust store and proxy settings) rather than its own.
     test:assertTrue(request.userAgent.includes(USER_AGENT_MARKER), "User-Agent: " + request.userAgent);
 }
 
 @test:Config {groups: [MI_GROUP], dependsOn: [testManagedIdentityTokenComesThroughOurHttpClient]}
+function testUserAssignedManagedIdentitySendsItsClientId() returns error? {
+    if !miConfigured {
+        return;
+    }
+    if miOverHttps {
+        check os:setEnv("SSL_CERT_FILE", caBundle);
+    }
+    string clientId = "11111111-2222-3333-4444-555555555555";
+    identity:TokenCredential credential = check identity:createCredential({'type: "managedIdentity", clientId});
+    // A scope no other test requests, so the request is not answered from a cached token.
+    identity:AccessToken token = check credential.getToken(["https://mi-user-assigned.example/.default"]);
+    test:assertEquals(token.token, MI_TOKEN_PREFIX + "https://mi-user-assigned.example");
+
+    MiRequest request = check lastMiRequest().ensureType();
+    test:assertEquals(request.'resource, "https://mi-user-assigned.example");
+    test:assertEquals(request.clientId, clientId, "the configured client ID selects the user-assigned identity");
+}
+
+@test:Config {groups: [MI_GROUP], dependsOn: [testUserAssignedManagedIdentitySendsItsClientId]}
+function testManagedIdentityOverTls12() returns error? {
+    if !miConfigured || !miOverHttps {
+        return;
+    }
+    check os:unsetEnv("SSL_CERT_FILE");
+    // `versions` are JSSE names and must reach the token client unchanged: a mangled name fails the handshake.
+    identity:TokenCredential credential = check identity:createCredential({'type: "managedIdentity"},
+        secureSocket = {cert: caBundle, protocol: {name: http:TLS, versions: ["TLSv1.2"]}});
+    identity:AccessToken token = check credential.getToken(["https://mi-tls12.example/.default"]);
+    test:assertEquals(token.token, MI_TOKEN_PREFIX + "https://mi-tls12.example");
+    MiRequest request = check lastMiRequest().ensureType();
+    test:assertEquals(request.'resource, "https://mi-tls12.example");
+}
+
+@test:Config {groups: [MI_GROUP], dependsOn: [testManagedIdentityOverTls12]}
 function testManagedIdentityOverHttpsFailsWithoutTheCa() returns error? {
     if !miConfigured || !miOverHttps {
         return;

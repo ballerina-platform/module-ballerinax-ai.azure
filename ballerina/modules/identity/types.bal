@@ -167,7 +167,8 @@ public type CredentialOptions record {|
     # TLS settings for token requests. Certificates in the file named by the `SSL_CERT_FILE` environment variable
     # are always trusted as well, in addition to the JVM's default trust store.
     http:ClientSecureSocket secureSocket?;
-    # Proxy for token requests. Local managed identity endpoints are always reached directly.
+    # HTTP proxy for token requests (SOCKS proxies are not supported). Local managed identity endpoints are always
+    # reached directly.
     http:ProxyConfig proxy?;
     # Timeout (in seconds) for each token request
     decimal timeout = 30;
