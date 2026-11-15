@@ -41,6 +41,8 @@ const JWT_BEARER_ASSERTION = "urn:ietf:params:oauth:client-assertion-type:jwt-be
 // Fixed test values. The Gradle task that runs this group fails if any of them shows up in the output.
 const CLIENT_SECRET_VALUE = "do-not-leak-client-secret-1b";
 const CLIENT_SECRET_APP = "secret-app";
+const FEDERATED_TOKEN_VALUE = "do-not-leak-federated-token-1b";
+const WORKLOAD_APP = "workload-app";
 
 // A token request the mock received.
 type EntraRequest record {|
@@ -118,8 +120,19 @@ isolated function answerTokenRequest(EntraRequest request) returns http:Ok|http:
 }
 
 // Applications that authenticate with a client assertion (a certificate-signed JWT or a federated token).
-isolated function assertionAnswer(EntraRequest request) returns http:Ok|http:BadRequest|http:Unauthorized =>
-    entraError("unauthorized_client", "AADSTS700016: application not found in the directory");
+isolated function assertionAnswer(EntraRequest request) returns http:Ok|http:BadRequest|http:Unauthorized {
+    string clientId = request.clientId ?: "";
+    if request.clientAssertionType != JWT_BEARER_ASSERTION {
+        return entraError("invalid_client", "AADSTS7000216: client_assertion or client_secret is required");
+    }
+    string assertion = request.clientAssertion ?: "";
+    if clientId == WORKLOAD_APP {
+        return assertion == FEDERATED_TOKEN_VALUE ? tokenResponse(clientId)
+            : entraError("invalid_client",
+                string `AADSTS700213: No matching federated identity record for '${assertion}'.`);
+    }
+    return entraError("unauthorized_client", "AADSTS700016: application not found in the directory");
+}
 
 isolated service class MockEntraService {
     *http:Service;

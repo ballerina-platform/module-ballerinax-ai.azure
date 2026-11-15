@@ -73,7 +73,7 @@ def credentialMockRuns = [
          env: [IDENTITY_ENDPOINT: "http://localhost:8093/msi/token"], identityHeader: true],
         [label: "managed identity over HTTPS", group: "managed-identity-mock", minPassing: 8,
          env: [IDENTITY_ENDPOINT: "https://localhost:8094/msi/token"], identityHeader: true],
-        [label: "Entra ID token endpoint", group: "entra-mock", minPassing: 7, env: [:]]
+        [label: "Entra ID token endpoint", group: "entra-mock", minPassing: 11, env: [:]]
 ]
 def leakMarker = "do-not-leak-"
 def groupsProperty = { String name ->

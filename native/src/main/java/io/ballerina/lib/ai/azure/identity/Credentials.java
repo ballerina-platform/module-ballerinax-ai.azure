@@ -26,6 +26,7 @@ import com.azure.core.util.ConfigurationBuilder;
 import com.azure.identity.ClientSecretCredentialBuilder;
 import com.azure.identity.DefaultAzureCredentialBuilder;
 import com.azure.identity.ManagedIdentityCredentialBuilder;
+import com.azure.identity.WorkloadIdentityCredentialBuilder;
 import io.ballerina.runtime.api.Environment;
 import io.ballerina.runtime.api.creators.TypeCreator;
 import io.ballerina.runtime.api.creators.ValueCreator;
@@ -37,6 +38,9 @@ import io.ballerina.runtime.api.values.BObject;
 import io.ballerina.runtime.api.values.BString;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -59,6 +63,7 @@ public final class Credentials {
     private static final String TYPE_DEFAULT = "default";
     private static final String TYPE_MANAGED_IDENTITY = "managedIdentity";
     private static final String TYPE_CLIENT_SECRET = "clientSecret";
+    private static final String TYPE_WORKLOAD_IDENTITY = "workloadIdentity";
     private static final String SOURCES_ALL = "all";
     private static final String AZURE_TOKEN_CREDENTIALS = "AZURE_TOKEN_CREDENTIALS";
     private static final String TUNNELING_DISABLED_SCHEMES = "jdk.http.auth.tunneling.disabledSchemes";
@@ -71,6 +76,7 @@ public final class Credentials {
     private static final BString TENANT_ID = StringUtils.fromString("tenantId");
     private static final BString CLIENT_ID = StringUtils.fromString("clientId");
     private static final BString CLIENT_SECRET = StringUtils.fromString("clientSecret");
+    private static final BString TOKEN_FILE_PATH = StringUtils.fromString("tokenFilePath");
     private static final BString AUTHORITY_HOST = StringUtils.fromString("authorityHost");
     private static final BString TOKEN = StringUtils.fromString("token");
     private static final BString EXPIRES_ON = StringUtils.fromString("expiresOn");
@@ -98,6 +104,7 @@ public final class Credentials {
                 case TYPE_DEFAULT -> defaultCredential(config, httpClient, authorityHost);
                 case TYPE_MANAGED_IDENTITY -> managedIdentityCredential(config, httpClient);
                 case TYPE_CLIENT_SECRET -> clientSecretCredential(config, httpClient, authorityHost);
+                case TYPE_WORKLOAD_IDENTITY -> workloadIdentityCredential(config, httpClient, authorityHost);
                 default -> throw new IllegalArgumentException(
                         "credential type '" + credentialType.getValue() + "' is not supported");
             };
@@ -191,6 +198,26 @@ public final class Credentials {
         return builder.build();
     }
 
+    // Omitted settings fall back to AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_FEDERATED_TOKEN_FILE.
+    private static TokenCredential workloadIdentityCredential(BMap<BString, Object> config, HttpClient httpClient,
+                                                              String authorityHost) {
+        WorkloadIdentityCredentialBuilder builder = new WorkloadIdentityCredentialBuilder().httpClient(httpClient);
+        String tenantId = optString(config, TENANT_ID);
+        if (tenantId != null) {
+            builder.tenantId(tenantId);
+        }
+        String clientId = optString(config, CLIENT_ID);
+        if (clientId != null) {
+            builder.clientId(clientId);
+        }
+        String tokenFilePath = optString(config, TOKEN_FILE_PATH);
+        if (tokenFilePath != null) {
+            builder.tokenFilePath(tokenFilePath);
+        }
+        applyAuthority(authorityHost, builder::authorityHost, builder::disableInstanceDiscovery);
+        return builder.build();
+    }
+
     // An explicit non-default authority overrides AZURE_AUTHORITY_HOST. MSAL sends instance discovery for an unknown
     // host to the public cloud, which fails for private clouds and local endpoints alike, so it is turned off for
     // any authority host other than the known clouds.
@@ -211,6 +238,15 @@ public final class Credentials {
         String clientSecret = optString(config, CLIENT_SECRET);
         if (clientSecret != null) {
             secrets.add(clientSecret);
+        }
+        // The federated token as it is now; a rotated token is a JWT, which the sanitiser redacts anyway.
+        String tokenFilePath = optString(config, TOKEN_FILE_PATH);
+        if (tokenFilePath != null) {
+            try {
+                secrets.add(Files.readString(Path.of(tokenFilePath), StandardCharsets.UTF_8).strip());
+            } catch (IOException | RuntimeException e) {
+                // Unreadable now: the credential reports that itself when it reads the file.
+            }
         }
         return List.copyOf(secrets);
     }

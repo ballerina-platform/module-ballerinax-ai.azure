@@ -102,8 +102,26 @@ public type ClientSecretConfig record {|
     string clientSecret;
 |};
 
+# A Kubernetes workload identity that authenticates with a federated token file.
+@display {label: "Workload Identity"}
+public type WorkloadIdentityConfig record {|
+    # The credential type
+    @display {label: "Type"}
+    "workloadIdentity" 'type;
+    # Microsoft Entra ID tenant ID; defaults to the `AZURE_TENANT_ID` environment variable
+    @display {label: "Tenant ID"}
+    string tenantId?;
+    # Client ID of the application or managed identity; defaults to the `AZURE_CLIENT_ID` environment variable
+    @display {label: "Client ID"}
+    string clientId?;
+    # Path of the federated token file; defaults to the `AZURE_FEDERATED_TOKEN_FILE` environment variable
+    @display {label: "Token File Path"}
+    string tokenFilePath?;
+|};
+
 # The configuration of a credential.
-public type CredentialConfig DefaultCredentialConfig|ManagedIdentityConfig|ClientSecretConfig;
+public type CredentialConfig DefaultCredentialConfig|ManagedIdentityConfig|ClientSecretConfig
+        |WorkloadIdentityConfig;
 
 # A credential configuration or a `TokenCredential`.
 public type Credential CredentialConfig|TokenCredential;
