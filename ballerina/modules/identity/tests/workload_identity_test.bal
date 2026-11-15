@@ -76,7 +76,8 @@ function testMissingFederatedTokenFile() returns error? {
 
 @test:Config {groups: [ENTRA_MOCK_GROUP]}
 function testUnconfiguredWorkloadIdentityIsRejectedAtCreation() {
-    if os:getEnv("AZURE_FEDERATED_TOKEN_FILE") != "" || os:getEnv("AZURE_CLIENT_ID") != "" {
+    if os:getEnv("AZURE_FEDERATED_TOKEN_FILE") != "" || os:getEnv("AZURE_CLIENT_ID") != ""
+            || os:getEnv("AZURE_TENANT_ID") != "" {
         // The environment configures workload identity here, so the defaults are not empty.
         return;
     }

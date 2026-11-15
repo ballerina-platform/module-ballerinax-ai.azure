@@ -199,7 +199,7 @@ public final class Credentials {
         ClientSecretCredentialBuilder builder = new ClientSecretCredentialBuilder()
                 .tenantId(requireString(config, TENANT_ID))
                 .clientId(requireString(config, CLIENT_ID))
-                .clientSecret(requireString(config, CLIENT_SECRET))
+                .clientSecret(requireSecret(config, CLIENT_SECRET))
                 .httpClient(httpClient);
         applyAuthority(authorityHost, builder::authorityHost, builder::disableInstanceDiscovery);
         return builder.build();
@@ -229,14 +229,18 @@ public final class Credentials {
     private static TokenCredential clientCertificateCredential(BMap<BString, Object> config, HttpClient httpClient,
                                                                String authorityHost) throws IOException {
         String certificatePath = requireString(config, CERTIFICATE_PATH);
+        Path path = Path.of(certificatePath);
+        if (!Files.isRegularFile(path)) {
+            throw new IllegalArgumentException("'certificatePath' is not a file: " + certificatePath);
+        }
         ClientCertificateCredentialBuilder builder = new ClientCertificateCredentialBuilder()
                 .tenantId(requireString(config, TENANT_ID))
                 .clientId(requireString(config, CLIENT_ID))
                 .httpClient(httpClient);
-        String password = optString(config, CERTIFICATE_PASSWORD);
+        String password = optSecret(config, CERTIFICATE_PASSWORD);
         if (password != null) {
             builder.pfxCertificate(certificatePath).clientCertificatePassword(password);
-        } else if (isPem(Path.of(certificatePath))) {
+        } else if (isPem(path)) {
             builder.pemCertificate(certificatePath);
         } else {
             throw new IllegalArgumentException("'certificatePath' is not a PEM file; a PKCS#12 (PFX) file needs "
@@ -272,13 +276,12 @@ public final class Credentials {
     // Values from the configuration that must never appear in an error message.
     private static List<String> secretsOf(BMap<BString, Object> config) {
         List<String> secrets = new ArrayList<>();
-        String clientSecret = optString(config, CLIENT_SECRET);
-        if (clientSecret != null) {
-            secrets.add(clientSecret);
-        }
-        String certificatePassword = optString(config, CERTIFICATE_PASSWORD);
-        if (certificatePassword != null) {
-            secrets.add(certificatePassword);
+        for (BString field : List.of(CLIENT_SECRET, CERTIFICATE_PASSWORD)) {
+            String secret = optSecret(config, field);
+            if (secret != null) {
+                secrets.add(secret);
+                secrets.add(secret.strip());
+            }
         }
         // The federated token as it is now; a rotated token is a JWT, which the sanitiser redacts anyway.
         String tokenFilePath = optString(config, TOKEN_FILE_PATH);
@@ -317,9 +320,24 @@ public final class Credentials {
     }
 
     private static String optString(BMap<BString, Object> record, BString field) {
+        String value = optSecret(record, field);
+        return value == null ? null : value.strip();
+    }
+
+    // A required secret, as configured: leading or trailing spaces can be part of a secret or password.
+    private static String requireSecret(BMap<BString, Object> record, BString field) {
+        String value = optSecret(record, field);
+        if (value == null) {
+            throw new IllegalArgumentException("'" + field.getValue() + "' must not be empty");
+        }
+        return value;
+    }
+
+    // A value as configured, or null when it is absent or blank.
+    private static String optSecret(BMap<BString, Object> record, BString field) {
         Object value = record.get(field);
         if (value instanceof BString string && !string.getValue().isBlank()) {
-            return string.getValue().strip();
+            return string.getValue();
         }
         return null;
     }

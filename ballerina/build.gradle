@@ -66,14 +66,14 @@ ballerina {
 
 // Credential tests against local mocks. The managed-identity tests need IDENTITY_ENDPOINT and IDENTITY_HEADER in the
 // real process environment (MSAL reads them directly), so the regular test run leaves these groups out and
-// `testCredentialMocks` runs each one in its own `bal test` process. Every test secret starts with LEAK_MARKER, and a
+// `testCredentialMocks` runs each one in its own `bal test` process. Every test secret contains the leak marker, and a
 // run fails if that marker (or the run's identity header) appears anywhere in its output.
 def credentialMockRuns = [
         [label: "managed identity over HTTP", group: "managed-identity-mock", minPassing: 8,
          env: [IDENTITY_ENDPOINT: "http://localhost:8093/msi/token"], identityHeader: true],
         [label: "managed identity over HTTPS", group: "managed-identity-mock", minPassing: 8,
          env: [IDENTITY_ENDPOINT: "https://localhost:8094/msi/token"], identityHeader: true],
-        [label: "Entra ID token endpoint", group: "entra-mock", minPassing: 16, env: [:]]
+        [label: "Entra ID token endpoint", group: "entra-mock", minPassing: 18, env: [:]]
 ]
 def leakMarker = "do-not-leak-"
 def groupsProperty = { String name ->
@@ -86,8 +86,13 @@ def selectedMockRuns = credentialMockRuns.findAll { run ->
     (selectedGroups == null || selectedGroups.contains(run.group)) &&
             !(disabledGroups != null && disabledGroups.contains(run.group))
 }
-if (selectedGroups == null && disabledGroups == null) {
-    ext.disable = credentialMockRuns.collect { it.group }.unique().join(",")
+// The regular test run never runs a mock group: it lacks the environment and the leak check.
+def mockGroups = credentialMockRuns.collect { it.group }.unique()
+def regularGroups = selectedGroups == null ? null : selectedGroups - mockGroups
+if (regularGroups == null) {
+    ext.disable = ((disabledGroups ?: []) + mockGroups).unique().join(",")
+} else if (!regularGroups.isEmpty()) {
+    ext.groups = regularGroups.join(",")
 }
 
 task testCredentialMocks {
@@ -215,6 +220,10 @@ test.dependsOn ':ai.azure-native:build'
 // is filtered out with -Pgroups or -Pdisable.
 if (!selectedMockRuns.isEmpty()) {
     test.finalizedBy testCredentialMocks
+}
+// -Pgroups named only mock groups: those run in testCredentialMocks alone.
+if (regularGroups != null && regularGroups.isEmpty()) {
+    test.onlyIf { false }
 }
 build.dependsOn ":ai.azure-compiler-plugin:build"
 build.dependsOn "generatePomFileForMavenPublication"

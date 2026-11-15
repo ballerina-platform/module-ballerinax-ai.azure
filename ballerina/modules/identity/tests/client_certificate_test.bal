@@ -48,6 +48,9 @@ function clientCertificates() returns [string, string]|error {
     lock {
         acceptedThumbprints = thumbprints;
     }
+    lock {
+        acceptedCertificatePath = certPem;
+    }
     clientCertificateFiles = [pkcs12, pem];
     return [pkcs12, pem];
 }
@@ -73,6 +76,20 @@ function testClientCertificatePemToken() returns error? {
     [string, string] [_, pem] = check clientCertificates();
     TokenCredential credential = check createCredential(certificateConfig(pem, ()), mockOptions());
     check assertCertificateToken(credential, "api://certificate-pem/.default");
+}
+
+@test:Config {groups: [ENTRA_MOCK_GROUP]}
+function testTamperedAssertionSignatureIsRejected() returns error? {
+    [string, string] [_, pem] = check clientCertificates();
+    TokenCredential credential = check createCredential(certificateConfig(pem, ()), mockOptions());
+    check assertCertificateToken(credential, "api://certificate-signature/.default");
+    string assertion = (check lastEntraRequest()).clientAssertion ?: "";
+    test:assertEquals(certificateAssertionProblem(assertion), ());
+    // Change one character in the middle of the signature.
+    int index = (assertion.lastIndexOf(".") ?: 0) + 10;
+    string changed = assertion.substring(index, index + 1) == "A" ? "B" : "A";
+    string tampered = assertion.substring(0, index) + changed + assertion.substring(index + 1);
+    test:assertEquals(certificateAssertionProblem(tampered), "the client assertion signature is not valid");
 }
 
 @test:Config {groups: [ENTRA_MOCK_GROUP]}
@@ -117,7 +134,21 @@ function testPkcs12WithoutPasswordIsRejectedAtCreation() returns error? {
 function testMissingCertificateFileIsRejectedAtCreation() returns error? {
     string missing = check file:joinPath(mockCertDir, "no-such-certificate.pem");
     TokenCredential|Error credential = createCredential(certificateConfig(missing, ()), mockOptions());
-    test:assertTrue(credential is Error, "a missing certificate file must be rejected");
+    if credential !is Error {
+        return error("a missing certificate file must be rejected");
+    }
+    test:assertTrue(credential.message().includes("'certificatePath' is not a file"), credential.message());
+}
+
+@test:Config {groups: [ENTRA_MOCK_GROUP]}
+function testMissingPkcs12FileIsRejectedAtCreation() returns error? {
+    string missing = check file:joinPath(mockCertDir, "no-such-certificate.p12");
+    TokenCredential|Error credential = createCredential(certificateConfig(missing, CERTIFICATE_PASSWORD_VALUE),
+        mockOptions());
+    if credential !is Error {
+        return error("a missing PKCS#12 file must be rejected when the credential is created");
+    }
+    test:assertTrue(credential.message().includes("'certificatePath' is not a file"), credential.message());
 }
 
 // ----- Helpers -----

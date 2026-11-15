@@ -131,7 +131,8 @@ public type ClientCertificateConfig record {|
     # Client (application) ID of the service principal
     @display {label: "Client ID"}
     string clientId;
-    # Path of the certificate file: a PEM file, or a PKCS#12 (PFX) file when `certificatePassword` is set
+    # Path of the certificate file: a PEM file with the certificate and its unencrypted PKCS#8 private key, or a
+    # PKCS#12 (PFX) file when `certificatePassword` is set
     @display {label: "Certificate Path"}
     string certificatePath;
     # Password of a PKCS#12 (PFX) file; omit it for a PEM file

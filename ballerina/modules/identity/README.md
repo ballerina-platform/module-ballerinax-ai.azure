@@ -11,7 +11,7 @@ A credential is described by a plain record whose `type` field selects it, or su
 | `managedIdentity` | Managed identity (Azure compute, Azure AI Foundry hosted agents) |
 | `clientSecret` | Service principal with a client secret |
 | `workloadIdentity` | Kubernetes workload identity (federated token file) |
-| `clientCertificate` | Service principal with a certificate (PEM, or PKCS#12 with a password) |
+| `clientCertificate` | Service principal with a certificate (PEM with an unencrypted PKCS#8 key, or PKCS#12 with a password) |
 
 `default` tries environment variables, workload identity, managed identity, then developer tools such as the Azure
 CLI, and uses the first source that works. `sources` narrows the chain: `prod` keeps environment variables, workload

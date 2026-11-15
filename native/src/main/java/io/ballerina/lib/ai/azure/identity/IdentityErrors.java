@@ -64,10 +64,6 @@ final class IdentityErrors {
     private IdentityErrors() {
     }
 
-    static BError toError(Throwable throwable) {
-        return toError(throwable, List.of());
-    }
-
     /**
      * Converts a failure into an error, also redacting configuration values such as a client secret.
      *

@@ -14,6 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import ballerina/crypto;
 import ballerina/file;
 import ballerina/http;
 import ballerina/io;
@@ -39,13 +40,14 @@ const USER_AGENT_MARKER = "ballerinax-ai.azure-identity";
 const MOCK_KEYSTORE_PASSWORD = "test-only-password";
 const JWT_BEARER_ASSERTION = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 
-// Fixed test values. The Gradle task that runs this group fails if any of them shows up in the output.
-const CLIENT_SECRET_VALUE = "do-not-leak-client-secret-1b";
+// Fixed test values. The Gradle task that runs this group fails if any of them shows up in the output. The secrets
+// have surrounding spaces, which must reach the token request (or the PKCS#12 file) unchanged.
+const CLIENT_SECRET_VALUE = " do-not-leak-client-secret-1b ";
 const CLIENT_SECRET_APP = "secret-app";
 const FEDERATED_TOKEN_VALUE = "do-not-leak-federated-token-1b";
 const WORKLOAD_APP = "workload-app";
 const CERTIFICATE_APP = "cert-app";
-const CERTIFICATE_PASSWORD_VALUE = "do-not-leak-cert-password-1b";
+const CERTIFICATE_PASSWORD_VALUE = " do-not-leak-cert-password-1b ";
 
 // A token request the mock received.
 type EntraRequest record {|
@@ -62,6 +64,8 @@ type EntraRequest record {|
 isolated EntraRequest[] entraRequests = [];
 // Base64url SHA-1 and SHA-256 thumbprints of the client certificate the mock accepts for CERTIFICATE_APP.
 isolated [string, string] acceptedThumbprints = ["", ""];
+// The PEM file of that certificate, whose public key verifies the assertion's signature.
+isolated string acceptedCertificatePath = "";
 isolated string[] unexpectedEntraPaths = [];
 
 isolated function recordEntraRequest(EntraRequest request) {
@@ -143,7 +147,8 @@ isolated function assertionAnswer(EntraRequest request) returns http:Ok|http:Bad
     return entraError("unauthorized_client", "AADSTS700016: application not found in the directory");
 }
 
-// Checks a certificate-signed client assertion: its claims, and that its header names the accepted certificate.
+// Checks a certificate-signed client assertion: that its header names the accepted certificate, that the certificate's
+// key verifies its signature, and its claims.
 isolated function certificateAssertionProblem(string assertion) returns string? {
     string[] parts = re `\.`.split(assertion);
     if parts.length() != 3 {
@@ -164,6 +169,24 @@ isolated function certificateAssertionProblem(string assertion) returns string? 
     if !((x5t != "" && x5t == accepted[0]) || (x5tS256 != "" && x5tS256 == accepted[1])) {
         return "the client assertion was signed with an unknown certificate";
     }
+    // MSAL signs client assertions with RS256.
+    if header["alg"] != "RS256" {
+        return "the client assertion is not signed with RS256";
+    }
+    string certificatePath;
+    lock {
+        certificatePath = acceptedCertificatePath;
+    }
+    byte[]|error signature = decodeBase64Url(parts[2]);
+    crypto:PublicKey|crypto:Error key = crypto:decodeRsaPublicKeyFromCertFile(certificatePath);
+    if signature is error || key is crypto:Error {
+        return "the client assertion signature cannot be checked";
+    }
+    boolean|crypto:Error valid = crypto:verifyRsaSha256Signature((parts[0] + "." + parts[1]).toBytes(), signature,
+        key);
+    if valid != true {
+        return "the client assertion signature is not valid";
+    }
     if claims["iss"] != CERTIFICATE_APP || claims["sub"] != CERTIFICATE_APP {
         return "the client assertion has the wrong issuer or subject";
     }
@@ -177,19 +200,43 @@ isolated function certificateAssertionProblem(string assertion) returns string? 
 isolated function toBase64Url(string value) returns string =>
     re `/`.replaceAll(re `\+`.replaceAll(re `=+$`.replaceAll(value, ""), "-"), "_");
 
-isolated function decodeJwtPart(string part) returns map<json>|error {
+isolated function decodeJwtPart(string part) returns map<json>|error =>
+    (check string:fromBytes(check decodeBase64Url(part))).fromJsonStringWithType();
+
+isolated function decodeBase64Url(string part) returns byte[]|error {
     string encoded = re `-`.replaceAll(re `_`.replaceAll(part, "/"), "+");
     int padding = (4 - encoded.length() % 4) % 4;
-    byte[] bytes = check array:fromBase64(encoded + "===".substring(0, padding));
-    return (check string:fromBytes(bytes)).fromJsonStringWithType();
+    return array:fromBase64(encoded + "===".substring(0, padding));
 }
+
+// The form fields of a token request as sent. `http:Request.getFormParams` trims values, which would hide whether a
+// secret's surrounding spaces arrived.
+isolated function formFields(http:Request req) returns map<string>|error {
+    map<string> fields = {};
+    foreach string entry in re `&`.split(check req.getTextPayload()) {
+        int? separator = entry.indexOf("=");
+        if separator is int {
+            fields[check urlDecode(entry.substring(0, separator))] = check urlDecode(entry.substring(separator + 1));
+        }
+    }
+    return fields;
+}
+
+isolated function urlDecode(string value) returns string|error =>
+    java:toString(check decodeUrl(java:fromString(value), java:fromString("UTF-8"))) ?: "";
+
+isolated function decodeUrl(handle value, handle charset) returns handle|error = @java:Method {
+    'class: "java.net.URLDecoder",
+    name: "decode",
+    paramTypes: ["java.lang.String", "java.lang.String"]
+} external;
 
 isolated service class MockEntraService {
     *http:Service;
 
     resource function post [string tenant]/oauth2/v2\.0/token(http:Request req)
             returns http:Ok|http:BadRequest|http:Unauthorized|error {
-        map<string> form = check req.getFormParams();
+        map<string> form = check formFields(req);
         string|http:HeaderNotFoundError userAgent = req.getHeader("User-Agent");
         EntraRequest request = {
             path: string `/${tenant}/oauth2/v2.0/token`,
@@ -244,6 +291,8 @@ function stopEntraMock() returns error? {
         runtime:deregisterListener('listener);
         check 'listener.gracefulStop();
     }
+    // The directory holds test keys and token files.
+    check file:remove(mockCertDir, file:RECURSIVE);
 }
 
 # Options that point a credential at the mock: its authority, its CA, and the dead proxy.
