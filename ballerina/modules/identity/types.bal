@@ -34,15 +34,15 @@ public type AccessToken readonly & record {|
 public type TokenCredential isolated object {
     # Returns a valid access token for the given scopes.
     #
-    # + scopes - The scopes to request, e.g. `["https://cognitiveservices.azure.com/.default"]`
-    # + return - The access token, or an `Error` if one could not be obtained
+    # + scopes - The scopes to request
+    # + return - The access token, or an Error if one could not be obtained
     public isolated function getToken(string[] scopes) returns AccessToken|Error;
 };
 
 # Details of an identity error.
 #
-# + credential - The credential type that failed (for example, `managedIdentity`)
-# + code - The Microsoft Entra ID error code (`AADSTS...`), when the service returned one
+# + credential - The credential type that failed
+# + code - The Microsoft Entra ID error code, when the service returned one
 public type ErrorDetail record {|
     string credential;
     string code?;
@@ -63,7 +63,7 @@ public type DefaultCredentialConfig record {|
     # The credential type
     @display {label: "Type"}
     "default" 'type;
-    # The credential sources to try: `all`, `prod` (deployed environments) or `dev` (developer tools)
+    # The credential sources to try
     @display {label: "Credential Sources"}
     "all"|"prod"|"dev" sources = "all";
     # Client ID of a user-assigned managed identity
@@ -85,20 +85,77 @@ public type ManagedIdentityConfig record {|
     string clientId?;
 |};
 
-# The configuration of a credential.
-public type CredentialConfig DefaultCredentialConfig|ManagedIdentityConfig;
+# A service principal that authenticates with a client secret.
+@display {label: "Client Secret"}
+public type ClientSecretConfig record {|
+    # The credential type
+    @display {label: "Type"}
+    "clientSecret" 'type;
+    # Microsoft Entra ID tenant ID
+    @display {label: "Tenant ID"}
+    string tenantId;
+    # Client (application) ID of the service principal
+    @display {label: "Client ID"}
+    string clientId;
+    # Client secret of the service principal
+    @display {label: "Client Secret"}
+    string clientSecret;
+|};
 
-# A credential configuration or a `TokenCredential`.
+# A Kubernetes workload identity that authenticates with a federated token file.
+@display {label: "Workload Identity"}
+public type WorkloadIdentityConfig record {|
+    # The credential type
+    @display {label: "Type"}
+    "workloadIdentity" 'type;
+    # Microsoft Entra ID tenant ID
+    @display {label: "Tenant ID"}
+    string tenantId?;
+    # Client ID of the application or managed identity
+    @display {label: "Client ID"}
+    string clientId?;
+    # Path of the federated token file
+    @display {label: "Token File Path"}
+    string tokenFilePath?;
+|};
+
+# A service principal that authenticates with a certificate.
+@display {label: "Client Certificate"}
+public type ClientCertificateConfig record {|
+    # The credential type
+    @display {label: "Type"}
+    "clientCertificate" 'type;
+    # Microsoft Entra ID tenant ID
+    @display {label: "Tenant ID"}
+    string tenantId;
+    # Client (application) ID of the service principal
+    @display {label: "Client ID"}
+    string clientId;
+    # Path of the PEM or PKCS#12 certificate file
+    @display {label: "Certificate Path"}
+    string certificatePath;
+    # Password of the PKCS#12 certificate file
+    @display {label: "Certificate Password"}
+    string certificatePassword?;
+    # Whether to send the certificate chain with each token request
+    @display {label: "Send Certificate Chain"}
+    boolean sendCertificateChain = false;
+|};
+
+# The configuration of a credential.
+public type CredentialConfig DefaultCredentialConfig|ManagedIdentityConfig|ClientSecretConfig
+        |WorkloadIdentityConfig|ClientCertificateConfig;
+
+# A credential configuration or a token credential.
 public type Credential CredentialConfig|TokenCredential;
 
 # Options for the token requests of a credential.
 public type CredentialOptions record {|
-    # Microsoft Entra ID authority host URL; another cloud's host here needs a matching token scope
+    # The Microsoft Entra ID authority host URL
     string authorityHost = AZURE_PUBLIC_CLOUD;
     # SSL/TLS-related options for token requests
     http:ClientSecureSocket secureSocket?;
-    # HTTP proxy for token requests; proxy authentication needs the JVM option
-    # `-Djdk.http.auth.tunneling.disabledSchemes=`
+    # HTTP proxy for token requests
     http:ProxyConfig proxy?;
     # Timeout (in seconds) for each token request
     decimal timeout = 30;

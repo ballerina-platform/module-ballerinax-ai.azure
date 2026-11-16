@@ -9,6 +9,9 @@ A credential is described by a plain record whose `type` field selects it, or su
 |---|---|
 | `default` | Default chain: environment, workload identity, managed identity, then developer tools (Azure CLI, ...) |
 | `managedIdentity` | Managed identity (Azure compute, Azure AI Foundry hosted agents) |
+| `clientSecret` | Service principal with a client secret |
+| `workloadIdentity` | Kubernetes workload identity (federated token file) |
+| `clientCertificate` | Service principal with a certificate (PEM or PKCS#12) |
 
 `default` tries environment variables, workload identity, managed identity, then developer tools such as the Azure
 CLI, and uses the first source that works. `sources` narrows the chain: `prod` keeps environment variables, workload
@@ -17,6 +20,15 @@ variable can narrow it as well. `clientId` (a user-assigned managed identity) de
 
 `managedIdentity` covers Azure compute (VMs, App Service, Container Apps, AKS, Functions) and Azure AI Foundry hosted
 agents. Omit `clientId` to use the system-assigned identity.
+
+`workloadIdentity` takes any of `tenantId`, `clientId` and `tokenFilePath` that are not set from the
+`AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_FEDERATED_TOKEN_FILE` environment variables, which the Azure Workload
+Identity webhook sets on AKS.
+
+`clientCertificate` reads a PEM file (the certificate and its unencrypted PKCS#8 private key) or a PKCS#12 (PFX)
+file, and detects the format from the file's content. Set `certificatePassword` for a password-protected PFX file, and
+omit it for a PEM file or a PFX file without a password. `sendCertificateChain` sends the certificate chain (the
+`x5c` header) with each token request, which subject name and issuer authentication needs.
 
 `TokenCredential` is structural, so an application can supply its own implementation (for example, one that reads
 tokens from a vault). Implementations are expected to cache and refresh tokens, to never panic, and to never log
@@ -38,7 +50,7 @@ variable and in `secureSocket.cert`, and use the configured `proxy` (HTTP proxie
 Proxy authentication needs the JVM option `-Djdk.http.auth.tunneling.disabledSchemes=`, because the JDK disables
 Basic authentication for HTTPS tunnels by default; without it, a proxy `userName` is rejected. Local managed identity
 endpoints are always reached without the proxy. `authorityHost` is the Microsoft Entra ID authority:
-`AZURE_PUBLIC_CLOUD` (the default) or another cloud's authority URL.
+`AZURE_PUBLIC_CLOUD` (the default) or another cloud's authority URL, which needs that cloud's token scope as well.
 
 Tokens and secrets never appear in errors. An `Error` carries the credential type and, when the service returned
 one, the Microsoft Entra ID error code (`AADSTS...`). `CredentialUnavailableError` means no credential source is

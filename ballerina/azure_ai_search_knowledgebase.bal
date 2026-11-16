@@ -17,13 +17,13 @@
 import ballerina/ai;
 import ballerina/log;
 import ballerina/uuid;
+import ballerinax/ai.azure.identity;
 import ballerinax/azure.ai.search;
 import ballerinax/azure.ai.search.index;
 
 const CONTENT_FIELD_NAME = "content";
 const KEY_FIELD_NAME = "id";
 const AI_AZURE_KNOWLEDGE_BASE_API_VERSION = "2025-09-01";
-const API_KEY_HEADER_NAME = "api-key";
 
 // Search action constants
 const SEARCH_ACTION_MERGE_OR_UPLOAD = "mergeOrUpload";
@@ -74,7 +74,7 @@ type IndexSchemaInfo record {
     map<search:SearchField> allFields;
 };
 
-# Represents the Azure Search Knowledge Base implementation.
+# AiSearchKnowledgeBase is a knowledge base that stores and retrieves documents using an Azure AI Search index.
 public distinct isolated class AiSearchKnowledgeBase {
     *ai:KnowledgeBase;
     
@@ -82,7 +82,8 @@ public distinct isolated class AiSearchKnowledgeBase {
     private final search:Client serviceClient;
     private final index:Client indexClient;
     private final string apiVersion;
-    private final string apiKey;
+    # The API key, or the Entra ID bearer authentication built from a credential.
+    private final string|BearerAuth auth;
     private final boolean verbose;
     private final ai:Chunker|ai:AUTO|ai:DISABLE chunker;
     private final ai:EmbeddingProvider? embeddingModel;
@@ -92,39 +93,42 @@ public distinct isolated class AiSearchKnowledgeBase {
     private final map<search:SearchField> allFields;
     private final string? semanticConfigurationName;
 
-    # Initializes a new `AiSearchKnowledgeBase` instance.
-    # 
+    # Initializes the Azure AI Search knowledge base with the given index and configuration.
+    #
     # + serviceUrl - The service URL of the Azure AI Search instance
-    # + apiKey - The API key for authenticating with the Azure AI Search service
-    # + index - The name of an existing search index or a `search:SearchIndex` definition to create,
-    #   When creating a new index, ensure that it contains one key field of type string.
+    # + auth - The API key, or a Microsoft Entra ID credential for keyless authentication
+    # + index - The name of an existing search index, or the definition of a search index to create
     # + embeddingModel - The embedding model to use for generating embeddings
-    # + chunker - The chunker to use for chunking documents before ingestion. Defaults to `ai:AUTO`.
-    # + verbose - Whether to enable verbose logging. Defaults to `false`.
-    # + apiVersion - The API version to use for requests.
-    # + clientConfigurations - Additional client configurations for Azure AI Search clients
-    # + contentFieldName - The name of the field in the index that contains the main content. Defaults to "content".
-    # + searchClientConnectionConfig - Connection configuration for the Azure AI search client.
-    #                                  This configuration is only required when the `index` parameter is 
-    #                                  provided as an `search:SearchIndex`
-    # + indexClientConnectionConfig - Connection configuration for the Azure AI index client.
-    # + semanticConfigurationName - The name of the semantic configuration to use for semantic search.
-    # + return - An instance of `AiSearchKnowledgeBase` or an `ai:Error` if initialization fails
-    public isolated function init(string serviceUrl, string apiKey, 
+    # + chunker - The chunker to use for chunking documents before ingestion
+    # + verbose - Whether to enable verbose logging
+    # + apiVersion - The Azure AI Search API version
+    # + contentFieldName - The name of the index field that contains the main content
+    # + searchClientConnectionConfig - Connection configuration for the Azure AI Search service client
+    # + indexClientConnectionConfig - Connection configuration for the Azure AI Search index client
+    # + semanticConfigurationName - The name of the semantic configuration to use for semantic search
+    # + tokenScope - The Microsoft Entra ID token scope, derived from the service URL when not set
+    # + return - nil on successful initialization; otherwise, returns an ai:Error
+    public isolated function init(string serviceUrl,
+            @display {label: "Authentication"} string|identity:Credential auth,
             string|search:SearchIndex index, ai:EmbeddingProvider? embeddingModel = (), 
             ai:Chunker|ai:AUTO|ai:DISABLE chunker = ai:AUTO, boolean verbose = false, 
             string apiVersion = AI_AZURE_KNOWLEDGE_BASE_API_VERSION, string contentFieldName = CONTENT_FIELD_NAME, 
             search:ConnectionConfig searchClientConnectionConfig = {},
             index:ConnectionConfig indexClientConnectionConfig = {},
-            string? semanticConfigurationName = ()) returns ai:Error? {
+            string? semanticConfigurationName = (),
+            @display {label: "Token Scope"} string? tokenScope = ()) returns ai:Error? {
         self.chunker = chunker;
         self.embeddingModel = embeddingModel;
         self.verbose = verbose;
         self.contentFieldName = contentFieldName;
         self.semanticConfigurationName = semanticConfigurationName;
         
+        // Token requests use the service client's proxy, or the index client's if only that one has a proxy.
+        string|BearerAuth resolvedAuth = check resolveAuth(auth, serviceUrl, tokenScope,
+                searchClientConnectionConfig?.proxy ?: indexClientConnectionConfig?.proxy);
+        self.auth = resolvedAuth;
+
         // Initialize service client for management operations
-        self.apiKey = apiKey;
         self.apiVersion = apiVersion;
 
         search:Client|error serviceClient = new search:Client(serviceUrl, searchClientConnectionConfig);
@@ -137,8 +141,8 @@ public distinct isolated class AiSearchKnowledgeBase {
         string indexName = index is string ? index : index.name;
         if index is string {
             // Verify that the index exists
-            search:SearchIndex|error searchIndex = self.serviceClient->indexesGet(indexName, {
-                [API_KEY_HEADER_NAME]: self.apiKey}, {api\-version: self.apiVersion});
+            search:SearchIndex|error searchIndex = self.serviceClient->indexesGet(indexName,
+                {...check authHeaders(resolvedAuth)}, {api\-version: self.apiVersion});
             if searchIndex is error {
                 logIfVerboseEnabled(self.verbose, 
                     string `Search index ${indexName} does not exist: ${searchIndex.message()}`);
@@ -150,9 +154,8 @@ public distinct isolated class AiSearchKnowledgeBase {
                 string `Search index ${indexName} exists. Details: ${searchIndex.toJsonString()}`);
         } else {
             logIfVerboseEnabled(self.verbose, string `Attempting to create search index ${indexName}...`);
-            search:SearchIndex|error createdIndex = self.serviceClient->indexesCreateOrUpdate(indexName, {
-                [API_KEY_HEADER_NAME]: self.apiKey, Prefer: PREFER_HEADER_RETURN_REPRESENTATION}, 
-                    index, {api\-version: self.apiVersion});
+            search:SearchIndex|error createdIndex = createOrUpdateIndex(self.serviceClient, indexName,
+                    check authHeaders(resolvedAuth), index, self.apiVersion);
             if createdIndex is error {
                 logIfVerboseEnabled(self.verbose, 
                     string `Failed to create search index ${indexName}: ${createdIndex.message()}`);
@@ -181,9 +184,10 @@ public distinct isolated class AiSearchKnowledgeBase {
         }
     }
 
-    # Ingests documents into the Azure search knowledge base.
-    # + documents - The documents or chunks to ingest (single document, array of documents, or array of chunks)
-    # + return - An `ai:Error` if ingestion fails, otherwise `nil`
+    # Ingests documents into the Azure AI Search knowledge base.
+    #
+    # + documents - The documents or chunks to ingest
+    # + return - An ai:Error if ingestion fails, otherwise nil
     public isolated function ingest(ai:Chunk[]|ai:Document[]|ai:Document documents) returns ai:Error? {
         lock {
             ai:Chunk[]|ai:Error chunks = self.chunk(documents.clone());
@@ -211,7 +215,7 @@ public distinct isolated class AiSearchKnowledgeBase {
             }
 
             index:IndexDocumentsResult|error uploadResult = self.uploadDocuments(self.indexClient, chunks, self.index, 
-                    embeddings, {[API_KEY_HEADER_NAME]: self.apiKey}, {api\-version: self.apiVersion});
+                    embeddings, {...check authHeaders(self.auth)}, {api\-version: self.apiVersion});
             if uploadResult is error {
                 logIfVerboseEnabled(self.verbose, 
                     string `Failed to upload documents to search index: ${uploadResult.message()}}`, uploadResult);
@@ -235,7 +239,7 @@ public distinct isolated class AiSearchKnowledgeBase {
     # + query - The text query to search for
     # + maxLimit - The maximum number of items to return
     # + filters - Optional metadata filters to apply during retrieval
-    # + return - An array of matching chunks with similarity scores, or an `ai:Error` if retrieval fails
+    # + return - An array of matching chunks with similarity scores, or an ai:Error if retrieval fails
     public isolated function retrieve(string query, int maxLimit = 10, 
                                 ai:MetadataFilters? filters = ()) returns ai:QueryMatch[]|ai:Error {
         if maxLimit != -1 && maxLimit <= 0 {
@@ -296,7 +300,7 @@ public distinct isolated class AiSearchKnowledgeBase {
             // Execute search
             index:SearchDocumentsResult|error searchResult = self.indexClient->documentsSearchPost(
                 searchRequest,
-                {[API_KEY_HEADER_NAME]: self.apiKey},
+                {...check authHeaders(self.auth)},
                 api\-version = self.apiVersion
             );
 
@@ -329,7 +333,7 @@ public distinct isolated class AiSearchKnowledgeBase {
     # Deletes chunks that match the given metadata filters.
     #
     # + filters - The metadata filters used to identify which chunks to delete
-    # + return - An `ai:Error` if the deletion fails, otherwise `nil`
+    # + return - An ai:Error if the deletion fails, otherwise nil
     public isolated function deleteByFilter(ai:MetadataFilters filters) returns ai:Error? {
         ai:MetadataFilters filtersCopy = filters.cloneReadOnly();
         // First, search for documents matching the filters
@@ -343,7 +347,7 @@ public distinct isolated class AiSearchKnowledgeBase {
 
         index:SearchDocumentsResult|error searchResult = self.indexClient->documentsSearchPost(
             searchRequest,
-            {[API_KEY_HEADER_NAME]: self.apiKey},
+            {...check authHeaders(self.auth)},
             api\-version = self.apiVersion
         );
 
@@ -380,7 +384,7 @@ public distinct isolated class AiSearchKnowledgeBase {
 
         index:IndexDocumentsResult|error deleteResult = self.indexClient->documentsIndex(
             deleteBatch,
-            {[API_KEY_HEADER_NAME]: self.apiKey},
+            {...check authHeaders(self.auth)},
             api\-version = self.apiVersion
         );
 
@@ -528,6 +532,22 @@ public distinct isolated class AiSearchKnowledgeBase {
             return 'client->documentsIndex(batch.cloneReadOnly(), headers.cloneReadOnly(), queries.cloneReadOnly());
         }
     }
+}
+
+# Creates or updates a search index, asking the service to return the stored definition.
+#
+# + serviceClient - The Azure AI Search service client
+# + indexName - The name of the index
+# + authHeaders - The headers that authenticate the request
+# + index - The index definition
+# + apiVersion - The Azure AI Search API version
+# + return - The stored index definition, or an error if the request fails
+isolated function createOrUpdateIndex(search:Client serviceClient, string indexName, map<string> authHeaders,
+        search:SearchIndex index, string apiVersion) returns search:SearchIndex|error {
+    map<string> headers = authHeaders.clone();
+    headers["Prefer"] = PREFER_HEADER_RETURN_REPRESENTATION;
+    search:IndexesCreateOrUpdateHeaders createHeaders = check headers.cloneWithType();
+    return serviceClient->indexesCreateOrUpdate(indexName, createHeaders, index, {api\-version: apiVersion});
 }
 
 # Logs informational or error messages if verbose mode is enabled

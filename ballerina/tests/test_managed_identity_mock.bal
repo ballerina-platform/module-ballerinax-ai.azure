@@ -29,7 +29,7 @@ import ballerinax/ai.azure.identity;
 //
 // azure-identity (through MSAL) reads `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` from the real process environment,
 // so these tests only run in their own `bal test --groups managed-identity-mock` process with both set; the
-// `testManagedIdentityMock` Gradle task does that once over HTTP and once over HTTPS. Over HTTPS the mock's
+// `testCredentialMocks` Gradle task does that once over HTTP and once over HTTPS. Over HTTPS the mock's
 // certificate is signed by a throwaway CA generated here at test time, standing in for a TLS-inspecting proxy.
 
 const MI_GROUP = "managed-identity-mock";
@@ -260,6 +260,57 @@ function testProviderWithManagedIdentityEndToEnd() returns error? {
 }
 
 @test:Config {groups: [MI_GROUP], dependsOn: [testProviderWithManagedIdentityEndToEnd]}
+function testEmbeddingProviderWithManagedIdentityEndToEnd() returns error? {
+    if !miConfigured {
+        return;
+    }
+    // A scope no other test requests, so the token is fetched rather than taken from MSAL's cache.
+    string scope = "https://mi-embeddings.example/.default";
+    if miOverHttps {
+        check os:setEnv("SSL_CERT_FILE", caBundle);
+    }
+    EmbeddingProvider provider = check new (AUTH_MOCK_URL, {'type: "managedIdentity"}, API_VERSION, DEPLOYMENT_ID,
+        tokenScope = scope);
+    check os:unsetEnv("SSL_CERT_FILE");
+
+    _ = check provider->embed(<ai:TextChunk>{content: "Hello"});
+    RecordedAuth auth = check takeRecordedAuth(ROUTE_EMBEDDINGS_LEGACY);
+    test:assertEquals(auth.authorization, "Bearer " + MI_TOKEN_PREFIX + "https://mi-embeddings.example");
+    test:assertEquals(auth.apiKey, ());
+
+    MiRequest request = check lastMiRequest().ensureType();
+    test:assertEquals(request.'resource, "https://mi-embeddings.example");
+    test:assertTrue(request.userAgent.includes(USER_AGENT_MARKER), "User-Agent: " + request.userAgent);
+}
+
+@test:Config {groups: [MI_GROUP], dependsOn: [testEmbeddingProviderWithManagedIdentityEndToEnd]}
+function testKnowledgeBaseWithManagedIdentityEndToEnd() returns error? {
+    if !miConfigured {
+        return;
+    }
+    if miOverHttps {
+        check os:setEnv("SSL_CERT_FILE", caBundle);
+    }
+    // The scope a `*.search.windows.net` host derives; the mock is on localhost, so it is set here.
+    AiSearchKnowledgeBase kb = check new (SEARCH_MOCK_URL, {'type: "managedIdentity"}, SEARCH_INDEX_NAME,
+        chunker = ai:DISABLE, tokenScope = SEARCH_SCOPE_DEFAULT);
+    check os:unsetEnv("SSL_CERT_FILE");
+    string expected = "Bearer " + MI_TOKEN_PREFIX + "https://search.azure.com";
+    RecordedAuth getIndex = check takeRecordedAuth(ROUTE_KB_GET_INDEX);
+    test:assertEquals(getIndex.authorization, expected);
+    test:assertEquals(getIndex.apiKey, ());
+
+    ai:QueryMatch[] matches = check kb.retrieve("Hello");
+    test:assertEquals(matches.length(), 1);
+    RecordedAuth search = check takeRecordedAuth(ROUTE_KB_SEARCH);
+    test:assertEquals(search.authorization, expected);
+    test:assertEquals(search.apiKey, ());
+
+    MiRequest request = check lastMiRequest().ensureType();
+    test:assertEquals(request.'resource, "https://search.azure.com");
+}
+
+@test:Config {groups: [MI_GROUP], dependsOn: [testKnowledgeBaseWithManagedIdentityEndToEnd]}
 function testEndpointTlsDisabledKeepsTokenTlsVerified() returns error? {
     if !miConfigured || !miOverHttps {
         return;

@@ -29,6 +29,9 @@ import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -57,24 +60,24 @@ final class IdentityErrors {
     /** Secret-bearing variables whose values must never appear in a message. */
     private static final List<String> SECRET_VARIABLES = List.of("IDENTITY_HEADER", "MSI_SECRET",
             "AZURE_CLIENT_SECRET", "AZURE_CLIENT_CERTIFICATE_PASSWORD", "AZURE_PASSWORD");
+    /** MSAL's exception for a response from Entra ID, matched by name (msal4j is not a direct dependency). */
+    private static final String MSAL_SERVICE_EXCEPTION = "com.microsoft.aad.msal4j.MsalServiceException";
+    /** HTTP statuses with which Entra ID refuses a request; others, such as 429 and 5xx, are temporary. */
+    private static final Set<Integer> REFUSED_STATUSES = Set.of(400, 401, 403);
 
     private IdentityErrors() {
     }
 
-    static BError toError(Throwable throwable) {
-        String kind = KIND_OTHER;
-        Set<Throwable> seen = new LinkedHashSet<>();
-        for (Throwable t = throwable; t != null && seen.add(t); t = t.getCause()) {
-            if (t instanceof CredentialUnavailableException) {
-                kind = KIND_UNAVAILABLE;
-                break;
-            }
-            if (t instanceof ClientAuthenticationException) {
-                kind = KIND_AUTHENTICATION;
-                break;
-            }
-        }
-        String message = sanitize(describe(throwable));
+    /**
+     * Converts a failure into an error, also redacting configuration values such as a client secret.
+     *
+     * @param throwable the failure
+     * @param secrets   values that must not appear in the message
+     * @return the error
+     */
+    static BError toError(Throwable throwable, Collection<String> secrets) {
+        String kind = kindOf(throwable);
+        String message = sanitize(describe(throwable), secrets);
         BMap<BString, Object> detail = ValueCreator.createMapValue(
                 TypeCreator.createMapType(PredefinedTypes.TYPE_ANYDATA));
         detail.put(KIND, StringUtils.fromString(kind));
@@ -83,6 +86,53 @@ final class IdentityErrors {
             detail.put(CODE, StringUtils.fromString(code.group()));
         }
         return ErrorCreator.createError(StringUtils.fromString(message), detail);
+    }
+
+    // An MSAL service error anywhere in the chain decides by its HTTP status, even when azure-identity wraps it.
+    private static String kindOf(Throwable throwable) {
+        Throwable msalError = null;
+        Class<?> msalType = null;
+        Set<Throwable> seen = new LinkedHashSet<>();
+        for (Throwable t = throwable; t != null && seen.add(t); t = t.getCause()) {
+            if (t instanceof CredentialUnavailableException) {
+                return KIND_UNAVAILABLE;
+            }
+            if (msalType == null) {
+                msalType = msalServiceExceptionType(t);
+                msalError = t;
+            }
+        }
+        if (msalType != null) {
+            Integer status = statusCode(msalType, msalError);
+            return status != null && REFUSED_STATUSES.contains(status) ? KIND_AUTHENTICATION : KIND_OTHER;
+        }
+        seen.clear();
+        for (Throwable t = throwable; t != null && seen.add(t); t = t.getCause()) {
+            if (t instanceof ClientAuthenticationException) {
+                return KIND_AUTHENTICATION;
+            }
+        }
+        return KIND_OTHER;
+    }
+
+    // MsalServiceException itself when the throwable is one (or a subclass), otherwise null.
+    private static Class<?> msalServiceExceptionType(Throwable throwable) {
+        for (Class<?> type = throwable.getClass(); type != null; type = type.getSuperclass()) {
+            if (MSAL_SERVICE_EXCEPTION.equals(type.getName())) {
+                return type;
+            }
+        }
+        return null;
+    }
+
+    // MsalServiceException.statusCode(), read by reflection on that class (registered for native images); null when
+    // it can't be read.
+    private static Integer statusCode(Class<?> msalType, Throwable msalError) {
+        try {
+            return msalType.getMethod("statusCode").invoke(msalError) instanceof Integer status ? status : null;
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return null;
+        }
     }
 
     // The top-level message plus the root cause (e.g. a TLS failure), which azure-identity often wraps.
@@ -108,16 +158,51 @@ final class IdentityErrors {
         return message == null || message.isBlank() ? name : name + ": " + message.strip();
     }
 
-    static String sanitize(String message) {
-        String sanitized = message;
+    // Redacts JWTs, the configured secrets and secret-bearing environment variables, and limits the length. All of
+    // them are found in the original message and overlapping matches are redacted as one, so neither kind can break
+    // the other: a secret replaced first would break a JWT around it, and a JWT replaced first part of a secret.
+    private static String sanitize(String message, Collection<String> secrets) {
+        List<String> allSecrets = new ArrayList<>(secrets);
         for (String variable : SECRET_VARIABLES) {
             String secret = System.getenv(variable);
             if (secret != null && secret.length() >= 4) {
-                sanitized = sanitized.replace(secret, REDACTED);
+                allSecrets.add(secret);
             }
         }
-        sanitized = JWT.matcher(sanitized).replaceAll(REDACTED);
+        List<int[]> spans = new ArrayList<>();
+        Matcher jwt = JWT.matcher(message);
+        while (jwt.find()) {
+            spans.add(new int[]{jwt.start(), jwt.end()});
+        }
+        for (String secret : allSecrets) {
+            if (secret.isEmpty()) {
+                continue;
+            }
+            for (int start = message.indexOf(secret); start >= 0; start = message.indexOf(secret, start + 1)) {
+                spans.add(new int[]{start, start + secret.length()});
+            }
+        }
+        spans.sort(Comparator.comparingInt(span -> span[0]));
+        StringBuilder sanitized = new StringBuilder();
+        int copied = 0;
+        int spanStart = -1;
+        int spanEnd = -1;
+        for (int[] span : spans) {
+            if (span[0] > spanEnd) {
+                if (spanEnd >= 0) {
+                    sanitized.append(message, copied, spanStart).append(REDACTED);
+                    copied = spanEnd;
+                }
+                spanStart = span[0];
+            }
+            spanEnd = Math.max(spanEnd, span[1]);
+        }
+        if (spanEnd >= 0) {
+            sanitized.append(message, copied, spanStart).append(REDACTED);
+            copied = spanEnd;
+        }
+        sanitized.append(message, copied, message.length());
         return sanitized.length() > MAX_MESSAGE_LENGTH
-                ? sanitized.substring(0, MAX_MESSAGE_LENGTH) + "..." : sanitized;
+                ? sanitized.substring(0, MAX_MESSAGE_LENGTH) + "..." : sanitized.toString();
     }
 }

@@ -64,35 +64,60 @@ ballerina {
     platform = "java25"
 }
 
-// The managed-identity mock tests need IDENTITY_ENDPOINT and IDENTITY_HEADER in the real process environment (MSAL
-// reads them directly), so the regular test run leaves their group out; `testManagedIdentityMock` runs it instead.
-def managedIdentityMockGroup = "managed-identity-mock"
+// Credential tests against local mocks. The managed-identity tests need IDENTITY_ENDPOINT and IDENTITY_HEADER, and the
+// default credential test the AZURE_* client secret variables, in the real process environment (azure-identity reads
+// them directly), so the regular test run leaves these groups out and `testCredentialMocks` runs each one in its own
+// `bal test` process. Every test secret contains the leak marker, and a run fails if that marker (or the run's
+// identity header) appears anywhere in its output.
+def credentialMockRuns = [
+        [label: "managed identity over HTTP", group: "managed-identity-mock", minPassing: 10,
+         env: [IDENTITY_ENDPOINT: "http://localhost:8093/msi/token"], identityHeader: true],
+        [label: "managed identity over HTTPS", group: "managed-identity-mock", minPassing: 10,
+         env: [IDENTITY_ENDPOINT: "https://localhost:8094/msi/token"], identityHeader: true],
+        [label: "Entra ID token endpoint", group: "entra-mock", minPassing: 31, env: [:]],
+        // Values the tests expect (ENV_SECRET_APP and ENV_CLIENT_SECRET_VALUE in mock_entra.bal).
+        [label: "default credential from the environment", group: "entra-env-mock", minPassing: 1,
+         env: [AZURE_TENANT_ID: "mock-tenant", AZURE_CLIENT_ID: "env-secret-app",
+               AZURE_CLIENT_SECRET: "do-not-leak-env-client-secret-1b"]]
+]
+def leakMarker = "do-not-leak-"
 def groupsProperty = { String name ->
     project.hasProperty(name) ? project.property(name).toString().split(",").collect { it.trim() } : null
 }
 def selectedGroups = groupsProperty("groups")
 def disabledGroups = groupsProperty("disable")
-// `testManagedIdentityMock` follows `test` unless -Pgroups leaves the group out or -Pdisable names it.
-def runManagedIdentityMock = (selectedGroups == null || selectedGroups.contains(managedIdentityMockGroup)) &&
-        !(disabledGroups != null && disabledGroups.contains(managedIdentityMockGroup))
-if (selectedGroups == null && disabledGroups == null) {
-    ext.disable = managedIdentityMockGroup
+// A mock run follows `test` unless -Pgroups leaves its group out or -Pdisable names it.
+def selectedMockRuns = credentialMockRuns.findAll { run ->
+    (selectedGroups == null || selectedGroups.contains(run.group)) &&
+            !(disabledGroups != null && disabledGroups.contains(run.group))
+}
+// The regular test run never runs a mock group: it lacks the environment and the leak check.
+def mockGroups = credentialMockRuns.collect { it.group }.unique()
+def regularGroups = selectedGroups == null ? null : selectedGroups - mockGroups
+if (regularGroups == null) {
+    ext.disable = ((disabledGroups ?: []) + mockGroups).unique().join(",")
+} else if (!regularGroups.isEmpty()) {
+    ext.groups = regularGroups.join(",")
 }
 
-task testManagedIdentityMock {
-    description = "Runs the managed-identity mock tests over HTTP and HTTPS, each in its own bal test process."
+task testCredentialMocks {
+    description = "Runs the credential mock tests, each group in its own bal test process."
     group = "verification"
     dependsOn ":ai.azure-native:build"
     dependsOn ":ai.azure-compiler-plugin:build"
     def execHelper = project.objects.newInstance(BallerinaExecHelper)
     def rootDirectory = project.rootDir
-    def envFile = layout.buildDirectory.file("managed-identity-mock.env").get().asFile
+    def envFile = layout.buildDirectory.file("credential-mock.env").get().asFile
     def distribution = (ballerinaTomlFile.text =~ /distribution\s*=\s*"([^"]+)"/)[0][1]
     doLast {
-        ["http://localhost:8093/msi/token", "https://localhost:8094/msi/token"].each { endpoint ->
+        selectedMockRuns.each { run ->
+            def env = new LinkedHashMap(run.env)
+            if (run.identityHeader) {
+                // A throwaway value per run. It is a test secret, so it goes through a file, not the command line.
+                env.IDENTITY_HEADER = "test-${UUID.randomUUID()}".toString()
+            }
             envFile.parentFile.mkdirs()
-            // A throwaway value per run; it is a test secret, so it goes through a file rather than the command line.
-            envFile.text = "IDENTITY_ENDPOINT=${endpoint}\nIDENTITY_HEADER=test-${UUID.randomUUID()}\n"
+            envFile.text = env.collect { k, v -> "${k}=${v}" }.join("\n") + "\n"
             def output = new ByteArrayOutputStream()
             def result
             try {
@@ -103,26 +128,31 @@ task testManagedIdentityMock {
                     commandLine "docker", "run", "--rm", "--net=host", "-u", "root", "--env-file", envFile.path,
                             "-v", "${rootDirectory}:/home/ballerina/${rootDirectory.name}",
                             "ballerina/ballerina:${distribution}", "/bin/sh", "-c",
-                            "cd ${rootDirectory.name}/ballerina && bal test --groups ${managedIdentityMockGroup}"
+                            "cd ${rootDirectory.name}/ballerina && bal test --groups ${run.group}"
                 }
             } finally {
                 envFile.delete()
             }
             def log = output.toString()
-            println "===== ${managedIdentityMockGroup} (${endpoint.startsWith("https") ? "HTTPS" : "HTTP"})"
+            println "===== ${run.group} (${run.label})"
             println log
             if (result.exitValue != 0) {
-                throw new GradleException("${managedIdentityMockGroup} tests failed against ${endpoint}")
+                throw new GradleException("${run.group} tests failed (${run.label})")
             }
-            ["No SLF4J providers", "NoClassDefFoundError"].each { marker ->
+            def forbidden = ["No SLF4J providers", "NoClassDefFoundError", leakMarker]
+            if (env.IDENTITY_HEADER) {
+                forbidden << env.IDENTITY_HEADER
+            }
+            forbidden.each { marker ->
                 if (log.contains(marker)) {
-                    throw new GradleException("'${marker}' in the ${managedIdentityMockGroup} output for ${endpoint}")
+                    def shown = marker == env.IDENTITY_HEADER ? "the identity header value" : "'${marker}'"
+                    throw new GradleException("${shown} in the ${run.group} output (${run.label})")
                 }
             }
             def passing = (log =~ /(\d+) passing/).collect { it[1] as int }.sum() ?: 0
-            if (passing < 8) {
-                throw new GradleException("expected the ${managedIdentityMockGroup} tests to run against ${endpoint}, " +
-                        "but only ${passing} passed")
+            if (passing < run.minPassing) {
+                throw new GradleException("expected at least ${run.minPassing} ${run.group} tests to pass " +
+                        "(${run.label}), but ${passing} passed")
             }
         }
     }
@@ -191,10 +221,14 @@ clean {
 
 build.dependsOn ':ai.azure-native:build'
 test.dependsOn ':ai.azure-native:build'
-// Runs with every `test` (and so every `build`), but not when tests are skipped with `-x test` or the group is
-// filtered out with -Pgroups or -Pdisable.
-if (runManagedIdentityMock) {
-    test.finalizedBy testManagedIdentityMock
+// Runs with every `test` (and so every `build`), but not when tests are skipped with `-x test` or every mock group
+// is filtered out with -Pgroups or -Pdisable.
+if (!selectedMockRuns.isEmpty()) {
+    test.finalizedBy testCredentialMocks
+}
+// -Pgroups named only mock groups: those run in testCredentialMocks alone.
+if (regularGroups != null && regularGroups.isEmpty()) {
+    test.onlyIf { false }
 }
 build.dependsOn ":ai.azure-compiler-plugin:build"
 build.dependsOn "generatePomFileForMavenPublication"

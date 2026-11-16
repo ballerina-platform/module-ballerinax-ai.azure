@@ -6,59 +6,35 @@ The Azure OpenAI connector offers APIs for connecting with Azure OpenAI Large La
 
 ### Key Features
 
-- Connect and interact with Azure OpenAI Large Language Models (LLMs)
-- Support for the GPT-5 series, GPT-4 series, GPT-3.5, and other advanced OpenAI models
-- Both the **Chat Completions API** and the **Responses API**, over both the **v1 GA** and **legacy** surfaces
+- Connect and interact with Azure OpenAI Large Language Models (LLMs), such as the GPT-5 and GPT-4 series
+- Support for both the Chat Completions API and the Responses API, selected through the `apiType` parameter
 - Parallel (multiple) tool calls in a single assistant turn, on both API surfaces
 - Reasoning-effort control for reasoning models (`gpt-5`/`o`-series)
-- Text embeddings through a dedicated `EmbeddingProvider`, over both the v1 GA and legacy surfaces
-- Seamless integration with Azure AI infrastructure
-- Secure communication with API key and token authentication
+- Text embeddings through `EmbeddingProvider`
+- A knowledge base on an Azure AI Search index through `AiSearchKnowledgeBase`
+- A listener for running an agent as a Foundry hosted agent
+- API key and Microsoft Entra ID (keyless) authentication
 
-### API surfaces
+### Choosing an API
 
-It provides a single chat-model provider class, `OpenAiModelProvider`, which implements `ai:ModelProvider`. The
-provider can target either the Azure OpenAI **Chat Completions API** (the default) or the **Responses API**,
-selected at initialization time through the `apiType` parameter. The concrete wire route additionally depends on
-the shape of the `serviceUrl`: a URL ending with `/v1` targets the Azure OpenAI **v1 GA** surface through the
-generated `ballerinax/azure.openai.chat` / `ballerinax/azure.openai.responses` connectors, while any other URL
-targets the **legacy** route (with an `?api-version=...` query parameter).
+`OpenAiModelProvider` implements `ai:ModelProvider`. It uses the Azure OpenAI **Chat Completions API** by default,
+or the **Responses API** when `apiType` is `RESPONSES`.
 
-The new v1 GA URL is `https://<resource>.services.ai.azure.com/openai/v1`; the legacy URL is
-`https://<resource>.openai.azure.com/openai`.
+The service URL selects the Azure OpenAI surface:
 
-| `apiType` | `serviceUrl` ends with `/v1` (v1 GA) | otherwise (legacy) |
-| --- | --- | --- |
-| `CHAT_COMPLETIONS` (default) | `POST {serviceUrl}/chat/completions` | `POST {legacyBase}/deployments/{deploymentId}/chat/completions?api-version=...` |
-| `RESPONSES` | `POST {serviceUrl}/responses` | `POST {legacyBase}/responses?api-version=...` |
+- A URL ending with `/v1`, such as `https://<resource>.openai.azure.com/openai/v1`, targets the **v1 GA** surface.
+  `apiVersion` is optional and normally omitted; pass `"preview"` or `"v1"` to opt into a specific v1 surface (other
+  values are ignored on v1 URLs).
+- Any other URL, such as `https://<resource>.openai.azure.com/openai`, targets the **legacy** surface, which needs a
+  date-based `apiVersion` such as `"2024-10-21"`.
 
-On the legacy surface, `legacyBase` is derived from the `serviceUrl` as follows:
+Leave `temperature` unset for models that do not support it, such as the GPT-5 and o-series reasoning models. Not
+every model supports every `reasoningEffort` value: `MINIMAL` is supported only by the original GPT-5 reasoning
+models, `NONE` by GPT-5.1 and later, and `XHIGH` by `gpt-5.1-codex-max` and later; the service rejects a value the
+deployment doesn't support.
 
-- a **bare origin** (e.g. `https://<resource>.openai.azure.com`) is completed with `/openai`, matching Azure's own
-  legacy spec server (`https://{endpoint}/openai`);
-- a URL that **already carries a path** is used **verbatim**. This keeps existing `.../openai` service URLs working
-  unchanged, and lets callers who front Azure OpenAI through API Management or another gateway
-  (e.g. `https://gw.example.com/azure-openai`) own their base path without the module rewriting it.
-
-The `apiVersion` argument is **required** for legacy (non-`/v1`) service URLs (e.g. `"2024-10-21"`). For v1 (`/v1`)
-service URLs it is optional and normally omitted; pass `"preview"` or `"v1"` to opt into a specific v1 surface.
-
-This module also provides an `EmbeddingProvider` for Azure OpenAI embedding models. It resolves the `apiVersion` and
-the legacy base URL exactly the same way, so one `serviceUrl` means the same thing to both providers:
-
-| `serviceUrl` ends with `/v1` (v1 GA) | otherwise (legacy) |
-| --- | --- |
-| `POST {serviceUrl}/embeddings` (deployment sent as `model` in the body) | `POST {legacyBase}/deployments/{deploymentId}/embeddings?api-version=...` |
-
-```ballerina
-// Legacy service URL — a date-based `apiVersion` is required.
-final ai:EmbeddingProvider legacyEmbeddingProvider = check new azure:EmbeddingProvider(
-    "https://<resource>.openai.azure.com/openai", "api-key", "2023-05-15", "deployment-id");
-
-// v1 GA service URL — the `apiVersion` is not needed, so pass `()`.
-final ai:EmbeddingProvider embeddingProvider = check new azure:EmbeddingProvider(
-    "https://<resource>.services.ai.azure.com/openai/v1", "api-key", (), "deployment-id");
-```
+The exact request paths for each combination are listed in
+[Request routing](https://github.com/ballerina-platform/module-ballerinax-ai.azure/blob/main/docs/routing.md).
 
 ### Tool calling
 
@@ -66,27 +42,144 @@ Both API surfaces support **parallel tool calls**: a single assistant turn may r
 entries in `ai:ChatAssistantMessage.toolCalls`. When such a turn is sent back as history, each call is correlated
 with its result through the tool call `id`, so an `ai:ChatFunctionMessage` per call must carry the matching `id`.
 
+### Embeddings
+
+`EmbeddingProvider` implements `ai:EmbeddingProvider` for Azure OpenAI embedding models. It reads the service URL and
+`apiVersion` the same way as `OpenAiModelProvider`, so one service URL means the same thing to both providers:
+
+```ballerina
+// Legacy service URL: a date-based `apiVersion` is required.
+final ai:EmbeddingProvider legacyEmbeddingProvider = check new azure:EmbeddingProvider(
+    "https://<resource>.openai.azure.com/openai", "api-key", "2023-05-15", "deployment-id");
+
+// v1 GA service URL: the `apiVersion` is not needed, so pass `()`.
+final ai:EmbeddingProvider embeddingProvider = check new azure:EmbeddingProvider(
+    "https://<resource>.openai.azure.com/openai/v1", "api-key", (), "deployment-id");
+```
+
+### Knowledge base
+
+`AiSearchKnowledgeBase` implements `ai:KnowledgeBase` on an Azure AI Search index. Pass the name of an existing
+index, or a `search:SearchIndex` definition to create; a new index must contain one key field of type `string`. By
+default documents are chunked with `ai:AUTO`, the main content is read from the `content` field, and requests use the
+Azure AI Search API version `2025-09-01`. `searchClientConnectionConfig` applies to the service client, which checks
+or creates the index, and `indexClientConnectionConfig` to the index client, which ingests, retrieves and deletes
+documents.
+
+```ballerina
+final ai:KnowledgeBase knowledgeBase = check new azure:AiSearchKnowledgeBase(
+    "https://<service>.search.windows.net", "api-key", "index-name", embeddingProvider);
+```
+
+### Authentication
+
+`OpenAiModelProvider`, `EmbeddingProvider` and `AiSearchKnowledgeBase` take the same `auth` parameter, their second
+argument. It is either an API key, sent as the `api-key` header, or a Microsoft Entra ID credential from the
+`ai.azure.identity` module, sent as an `Authorization: Bearer` token:
+
+```ballerina
+import ballerinax/ai.azure.identity;
+
+// API key
+final ai:ModelProvider apiKeyModel = check new azure:OpenAiModelProvider(
+    "https://<resource>.openai.azure.com/openai/v1", "api-key", "deployment-id");
+
+// Keyless: the default Azure credential (Azure CLI sign-in locally, managed identity in Azure)
+final ai:ModelProvider keylessModel = check new azure:OpenAiModelProvider(
+    "https://<resource>.openai.azure.com/openai/v1", {'type: "default"}, "deployment-id");
+
+// A user-assigned managed identity for embeddings
+final ai:EmbeddingProvider keylessEmbeddings = check new azure:EmbeddingProvider(
+    "https://<resource>.openai.azure.com/openai/v1", {'type: "managedIdentity", clientId: "<client-id>"}, (),
+    "embedding-deployment-id");
+
+// One credential, and its token cache, shared by several providers
+final identity:TokenCredential credential = check identity:createCredential({'type: "managedIdentity"});
+final ai:KnowledgeBase keylessKnowledgeBase = check new azure:AiSearchKnowledgeBase(
+    "https://<service>.search.windows.net", credential, "index-name", keylessEmbeddings);
+```
+
+A credential is a record whose `type` field selects it, or an `identity:TokenCredential` such as one from
+`identity:createCredential`. The `ai.azure.identity` module describes each type's settings:
+
+| `type` | Credential | Settings |
+| --- | --- | --- |
+| `default` | Environment, workload identity, managed identity, then developer tools such as the Azure CLI | `sources`, `clientId` |
+| `managedIdentity` | Managed identity on Azure compute and Microsoft Foundry hosted agents | `clientId` (user-assigned) |
+| `clientSecret` | Service principal with a client secret | `tenantId`, `clientId`, `clientSecret` |
+| `workloadIdentity` | Kubernetes workload identity (federated token file) | `tenantId`, `clientId`, `tokenFilePath` |
+| `clientCertificate` | Service principal with a certificate | `tenantId`, `clientId`, `certificatePath`, `certificatePassword`, `sendCertificateChain` |
+
+With a credential:
+
+- The token scope is derived from the service URL. For any other host, such as an API Management gateway or a
+  custom domain, set `tokenScope`: in the connection configuration of `OpenAiModelProvider`
+  (`OpenAiModelConnectionConfig`) and `EmbeddingProvider` (`EmbeddingConnectionConfig`), and as the `tokenScope`
+  parameter of `AiSearchKnowledgeBase`.
+
+  | Service URL | Token scope |
+  | --- | --- |
+  | path contains `/api/projects/` (a Foundry project endpoint) | `https://ai.azure.com/.default` |
+  | `*.openai.azure.com`, `*.cognitiveservices.azure.com`, `*.services.ai.azure.com` | `https://cognitiveservices.azure.com/.default` |
+  | `*.search.windows.net` | `https://search.azure.com/.default` |
+
+- The service URL must use `https://`. `http://` is accepted only for a loopback host (`localhost`, `127.0.0.0/8`
+  or `[::1]`), so a bearer token is never sent in clear text over the network.
+- When the provider creates the credential from a configuration record, token requests use the provider's `proxy`
+  (HTTP proxies only); `AiSearchKnowledgeBase` uses the proxy of `searchClientConnectionConfig`, or of
+  `indexClientConnectionConfig` if only that one has one. A supplied `identity:TokenCredential` is used as is, so
+  pass `proxy` to `identity:createCredential` in its options. Token requests don't use the provider's `secureSocket`,
+  which describes the service endpoint: they trust the JVM's default certificates plus those in the file named by
+  the `SSL_CERT_FILE` environment variable. For other TLS settings on token requests, create the credential with
+  `identity:createCredential(config, secureSocket = ...)` and pass the resulting `identity:TokenCredential`.
+- Proxy authentication (`userName`/`password`) for token requests needs Basic authentication for HTTPS tunnels,
+  which the JDK disables by default: start the JVM with `-Djdk.http.auth.tunneling.disabledSchemes=`.
+- Other clouds (for example Azure Government): create the credential with `identity:createCredential` and that
+  cloud's `authorityHost`, pass the `identity:TokenCredential`, and set `tokenScope`.
+
+The identity needs these Azure roles:
+
+| Provider and operation | Role |
+| --- | --- |
+| `OpenAiModelProvider`, `EmbeddingProvider` | Cognitive Services OpenAI User, on the Azure OpenAI resource |
+| `AiSearchKnowledgeBase`: initialization, which reads the index definition, or creates or updates the index | Search Service Contributor |
+| `AiSearchKnowledgeBase`: `retrieve` | Search Index Data Reader |
+| `AiSearchKnowledgeBase`: `ingest` and `deleteByFilter` | Search Index Data Contributor |
+
+So a knowledge base that only queries an existing index needs Search Service Contributor and Search Index Data
+Reader, and one that also ingests documents needs Search Service Contributor and Search Index Data Contributor. An
+Azure AI Search service accepts only API keys by default: set its API access control to **Role-based access control**
+or **Both** before using a credential.
+
 ## Prerequisites
 
-Before using this module in your Ballerina application, first you must obtain the nessary configuration to engage the LLM.
+Before using this module, obtain the following:
 
-- Create an [Azure](https://azure.microsoft.com/en-us/features/azure-portal/) account.
-- Create an [Azure OpenAI resource](https://learn.microsoft.com/en-us/azure/cognitive-services/openai/how-to/create-resource).
-- Obtain the tokens. Refer to the [Azure OpenAI Authentication](https://learn.microsoft.com/en-us/azure/cognitive-services/openai/reference#authentication) guide to learn how to generate and use tokens.
+- Ballerina Swan Lake Update 14 or later.
+- An [Azure account](https://azure.microsoft.com/).
+- An [Azure OpenAI resource](https://learn.microsoft.com/en-us/azure/foundry-classic/openai/how-to/create-resource)
+  with a model deployment.
+- Either an API key of that resource, or, for keyless authentication, an identity with the
+  [Cognitive Services OpenAI User role](https://learn.microsoft.com/en-us/azure/foundry-classic/openai/how-to/role-based-access-control)
+  on it.
+- For `AiSearchKnowledgeBase`, an
+  [Azure AI Search service](https://learn.microsoft.com/en-us/azure/search/search-create-service-portal), with
+  either an [API key](https://learn.microsoft.com/en-us/azure/search/search-security-api-keys) or
+  [role-based access](https://learn.microsoft.com/en-us/azure/search/search-security-rbac).
 
 ## Quickstart
 
-To use the `ai.azure` module in your Ballerina application, update the `.bal` file as follows:
+To use the `ai.azure` module, update the `.bal` file as follows:
 
 ### Step 1: Import the module
 
-Import the `ai.azure;` module.
+Import the `ai.azure` module.
 
 ```ballerina
 import ballerinax/ai.azure;
 ```
 
-### Step 2: Intialize the Model Provider
+### Step 2: Initialize the Model Provider
 
 Initialize the provider. By default it uses the Chat Completions API. On a legacy (non-`/v1`) service URL a
 date-based `apiVersion` is required:
@@ -96,14 +189,14 @@ import ballerina/ai;
 import ballerinax/ai.azure;
 
 final ai:ModelProvider azureOpenAiModel = check new azure:OpenAiModelProvider(
-    "https://<resource>.openai.azure.com", "api-key", "deployment-id", "2024-10-21");
+    "https://<resource>.openai.azure.com/openai", "api-key", "deployment-id", "2024-10-21");
 ```
 
 To use the Responses API instead, set `apiType` to `RESPONSES`:
 
 ```ballerina
 final ai:ModelProvider azureOpenAiModel = check new azure:OpenAiModelProvider(
-    "https://<resource>.openai.azure.com", "api-key", "deployment-id", "2025-03-01-preview",
+    "https://<resource>.openai.azure.com/openai", "api-key", "deployment-id", "2025-03-01-preview",
     apiType = azure:RESPONSES);
 ```
 
@@ -112,10 +205,10 @@ and can be omitted:
 
 ```ballerina
 final ai:ModelProvider azureOpenAiModel = check new azure:OpenAiModelProvider(
-    "https://<resource>.services.ai.azure.com/openai/v1", "api-key", "deployment-id");
+    "https://<resource>.openai.azure.com/openai/v1", "api-key", "deployment-id");
 ```
 
-### Step 4: Invoke chat completion
+### Step 3: Invoke chat completion
 
 ```ballerina
 ai:ChatMessage[] chatMessages = [{role: "user", content: "hi"}];
