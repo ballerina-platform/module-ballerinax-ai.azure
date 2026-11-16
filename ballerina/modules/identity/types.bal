@@ -108,13 +108,13 @@ public type WorkloadIdentityConfig record {|
     # The credential type
     @display {label: "Type"}
     "workloadIdentity" 'type;
-    # Microsoft Entra ID tenant ID; defaults to the `AZURE_TENANT_ID` environment variable
+    # Microsoft Entra ID tenant ID
     @display {label: "Tenant ID"}
     string tenantId?;
-    # Client ID of the application or managed identity; defaults to the `AZURE_CLIENT_ID` environment variable
+    # Client ID of the application or managed identity
     @display {label: "Client ID"}
     string clientId?;
-    # Path of the federated token file; defaults to the `AZURE_FEDERATED_TOKEN_FILE` environment variable
+    # Path of the federated token file
     @display {label: "Token File Path"}
     string tokenFilePath?;
 |};
@@ -131,14 +131,13 @@ public type ClientCertificateConfig record {|
     # Client (application) ID of the service principal
     @display {label: "Client ID"}
     string clientId;
-    # Path of the certificate file: PEM (the certificate and its unencrypted PKCS#8 private key) or PKCS#12 (PFX);
-    # the format is detected from the file
+    # Path of the PEM or PKCS#12 certificate file
     @display {label: "Certificate Path"}
     string certificatePath;
-    # Password of a PKCS#12 (PFX) file; omit it for a PEM file or a PFX without a password
+    # Password of the PKCS#12 certificate file
     @display {label: "Certificate Password"}
     string certificatePassword?;
-    # Send the certificate chain (`x5c`), as needed for subject name and issuer authentication
+    # Whether to send the certificate chain with each token request
     @display {label: "Send Certificate Chain"}
     boolean sendCertificateChain = false;
 |};
