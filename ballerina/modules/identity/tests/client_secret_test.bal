@@ -71,19 +71,30 @@ function testWrongClientSecretIsAnAuthenticationError() returns error? {
 @test:Config {groups: [ENTRA_MOCK_GROUP]}
 function testSecretInsideAJwtDoesNotKeepTheJwt() returns error? {
     // Redacting the secret first would break the JWT, so its other parts would stay in the error.
+    check assertJwtAndSecretRedacted(JWT_ECHO_APP, JWT_ECHO_SECRET);
+}
+
+@test:Config {groups: [ENTRA_MOCK_GROUP]}
+function testSecretRightAfterAJwtIsRedacted() returns error? {
+    // Redacting the JWT first would take the start of the secret, so the rest would no longer match.
+    check assertJwtAndSecretRedacted(JWT_ADJACENT_APP, JWT_ADJACENT_SECRET, "after-dot");
+}
+
+// Checks that the error for an application whose secret the mock echoes with a JWT keeps no part of either.
+function assertJwtAndSecretRedacted(string clientId, string clientSecret, string... secretParts) returns error? {
     TokenCredential credential = check createCredential({
         'type: "clientSecret",
         tenantId: MOCK_TENANT,
-        clientId: JWT_ECHO_APP,
-        clientSecret: JWT_ECHO_SECRET
+        clientId,
+        clientSecret
     }, mockOptions());
-    AccessToken|Error token = credential.getToken(["api://jwt-echo/.default"]);
+    AccessToken|Error token = credential.getToken([string `api://${clientId}/.default`]);
     if token !is AuthenticationError {
         return error("a rejected secret must be an AuthenticationError, got: "
             + (token is Error ? token.message() : "a token"));
     }
     string described = token.toString();
-    foreach string part in [JWT_ECHO_HEADER, JWT_ECHO_PAYLOAD, JWT_ECHO_SECRET, JWT_ECHO_SIGNATURE] {
+    foreach string part in [JWT_ECHO_HEADER, JWT_ECHO_PAYLOAD, JWT_ECHO_SIGNATURE, clientSecret, ...secretParts] {
         test:assertFalse(described.includes(part), described);
     }
     test:assertTrue(token.message().includes("Received '[redacted]'"), token.message());

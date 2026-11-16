@@ -128,11 +128,10 @@ With a credential:
 - When the provider creates the credential from a configuration record, token requests use the provider's `proxy`
   (HTTP proxies only); `AiSearchKnowledgeBase` uses the proxy of `searchClientConnectionConfig`, or of
   `indexClientConnectionConfig` if only that one has one. A supplied `identity:TokenCredential` is used as is, so
-  pass `proxy` (and `secureSocket` if needed) to `identity:createCredential` in its options. Token requests don't use
-  the provider's `secureSocket`, which describes the service endpoint: they trust the JVM's default certificates
-  plus those in the file named by the `SSL_CERT_FILE` environment variable. For other TLS settings on token
-  requests, create the credential with `identity:createCredential(config, secureSocket = ...)` and pass the
-  resulting `identity:TokenCredential`.
+  pass `proxy` to `identity:createCredential` in its options. Token requests don't use the provider's `secureSocket`,
+  which describes the service endpoint: they trust the JVM's default certificates plus those in the file named by
+  the `SSL_CERT_FILE` environment variable. For other TLS settings on token requests, create the credential with
+  `identity:createCredential(config, secureSocket = ...)` and pass the resulting `identity:TokenCredential`.
 - Proxy authentication (`userName`/`password`) for token requests needs Basic authentication for HTTPS tunnels,
   which the JDK disables by default: start the JVM with `-Djdk.http.auth.tunneling.disabledSchemes=`.
 - Other clouds (for example Azure Government): create the credential with `identity:createCredential` and that

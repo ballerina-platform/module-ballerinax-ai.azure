@@ -29,7 +29,9 @@ import io.ballerina.runtime.api.values.BError;
 import io.ballerina.runtime.api.values.BMap;
 import io.ballerina.runtime.api.values.BString;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -75,14 +77,7 @@ final class IdentityErrors {
      */
     static BError toError(Throwable throwable, Collection<String> secrets) {
         String kind = kindOf(throwable);
-        // JWTs first: a secret replaced inside one would break it, so the pattern would no longer match it.
-        String message = JWT.matcher(describe(throwable)).replaceAll(REDACTED);
-        for (String secret : secrets) {
-            if (!secret.isEmpty()) {
-                message = message.replace(secret, REDACTED);
-            }
-        }
-        message = sanitize(message);
+        String message = sanitize(describe(throwable), secrets);
         BMap<BString, Object> detail = ValueCreator.createMapValue(
                 TypeCreator.createMapType(PredefinedTypes.TYPE_ANYDATA));
         detail.put(KIND, StringUtils.fromString(kind));
@@ -163,16 +158,51 @@ final class IdentityErrors {
         return message == null || message.isBlank() ? name : name + ": " + message.strip();
     }
 
-    // Redacts secret-bearing environment variables and limits the length; JWTs are already redacted.
-    private static String sanitize(String message) {
-        String sanitized = message;
+    // Redacts JWTs, the configured secrets and secret-bearing environment variables, and limits the length. All of
+    // them are found in the original message and overlapping matches are redacted as one, so neither kind can break
+    // the other: a secret replaced first would break a JWT around it, and a JWT replaced first part of a secret.
+    private static String sanitize(String message, Collection<String> secrets) {
+        List<String> allSecrets = new ArrayList<>(secrets);
         for (String variable : SECRET_VARIABLES) {
             String secret = System.getenv(variable);
             if (secret != null && secret.length() >= 4) {
-                sanitized = sanitized.replace(secret, REDACTED);
+                allSecrets.add(secret);
             }
         }
+        List<int[]> spans = new ArrayList<>();
+        Matcher jwt = JWT.matcher(message);
+        while (jwt.find()) {
+            spans.add(new int[]{jwt.start(), jwt.end()});
+        }
+        for (String secret : allSecrets) {
+            if (secret.isEmpty()) {
+                continue;
+            }
+            for (int start = message.indexOf(secret); start >= 0; start = message.indexOf(secret, start + 1)) {
+                spans.add(new int[]{start, start + secret.length()});
+            }
+        }
+        spans.sort(Comparator.comparingInt(span -> span[0]));
+        StringBuilder sanitized = new StringBuilder();
+        int copied = 0;
+        int spanStart = -1;
+        int spanEnd = -1;
+        for (int[] span : spans) {
+            if (span[0] > spanEnd) {
+                if (spanEnd >= 0) {
+                    sanitized.append(message, copied, spanStart).append(REDACTED);
+                    copied = spanEnd;
+                }
+                spanStart = span[0];
+            }
+            spanEnd = Math.max(spanEnd, span[1]);
+        }
+        if (spanEnd >= 0) {
+            sanitized.append(message, copied, spanStart).append(REDACTED);
+            copied = spanEnd;
+        }
+        sanitized.append(message, copied, message.length());
         return sanitized.length() > MAX_MESSAGE_LENGTH
-                ? sanitized.substring(0, MAX_MESSAGE_LENGTH) + "..." : sanitized;
+                ? sanitized.substring(0, MAX_MESSAGE_LENGTH) + "..." : sanitized.toString();
     }
 }
