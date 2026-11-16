@@ -17,8 +17,9 @@ The Azure OpenAI connector offers APIs for connecting with Azure OpenAI Large La
 
 ### API surfaces
 
-It provides a single chat-model provider class, `OpenAiModelProvider`, which implements `ai:ModelProvider`. The
-provider can target either the Azure OpenAI **Chat Completions API** (the default) or the **Responses API**,
+It provides a chat-model provider, `OpenAiModelProvider`, which implements `ai:ModelProvider`, as well as an
+`EmbeddingProvider`, an `AiSearchKnowledgeBase` and a listener for Foundry hosted agents. The chat-model provider can
+target either the Azure OpenAI **Chat Completions API** (the default) or the **Responses API**,
 selected at initialization time through the `apiType` parameter. The concrete wire route additionally depends on
 the shape of the `serviceUrl`: a URL ending with `/v1` targets the Azure OpenAI **v1 GA** surface through the
 generated `ballerinax/azure.openai.chat` / `ballerinax/azure.openai.responses` connectors, while any other URL
@@ -68,7 +69,7 @@ with its result through the tool call `id`, so an `ai:ChatFunctionMessage` per c
 
 ## Prerequisites
 
-Before using this module in your Ballerina application, first you must obtain the nessary configuration to engage the LLM.
+Before using this module in your Ballerina application, first you must obtain the necessary configuration to engage the LLM.
 
 - Create an [Azure](https://azure.microsoft.com/en-us/features/azure-portal/) account.
 - Create an [Azure OpenAI resource](https://learn.microsoft.com/en-us/azure/cognitive-services/openai/how-to/create-resource).
@@ -86,7 +87,7 @@ Import the `ai.azure;` module.
 import ballerinax/ai.azure;
 ```
 
-### Step 2: Intialize the Model Provider
+### Step 2: Initialize the Model Provider
 
 Initialize the provider. By default it uses the Chat Completions API. On a legacy (non-`/v1`) service URL a
 date-based `apiVersion` is required:
@@ -115,7 +116,7 @@ final ai:ModelProvider azureOpenAiModel = check new azure:OpenAiModelProvider(
     "https://<resource>.services.ai.azure.com/openai/v1", "api-key", "deployment-id");
 ```
 
-### Step 4: Invoke chat completion
+### Step 3: Invoke chat completion
 
 ```ballerina
 ai:ChatMessage[] chatMessages = [{role: "user", content: "hi"}];

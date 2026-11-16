@@ -14,8 +14,9 @@ The Azure OpenAI connector offers APIs for connecting with Azure OpenAI Large La
 
 ### API surfaces
 
-It provides a single chat-model provider class, `OpenAiModelProvider`, which implements `ai:ModelProvider`. The
-provider can target either the Azure OpenAI **Chat Completions API** (the default) or the **Responses API**,
+It provides a chat-model provider, `OpenAiModelProvider`, which implements `ai:ModelProvider`, as well as an
+`EmbeddingProvider`, an `AiSearchKnowledgeBase` and a listener for Foundry hosted agents. The chat-model provider can
+target either the Azure OpenAI **Chat Completions API** (the default) or the **Responses API**,
 selected at initialization time through the `apiType` parameter. The concrete wire route additionally depends on
 the shape of the `serviceUrl`: a URL ending with `/v1` targets the Azure OpenAI **v1 GA** surface through the
 generated `ballerinax/azure.openai.chat` / `ballerinax/azure.openai.responses` connectors, while any other URL
@@ -40,7 +41,9 @@ On the legacy surface, `legacyBase` is derived from the `serviceUrl` as follows:
 The `apiVersion` argument is **required** for legacy (non-`/v1`) service URLs (e.g. `"2024-10-21"`). For v1 (`/v1`)
 service URLs it is optional and normally omitted; pass `"preview"` or `"v1"` to opt into a specific v1 surface (other
 values are ignored on v1 URLs). Leave `temperature` unset for models that do not support it, such as the GPT-5 and
-o-series reasoning models.
+o-series reasoning models. Not every model supports every `reasoningEffort` value: `MINIMAL` is supported only by the
+original GPT-5 reasoning models, `NONE` by GPT-5.1 and later, and `XHIGH` by `gpt-5.1-codex-max` and later; the
+service rejects a value the deployment doesn't support.
 
 This module also provides an `EmbeddingProvider` for Azure OpenAI embedding models. It resolves the `apiVersion` and
 the legacy base URL exactly the same way, so one `serviceUrl` means the same thing to both providers:
@@ -58,6 +61,15 @@ final ai:EmbeddingProvider legacyEmbeddingProvider = check new azure:EmbeddingPr
 final ai:EmbeddingProvider embeddingProvider = check new azure:EmbeddingProvider(
     "https://<resource>.services.ai.azure.com/openai/v1", "api-key", (), "deployment-id");
 ```
+
+### Knowledge base
+
+`AiSearchKnowledgeBase` implements `ai:KnowledgeBase` on an Azure AI Search index, authenticated with an API key.
+Pass the name of an existing index, or a `search:SearchIndex` definition to create; a new index must contain one key
+field of type `string`. By default documents are chunked with `ai:AUTO`, the main content is read from the `content`
+field, and requests use the Azure AI Search API version `2025-09-01`. `searchClientConnectionConfig` applies to the
+service client, which checks or creates the index, and `indexClientConnectionConfig` to the index client, which
+ingests, retrieves and deletes documents.
 
 ### Authentication
 
@@ -109,7 +121,7 @@ With a credential:
 
 ## Prerequisites
 
-Before using this module in your Ballerina application, first you must obtain the nessary configuration to engage the LLM.
+Before using this module in your Ballerina application, first you must obtain the necessary configuration to engage the LLM.
 
 - Create an [Azure](https://azure.microsoft.com/en-us/features/azure-portal/) account.
 - Create an [Azure OpenAI resource](https://learn.microsoft.com/en-us/azure/cognitive-services/openai/how-to/create-resource).
@@ -127,7 +139,7 @@ Import the `ai.azure;` module.
 import ballerinax/ai.azure;
 ```
 
-### Step 2: Intialize the Model Provider
+### Step 2: Initialize the Model Provider
 
 Initialize the provider. By default it uses the Chat Completions API. On a legacy (non-`/v1`) service URL a
 date-based `apiVersion` is required:
@@ -156,7 +168,7 @@ final ai:ModelProvider azureOpenAiModel = check new azure:OpenAiModelProvider(
     "https://<resource>.services.ai.azure.com/openai/v1", "api-key", "deployment-id");
 ```
 
-### Step 4: Invoke chat completion
+### Step 3: Invoke chat completion
 
 ```ballerina
 ai:ChatMessage[] chatMessages = [{role: "user", content: "hi"}];

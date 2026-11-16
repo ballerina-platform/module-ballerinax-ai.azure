@@ -41,7 +41,7 @@ variable and in `secureSocket.cert`, and use the configured `proxy` (HTTP proxie
 Proxy authentication needs the JVM option `-Djdk.http.auth.tunneling.disabledSchemes=`, because the JDK disables
 Basic authentication for HTTPS tunnels by default; without it, a proxy `userName` is rejected. Local managed identity
 endpoints are always reached without the proxy. `authorityHost` is the Microsoft Entra ID authority:
-`AZURE_PUBLIC_CLOUD` (the default) or another cloud's authority URL.
+`AZURE_PUBLIC_CLOUD` (the default) or another cloud's authority URL, which needs that cloud's token scope as well.
 
 Tokens and secrets never appear in errors. An `Error` carries the credential type and, when the service returned
 one, the Microsoft Entra ID error code (`AADSTS...`). `CredentialUnavailableError` means no credential source is

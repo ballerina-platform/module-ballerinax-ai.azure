@@ -36,7 +36,7 @@ public type ConnectionConfig record {|
     @display {label: "Timeout"}
     decimal timeout = 60;
 
-    # The choice of setting `forwarded`/`x-forwarded` header
+    # The choice of setting the forwarded or x-forwarded header
     @display {label: "Forwarded"}
     string forwarded = "disable";
 
@@ -48,7 +48,7 @@ public type ConnectionConfig record {|
     @display {label: "Cache Configuration"}
     http:CacheConfig cache?;
 
-    # Specifies the way of handling compression (`accept-encoding`) header
+    # Specifies the way of handling the compression (accept-encoding) header
     @display {label: "Compression"}
     http:Compression compression = http:COMPRESSION_AUTO;
 
@@ -72,17 +72,17 @@ public type ConnectionConfig record {|
     @display {label: "Proxy Configuration"}
     http:ProxyConfig proxy?;
 
-    # Enables the inbound payload validation functionality which provided by the constraint package. Enabled by default
+    # Enables the inbound payload validation provided by the constraint package
     @display {label: "Payload Validation"}
     boolean validation = true;
 |};
 
-# Connection configuration of `OpenAiModelProvider`.
+# Connection configuration of OpenAiModelProvider.
 @display {label: "Connection Configuration"}
 public type OpenAiModelConnectionConfig record {|
     *ConnectionConfig;
 
-    # Microsoft Entra ID token scope for credential authentication; derived from the service URL when not set
+    # The Microsoft Entra ID token scope, derived from the service URL when not set
     @display {label: "Token Scope"}
     string tokenScope?;
 |};
@@ -90,22 +90,17 @@ public type OpenAiModelConnectionConfig record {|
 # Defines which Azure OpenAI API to use for model interactions.
 @display {label: "OpenAI API Type"}
 public enum ApiType {
-    # Use the OpenAI Chat Completions API (`/chat/completions`)
+    # Use the Azure OpenAI Chat Completions API
     CHAT_COMPLETIONS = "chat_completions",
-    # Use the OpenAI Responses API (`/responses`)
+    # Use the Azure OpenAI Responses API
     RESPONSES = "responses"
 }
 
-# Reasoning effort level for reasoning models (`gpt-5`/`o`-series).
-#
-# The supported set follows the Azure OpenAI specification. Not every model supports every value (for example,
-# `MINIMAL` is only supported by the original `gpt-5` reasoning models, `XHIGH` only by `gpt-5.1-codex-max` and
-# later, and `NONE` only by `gpt-5.1`+). Passing an unsupported value for the target deployment results in an
-# error from the service.
+# Reasoning effort level for reasoning models.
 public enum ReasoningEffort {
-    # No reasoning; supported by `gpt-5.1` and later.
+    # No reasoning.
     NONE = "none",
-    # The smallest amount of reasoning; supported by the original `gpt-5` reasoning models.
+    # The smallest amount of reasoning.
     MINIMAL = "minimal",
     # Favours speed and fewer reasoning tokens.
     LOW = "low",
@@ -113,6 +108,6 @@ public enum ReasoningEffort {
     MEDIUM = "medium",
     # Favours more complete reasoning.
     HIGH = "high",
-    # The largest amount of reasoning; supported by `gpt-5.1-codex-max` and later.
+    # The largest amount of reasoning.
     XHIGH = "xhigh"
 }

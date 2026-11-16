@@ -74,7 +74,7 @@ type IndexSchemaInfo record {
     map<search:SearchField> allFields;
 };
 
-# Represents the Azure Search Knowledge Base implementation.
+# AiSearchKnowledgeBase is a knowledge base that stores and retrieves documents using an Azure AI Search index.
 public distinct isolated class AiSearchKnowledgeBase {
     *ai:KnowledgeBase;
     
@@ -92,24 +92,20 @@ public distinct isolated class AiSearchKnowledgeBase {
     private final map<search:SearchField> allFields;
     private final string? semanticConfigurationName;
 
-    # Initializes a new `AiSearchKnowledgeBase` instance.
-    # 
+    # Initializes the Azure AI Search knowledge base with the given index and configuration.
+    #
     # + serviceUrl - The service URL of the Azure AI Search instance
     # + apiKey - The API key for authenticating with the Azure AI Search service
-    # + index - The name of an existing search index or a `search:SearchIndex` definition to create,
-    #   When creating a new index, ensure that it contains one key field of type string.
+    # + index - The name of an existing search index, or the definition of a search index to create
     # + embeddingModel - The embedding model to use for generating embeddings
-    # + chunker - The chunker to use for chunking documents before ingestion. Defaults to `ai:AUTO`.
-    # + verbose - Whether to enable verbose logging. Defaults to `false`.
-    # + apiVersion - The API version to use for requests.
-    # + clientConfigurations - Additional client configurations for Azure AI Search clients
-    # + contentFieldName - The name of the field in the index that contains the main content. Defaults to "content".
-    # + searchClientConnectionConfig - Connection configuration for the Azure AI search client.
-    #                                  This configuration is only required when the `index` parameter is 
-    #                                  provided as an `search:SearchIndex`
-    # + indexClientConnectionConfig - Connection configuration for the Azure AI index client.
-    # + semanticConfigurationName - The name of the semantic configuration to use for semantic search.
-    # + return - An instance of `AiSearchKnowledgeBase` or an `ai:Error` if initialization fails
+    # + chunker - The chunker to use for chunking documents before ingestion
+    # + verbose - Whether to enable verbose logging
+    # + apiVersion - The Azure AI Search API version
+    # + contentFieldName - The name of the index field that contains the main content
+    # + searchClientConnectionConfig - Connection configuration for the Azure AI Search service client
+    # + indexClientConnectionConfig - Connection configuration for the Azure AI Search index client
+    # + semanticConfigurationName - The name of the semantic configuration to use for semantic search
+    # + return - nil on successful initialization; otherwise, returns an ai:Error
     public isolated function init(string serviceUrl, string apiKey, 
             string|search:SearchIndex index, ai:EmbeddingProvider? embeddingModel = (), 
             ai:Chunker|ai:AUTO|ai:DISABLE chunker = ai:AUTO, boolean verbose = false, 
@@ -181,9 +177,10 @@ public distinct isolated class AiSearchKnowledgeBase {
         }
     }
 
-    # Ingests documents into the Azure search knowledge base.
-    # + documents - The documents or chunks to ingest (single document, array of documents, or array of chunks)
-    # + return - An `ai:Error` if ingestion fails, otherwise `nil`
+    # Ingests documents into the Azure AI Search knowledge base.
+    #
+    # + documents - The documents or chunks to ingest
+    # + return - An ai:Error if ingestion fails, otherwise nil
     public isolated function ingest(ai:Chunk[]|ai:Document[]|ai:Document documents) returns ai:Error? {
         lock {
             ai:Chunk[]|ai:Error chunks = self.chunk(documents.clone());
@@ -235,7 +232,7 @@ public distinct isolated class AiSearchKnowledgeBase {
     # + query - The text query to search for
     # + maxLimit - The maximum number of items to return
     # + filters - Optional metadata filters to apply during retrieval
-    # + return - An array of matching chunks with similarity scores, or an `ai:Error` if retrieval fails
+    # + return - An array of matching chunks with similarity scores, or an ai:Error if retrieval fails
     public isolated function retrieve(string query, int maxLimit = 10, 
                                 ai:MetadataFilters? filters = ()) returns ai:QueryMatch[]|ai:Error {
         if maxLimit != -1 && maxLimit <= 0 {
@@ -329,7 +326,7 @@ public distinct isolated class AiSearchKnowledgeBase {
     # Deletes chunks that match the given metadata filters.
     #
     # + filters - The metadata filters used to identify which chunks to delete
-    # + return - An `ai:Error` if the deletion fails, otherwise `nil`
+    # + return - An ai:Error if the deletion fails, otherwise nil
     public isolated function deleteByFilter(ai:MetadataFilters filters) returns ai:Error? {
         ai:MetadataFilters filtersCopy = filters.cloneReadOnly();
         // First, search for documents matching the filters

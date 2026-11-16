@@ -34,15 +34,15 @@ public type AccessToken readonly & record {|
 public type TokenCredential isolated object {
     # Returns a valid access token for the given scopes.
     #
-    # + scopes - The scopes to request, e.g. `["https://cognitiveservices.azure.com/.default"]`
-    # + return - The access token, or an `Error` if one could not be obtained
+    # + scopes - The scopes to request
+    # + return - The access token, or an Error if one could not be obtained
     public isolated function getToken(string[] scopes) returns AccessToken|Error;
 };
 
 # Details of an identity error.
 #
-# + credential - The credential type that failed (for example, `managedIdentity`)
-# + code - The Microsoft Entra ID error code (`AADSTS...`), when the service returned one
+# + credential - The credential type that failed
+# + code - The Microsoft Entra ID error code, when the service returned one
 public type ErrorDetail record {|
     string credential;
     string code?;
@@ -63,7 +63,7 @@ public type DefaultCredentialConfig record {|
     # The credential type
     @display {label: "Type"}
     "default" 'type;
-    # The credential sources to try: `all`, `prod` (deployed environments) or `dev` (developer tools)
+    # The credential sources to try
     @display {label: "Credential Sources"}
     "all"|"prod"|"dev" sources = "all";
     # Client ID of a user-assigned managed identity
@@ -147,17 +147,16 @@ public type ClientCertificateConfig record {|
 public type CredentialConfig DefaultCredentialConfig|ManagedIdentityConfig|ClientSecretConfig
         |WorkloadIdentityConfig|ClientCertificateConfig;
 
-# A credential configuration or a `TokenCredential`.
+# A credential configuration or a token credential.
 public type Credential CredentialConfig|TokenCredential;
 
 # Options for the token requests of a credential.
 public type CredentialOptions record {|
-    # Microsoft Entra ID authority host URL; another cloud's host here needs a matching token scope
+    # The Microsoft Entra ID authority host URL
     string authorityHost = AZURE_PUBLIC_CLOUD;
     # SSL/TLS-related options for token requests
     http:ClientSecureSocket secureSocket?;
-    # HTTP proxy for token requests; proxy authentication needs the JVM option
-    # `-Djdk.http.auth.tunneling.disabledSchemes=`
+    # HTTP proxy for token requests
     http:ProxyConfig proxy?;
     # Timeout (in seconds) for each token request
     decimal timeout = 30;

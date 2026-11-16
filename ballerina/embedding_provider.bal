@@ -20,13 +20,6 @@ import ballerina/http;
 import ballerinax/azure.openai.embeddings;
 
 # EmbeddingProvider provides an interface for interacting with Azure OpenAI Embedding Models.
-#
-# The concrete wire route depends on the shape of the `serviceUrl`: a URL ending with `/v1` targets the Azure OpenAI
-# **v1 GA** surface (`POST {serviceUrl}/embeddings`, with the deployment sent as `model` in the body and no
-# `api-version` required), while any other URL targets the **legacy** deployment-scoped route
-# (`POST {legacyBase}/deployments/{deploymentId}/embeddings?api-version=...`) through the generated
-# `ballerinax/azure.openai.embeddings` connector, where `legacyBase` is the `serviceUrl` completed with `/openai`
-# when it is a bare origin and used verbatim when it already carries a path.
 public distinct isolated client class EmbeddingProvider {
     *ai:EmbeddingProvider;
     # Generated Embeddings connector for the legacy deployment-scoped route. Created only when the `serviceUrl`
@@ -45,20 +38,14 @@ public distinct isolated client class EmbeddingProvider {
     private final string? v1ApiVersion;
     private final string deploymentId;
 
-    # Initializes the OpenAI embedding model with the given connection configuration.
+    # Initializes the Azure OpenAI embedding model with the given connection configuration.
     #
-    # + serviceUrl - The base URL of the Azure OpenAI API endpoint. Use the new v1 GA URL
-    #              (`https://<resource>.services.ai.azure.com/openai/v1`) or the legacy URL
-    #              (`https://<resource>.openai.azure.com/openai`).
-    # + accessToken - The access token for authenticating API requests
-    # + apiVersion - The API version of the Azure OpenAI API. **Required** for legacy (non-`/v1`) service URLs
-    #              (e.g. `"2023-05-15"`). For v1 (`/v1`) service URLs the value is optional and normally passed as
-    #              `()`; pass `"preview"` or `"v1"` to opt into a specific v1 surface (any other value is ignored
-    #              on v1 URLs).
+    # + serviceUrl - The base URL of the Azure OpenAI API endpoint
+    # + accessToken - The API key for authenticating API requests
+    # + apiVersion - The Azure OpenAI API version, required for service URLs that do not end with /v1
     # + deploymentId - The deployment ID of the embedding model
-    # + config - The connection configurations for the HTTP endpoint
-    #
-    # + return - `nil` on successful initialization; otherwise, returns an `ai:Error`
+    # + config - Additional HTTP connection configuration
+    # + return - nil on successful initialization; otherwise, returns an ai:Error
     public isolated function init(
             @display {label: "Service URL"} string serviceUrl,
             @display {label: "Access Token"} string accessToken,
@@ -87,8 +74,8 @@ public distinct isolated client class EmbeddingProvider {
 
     # Generates an embedding vector for the provided chunk.
     #
-    # + chunk - The `ai:Chunk` containing the content to embed
-    # + return - The resulting `ai:Embedding` on success; otherwise, returns an `ai:Error`
+    # + chunk - The chunk containing the content to embed
+    # + return - The resulting embedding on success; otherwise, returns an ai:Error
     isolated remote function embed(ai:Chunk chunk) returns ai:Embedding|ai:Error {
         observe:EmbeddingSpan span = observe:createEmbeddingSpan(self.deploymentId);
         span.addProvider("azure.ai.openai");
@@ -126,7 +113,7 @@ public distinct isolated client class EmbeddingProvider {
     # Converts a batch of chunks into embeddings.
     #
     # + chunks - The array of chunks to be converted into embeddings
-    # + return - An array of embeddings on success, or an `ai:Error`
+    # + return - An array of embeddings on success, or an ai:Error
     isolated remote function batchEmbed(ai:Chunk[] chunks) returns ai:Embedding[]|ai:Error {
         observe:EmbeddingSpan span = observe:createEmbeddingSpan(self.deploymentId);
         span.addProvider("azure.ai.openai");
