@@ -54,6 +54,12 @@ const CERTIFICATE_PASSWORD_VALUE = " do-not-leak-cert-password-1b ";
 // The application and secret that `testCredentialMocks` puts in the environment for ENTRA_ENV_MOCK_GROUP.
 const ENV_SECRET_APP = "env-secret-app";
 const ENV_CLIENT_SECRET_VALUE = "do-not-leak-env-client-secret-1b";
+// An application for which the mock echoes a JWT that contains the client secret it got, and the parts of that JWT.
+const JWT_ECHO_APP = "jwt-echo-app";
+const JWT_ECHO_SECRET = "do-not-leak-jwt-echo-secret-1b";
+const JWT_ECHO_HEADER = "eyJdo-not-leak-jwt-echo-header-1b";
+const JWT_ECHO_PAYLOAD = "do-not-leak-jwt-echo-payload-1b-";
+const JWT_ECHO_SIGNATURE = "do-not-leak-jwt-echo-signature-1b";
 // Applications for which the mock answers with a temporary failure.
 const THROTTLED_APP = "throttled-app";
 const UNAVAILABLE_APP = "unavailable-app";
@@ -136,6 +142,10 @@ isolated function answerTokenRequest(EntraRequest request) returns TokenAnswer {
     if clientId == ENV_SECRET_APP {
         return request.clientSecret == ENV_CLIENT_SECRET_VALUE ? tokenResponse(clientId)
             : entraError("invalid_client", "AADSTS7000215: Invalid client secret provided.");
+    }
+    if clientId == JWT_ECHO_APP {
+        string jwt = string `${JWT_ECHO_HEADER}.${JWT_ECHO_PAYLOAD}${request.clientSecret ?: ""}.${JWT_ECHO_SIGNATURE}`;
+        return entraError("invalid_client", string `AADSTS7000215: Invalid client secret provided. Received '${jwt}'.`);
     }
     if clientId == CLIENT_SECRET_APP {
         string? secret = request.clientSecret;

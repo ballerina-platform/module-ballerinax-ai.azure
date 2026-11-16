@@ -69,6 +69,27 @@ function testWrongClientSecretIsAnAuthenticationError() returns error? {
 }
 
 @test:Config {groups: [ENTRA_MOCK_GROUP]}
+function testSecretInsideAJwtDoesNotKeepTheJwt() returns error? {
+    // Redacting the secret first would break the JWT, so its other parts would stay in the error.
+    TokenCredential credential = check createCredential({
+        'type: "clientSecret",
+        tenantId: MOCK_TENANT,
+        clientId: JWT_ECHO_APP,
+        clientSecret: JWT_ECHO_SECRET
+    }, mockOptions());
+    AccessToken|Error token = credential.getToken(["api://jwt-echo/.default"]);
+    if token !is AuthenticationError {
+        return error("a rejected secret must be an AuthenticationError, got: "
+            + (token is Error ? token.message() : "a token"));
+    }
+    string described = token.toString();
+    foreach string part in [JWT_ECHO_HEADER, JWT_ECHO_PAYLOAD, JWT_ECHO_SECRET, JWT_ECHO_SIGNATURE] {
+        test:assertFalse(described.includes(part), described);
+    }
+    test:assertTrue(token.message().includes("Received '[redacted]'"), token.message());
+}
+
+@test:Config {groups: [ENTRA_MOCK_GROUP]}
 function testClientSecretNeedsTheCa() returns error? {
     check os:unsetEnv("SSL_CERT_FILE");
     CredentialOptions options = mockOptions();

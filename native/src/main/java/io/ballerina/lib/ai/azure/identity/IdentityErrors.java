@@ -75,7 +75,8 @@ final class IdentityErrors {
      */
     static BError toError(Throwable throwable, Collection<String> secrets) {
         String kind = kindOf(throwable);
-        String message = describe(throwable);
+        // JWTs first: a secret replaced inside one would break it, so the pattern would no longer match it.
+        String message = JWT.matcher(describe(throwable)).replaceAll(REDACTED);
         for (String secret : secrets) {
             if (!secret.isEmpty()) {
                 message = message.replace(secret, REDACTED);
@@ -162,7 +163,8 @@ final class IdentityErrors {
         return message == null || message.isBlank() ? name : name + ": " + message.strip();
     }
 
-    static String sanitize(String message) {
+    // Redacts secret-bearing environment variables and limits the length; JWTs are already redacted.
+    private static String sanitize(String message) {
         String sanitized = message;
         for (String variable : SECRET_VARIABLES) {
             String secret = System.getenv(variable);
@@ -170,7 +172,6 @@ final class IdentityErrors {
                 sanitized = sanitized.replace(secret, REDACTED);
             }
         }
-        sanitized = JWT.matcher(sanitized).replaceAll(REDACTED);
         return sanitized.length() > MAX_MESSAGE_LENGTH
                 ? sanitized.substring(0, MAX_MESSAGE_LENGTH) + "..." : sanitized;
     }

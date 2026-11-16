@@ -86,16 +86,23 @@ function assertApiKey(string route, string label) returns error? {
     test:assertEquals(auth.authorization, (), label + " must not send Authorization");
 }
 
-# Runs every knowledge base operation once: init (get or create the index), ingest, retrieve and deleteByFilter.
+# Runs ingest, retrieve and deleteByFilter once, and checks the authentication after each one. The mock keeps only the
+# last request per route, and deleteByFilter searches before it deletes, so a later check would see its requests.
 #
 # + kb - The knowledge base, already initialised
+# + assertAuth - Checks the authentication of the last request on a route
 # + return - An error if an operation fails
-function exerciseKnowledgeBase(AiSearchKnowledgeBase kb) returns error? {
+function exerciseKnowledgeBase(AiSearchKnowledgeBase kb,
+        function (string route, string label) returns error? assertAuth) returns error? {
     check kb.ingest([<ai:TextChunk>{content: "Hello"}]);
+    check assertAuth(ROUTE_KB_INDEX_DOCUMENTS, "ingest");
     ai:QueryMatch[] matches = check kb.retrieve("Hello");
     test:assertEquals(matches.length(), 1);
     test:assertEquals(matches[0].chunk.content, "Hello from the search mock");
+    check assertAuth(ROUTE_KB_SEARCH, "retrieve");
     check kb.deleteByFilter({filters: [{'key: "id", value: "doc-1"}]});
+    check assertAuth(ROUTE_KB_SEARCH, "deleteByFilter search");
+    check assertAuth(ROUTE_KB_INDEX_DOCUMENTS, "deleteByFilter delete");
 }
 
 // ===== EmbeddingProvider: credential and API key on both routes =====
@@ -156,9 +163,7 @@ function testKnowledgeBaseCredentialSendsBearerAndNoApiKeyOnEveryCall() returns 
     check assertBearer(ROUTE_KB_GET_INDEX, "get index");
     test:assertEquals(credential.lastScopes(), [MOCK_SCOPE]);
 
-    check exerciseKnowledgeBase(kb);
-    check assertBearer(ROUTE_KB_SEARCH, "search");
-    check assertBearer(ROUTE_KB_INDEX_DOCUMENTS, "index documents");
+    check exerciseKnowledgeBase(kb, (route, label) => assertBearer(route, label));
 
     // Creating the index goes through the service client as well.
     _ = check new AiSearchKnowledgeBase(SEARCH_MOCK_URL, credential, mockSearchIndex, chunker = ai:DISABLE,
@@ -171,9 +176,7 @@ function testKnowledgeBaseApiKeySendsApiKeyAndNoAuthorizationOnEveryCall() retur
     AiSearchKnowledgeBase kb = check new (SEARCH_MOCK_URL, API_KEY, SEARCH_INDEX_NAME, chunker = ai:DISABLE);
     check assertApiKey(ROUTE_KB_GET_INDEX, "get index");
 
-    check exerciseKnowledgeBase(kb);
-    check assertApiKey(ROUTE_KB_SEARCH, "search");
-    check assertApiKey(ROUTE_KB_INDEX_DOCUMENTS, "index documents");
+    check exerciseKnowledgeBase(kb, assertApiKey);
 
     _ = check new AiSearchKnowledgeBase(SEARCH_MOCK_URL, API_KEY, mockSearchIndex, chunker = ai:DISABLE);
     check assertApiKey(ROUTE_KB_PUT_INDEX, "create index");
