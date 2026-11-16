@@ -23,7 +23,8 @@ import ballerinax/ai.azure.identity;
 
 // Entra ID (credential) authentication of `OpenAiModelProvider`. A recording mock on its own port captures the
 // auth headers of each of the four routes (chat and responses, v1 and legacy), so the tests can assert exactly
-// which headers reached the wire in each mode.
+// which headers reached the wire in each mode. The same mock serves the two embeddings routes, and the Azure AI
+// Search routes of `test_entra_auth_embeddings_kb.bal`.
 
 const AUTH_MOCK_URL = "http://localhost:8091/openai";
 const AUTH_MOCK_URL_V1 = "http://localhost:8091/openai/v1";
@@ -35,6 +36,8 @@ const ROUTE_CHAT_LEGACY = "chat-legacy";
 const ROUTE_CHAT_V1 = "chat-v1";
 const ROUTE_RESPONSES_LEGACY = "responses-legacy";
 const ROUTE_RESPONSES_V1 = "responses-v1";
+const ROUTE_EMBEDDINGS_LEGACY = "embeddings-legacy";
+const ROUTE_EMBEDDINGS_V1 = "embeddings-v1";
 
 // The auth headers, query and body of the last request seen on one route.
 type RecordedAuth record {|
@@ -109,6 +112,22 @@ service /openai on authMockListener {
         json payload = check req.getJsonPayload();
         recordAuth(ROUTE_RESPONSES_V1, req, api\-version, payload);
         return respondToAuthResponses(payload);
+    }
+
+    resource function post deployments/[string deploymentId]/embeddings(http:Request req,
+            string? api\-version = ()) returns json|http:Unauthorized|error {
+        json payload = check req.getJsonPayload();
+        recordAuth(ROUTE_EMBEDDINGS_LEGACY, req, api\-version, payload);
+        if deploymentId == UNAUTHORIZED_DEPLOYMENT {
+            return <http:Unauthorized>{body: {'error: {code: "401", message: "Unauthorized"}}};
+        }
+        return buildEmbeddingsResponse(payload.input is json[], false).toJson();
+    }
+
+    resource function post v1/embeddings(http:Request req, string? api\-version = ()) returns json|error {
+        json payload = check req.getJsonPayload();
+        recordAuth(ROUTE_EMBEDDINGS_V1, req, api\-version, payload);
+        return buildEmbeddingsResponse(payload.input is json[], false).toJson();
     }
 }
 
@@ -385,7 +404,7 @@ function testDerivedScopeIsRequestedFromTheCredential() returns error? {
     ];
     foreach [string, string] [url, expected] in cases {
         MockCredential credential = new;
-        string|BearerAuth auth = check resolveAuth(credential, url, {});
+        string|BearerAuth auth = check resolveAuth(credential, url);
         if auth is string {
             return error("a credential must resolve to bearer authentication");
         }

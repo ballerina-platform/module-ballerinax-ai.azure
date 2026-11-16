@@ -70,9 +70,9 @@ ballerina {
 // `bal test` process. Every test secret contains the leak marker, and a run fails if that marker (or the run's
 // identity header) appears anywhere in its output.
 def credentialMockRuns = [
-        [label: "managed identity over HTTP", group: "managed-identity-mock", minPassing: 8,
+        [label: "managed identity over HTTP", group: "managed-identity-mock", minPassing: 10,
          env: [IDENTITY_ENDPOINT: "http://localhost:8093/msi/token"], identityHeader: true],
-        [label: "managed identity over HTTPS", group: "managed-identity-mock", minPassing: 8,
+        [label: "managed identity over HTTPS", group: "managed-identity-mock", minPassing: 10,
          env: [IDENTITY_ENDPOINT: "https://localhost:8094/msi/token"], identityHeader: true],
         [label: "Entra ID token endpoint", group: "entra-mock", minPassing: 29, env: [:]],
         // Values the tests expect (ENV_SECRET_APP and ENV_CLIENT_SECRET_VALUE in mock_entra.bal).

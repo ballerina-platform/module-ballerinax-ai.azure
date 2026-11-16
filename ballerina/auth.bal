@@ -58,7 +58,7 @@ isolated function authHeaders(string|BearerAuth auth) returns map<string>|ai:Err
     return auth.headers();
 }
 
-# Resolves the `apiKey`/credential argument of a provider into what requests are authenticated with.
+# Resolves the `auth` argument of a provider into what requests are authenticated with.
 #
 # A `string` is an API key and is returned unchanged. A credential configuration is turned into a credential whose
 # token requests use the provider's proxy, and trust the JVM's default CAs plus `SSL_CERT_FILE`: the endpoint's
@@ -72,10 +72,11 @@ isolated function authHeaders(string|BearerAuth auth) returns map<string>|ai:Err
 #
 # + auth - The API key or credential passed to the provider
 # + serviceUrl - The provider's service URL
-# + config - The provider's connection configuration
+# + tokenScope - The provider's `tokenScope` setting, if any
+# + proxy - The provider's proxy, which token requests use too
 # + return - The API key or the bearer authentication, or an `ai:Error` if the credential, scope or URL is invalid
-isolated function resolveAuth(string|identity:Credential auth, string serviceUrl, OpenAiModelConnectionConfig config)
-        returns string|BearerAuth|ai:Error {
+isolated function resolveAuth(string|identity:Credential auth, string serviceUrl, string? tokenScope = (),
+        http:ProxyConfig? proxy = ()) returns string|BearerAuth|ai:Error {
     if auth is string {
         return auth;
     }
@@ -83,12 +84,11 @@ isolated function resolveAuth(string|identity:Credential auth, string serviceUrl
         return error ai:Error("Entra ID authentication requires an 'https://' service URL; 'http://' is allowed " +
                 "only for a loopback host (localhost, 127.0.0.0/8 or [::1])");
     }
-    string scope = check resolveTokenScope(serviceUrl, config.tokenScope);
+    string scope = check resolveTokenScope(serviceUrl, tokenScope);
     if auth is identity:TokenCredential {
         return new BearerAuth(auth, scope);
     }
     identity:CredentialOptions options = {};
-    http:ProxyConfig? proxy = config.proxy;
     if proxy is http:ProxyConfig {
         options.proxy = proxy;
     }
@@ -135,7 +135,7 @@ isolated function isIpv4Loopback(string host) returns boolean {
 # Returns the explicit token scope if one is set, and otherwise the scope derived from the service URL.
 #
 # + serviceUrl - The provider's service URL
-# + tokenScope - The `tokenScope` from the connection configuration, if any
+# + tokenScope - The provider's `tokenScope` setting, if any
 # + return - The token scope, or an `ai:Error` if it is blank or cannot be derived
 isolated function resolveTokenScope(string serviceUrl, string? tokenScope) returns string|ai:Error {
     if tokenScope is () {
@@ -143,7 +143,7 @@ isolated function resolveTokenScope(string serviceUrl, string? tokenScope) retur
     }
     string scope = tokenScope.trim();
     if scope.length() == 0 {
-        return error ai:Error("The 'tokenScope' connection setting must not be empty");
+        return error ai:Error("The 'tokenScope' setting must not be empty");
     }
     return scope;
 }
@@ -174,7 +174,7 @@ isolated function deriveTokenScope(string serviceUrl) returns string|ai:Error {
         return COGNITIVE_SERVICES_SCOPE;
     }
     return error ai:Error(string `Cannot derive the Entra ID token scope for host '${host}'; set 'tokenScope' ` +
-            string `in the connection configuration (for example, "${COGNITIVE_SERVICES_SCOPE}")`);
+            string `(for example, "${COGNITIVE_SERVICES_SCOPE}")`);
 }
 
 # Splits a URL into its lower-cased host (without user info or port) and its lower-cased path (without query or

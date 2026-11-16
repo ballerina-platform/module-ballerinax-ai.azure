@@ -87,6 +87,16 @@ public type OpenAiModelConnectionConfig record {|
     string tokenScope?;
 |};
 
+# Connection configuration of EmbeddingProvider.
+@display {label: "Connection Configuration"}
+public type EmbeddingConnectionConfig record {|
+    *ConnectionConfig;
+
+    # The Microsoft Entra ID token scope, derived from the service URL when not set
+    @display {label: "Token Scope"}
+    string tokenScope?;
+|};
+
 # Defines which Azure OpenAI API to use for model interactions.
 @display {label: "OpenAI API Type"}
 public enum ApiType {
