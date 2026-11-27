@@ -24,5 +24,6 @@ This file documents all significant changes made to the Ballerina Azure AI packa
     error code of an error response)
 
 ### Changed
+- [Update jackson to 2.18.11 to fix known vulnerabilities](https://github.com/ballerina-platform/ballerina-library/issues/9645)
 - Move to Ballerina distribution 2201.14.1 and the `java25` platform. Version 1.6.0 requires Ballerina Swan Lake
   Update 14 (2201.14.x) or later
